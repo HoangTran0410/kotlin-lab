@@ -15,7 +15,12 @@ export const UNIT: KValue = { t: 'unit' }
 
 /** Exception của Kotlin, ném xuyên qua generator bằng cơ chế throw của JS. */
 export class KotlinThrow extends Error {
-  constructor(readonly kotlinType: string, readonly kotlinMessage: string) {
+  /**
+   * `line` là dòng 1-based của câu `throw` gây ra exception này. Optional vì
+   * nhiều KotlinThrow là nội bộ (vòng lặp quá dài, tái ném CancellationException
+   * tổng hợp lúc unwind) — không gắn với một dòng code cụ thể nào của user.
+   */
+  constructor(readonly kotlinType: string, readonly kotlinMessage: string, readonly line?: number) {
     super(`${kotlinType}: ${kotlinMessage}`)
   }
 }

@@ -43,9 +43,9 @@ export class Interpreter {
         const v = yield* this.evalExpr(s.expr, env)
         if (v.t === 'obj') {
           const msg = v.fields.get('message')
-          throw new KotlinThrow(v.className, msg && msg.t === 'str' ? msg.v : '')
+          throw new KotlinThrow(v.className, msg && msg.t === 'str' ? msg.v : '', s.pos.line)
         }
-        throw new KotlinThrow('Exception', display(v))
+        throw new KotlinThrow('Exception', display(v), s.pos.line)
       }
       case 'Return': {
         throw new ReturnSignal(s.expr ? yield* this.evalExpr(s.expr, env) : UNIT)
@@ -284,15 +284,17 @@ export class Interpreter {
   ): Eval<KValue | undefined> {
     if (calleeName === 'delay') {
       const ms = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : { t: 'num' as const, v: 0 }
-      yield { s: 'delay', ms: ms.t === 'num' ? ms.v : 0 }
+      yield { s: 'delay', ms: ms.t === 'num' ? ms.v : 0, line: e.pos.line }
       return UNIT
     }
-    if (calleeName === 'yield') { yield { s: 'yield' }; return UNIT }
+    if (calleeName === 'yield') { yield { s: 'yield', line: e.pos.line }; return UNIT }
 
     if (calleeName === 'join' || calleeName === 'await') {
       const target = e.callee.k === 'Member' ? yield* this.evalExpr(e.callee.target, env) : UNIT
       const jobId = target.t === 'obj' ? target.fields.get('__jobId') : undefined
-      if (jobId && jobId.t === 'str') yield { s: calleeName === 'join' ? 'join' : 'await', jobId: jobId.v }
+      if (jobId && jobId.t === 'str') {
+        yield { s: calleeName === 'join' ? 'join' : 'await', jobId: jobId.v, line: e.pos.line }
+      }
       return UNIT
     }
 
@@ -306,7 +308,7 @@ export class Interpreter {
         // cancelAndJoin từng được nối thẳng vào nhánh này và im lặng KHÔNG join,
         // nên nó cho ra đúng thứ tự sai mà người học dùng nó để tránh: lệnh sau
         // nó chạy trước khi finally của coroutine bị huỷ kịp chạy.
-        if (calleeName === 'cancelAndJoin') yield { s: 'join', jobId: jobId.v }
+        if (calleeName === 'cancelAndJoin') yield { s: 'join', jobId: jobId.v, line: e.pos.line }
       }
       return UNIT
     }
@@ -403,7 +405,7 @@ export class Interpreter {
           // khi cháu vẫn Active, nên parent.cancel() gọi sau đó thấy job.isCompleted
           // và no-op — cancel không bao giờ lan tới cháu (lesson jobtree).
           yield { s: 'joinChildren', jobId: created.id }
-        })())
+        })(), e.pos.line)
       return {
         t: 'obj', className: calleeName === 'launch' ? 'Job' : 'Deferred',
         fields: new Map([['__jobId', { t: 'str', v: job.id } as KValue]]),
