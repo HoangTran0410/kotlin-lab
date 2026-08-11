@@ -184,6 +184,51 @@ describe('interpreter — coroutine builder', () => {
     expect((launched as { parentId: string }).parentId).toBe((scope as { id: string }).id)
   })
 
+  it('GlobalScope.launch THOÁT khỏi cây job — không gắn vào scope bao quanh', () => {
+    // "GlobalScope thoát khỏi cây job" là một trong những bài học công cụ này
+    // thay thế, nên nó BẮT BUỘC phải phân biệt được với launch thường. Engine cũ
+    // bỏ qua receiver của lời gọi thành viên, nên GlobalScope.launch gắn vào job
+    // bao quanh về mặt từ vựng — y hệt launch thường, không còn gì để dạy.
+    const e = evs(
+      'fun main() = runBlocking {\n' +
+      '  GlobalScope.launch { delay(1) }\n' +
+      '  launch { delay(1) }\n' +
+      '}')
+    const created = e.filter(x => x.k === 'COROUTINE_CREATED' && x.builder === 'launch')
+    expect(created).toHaveLength(2)
+    expect((created[0] as { parentId: string | null }).parentId).toBeNull()
+    expect((created[1] as { parentId: string | null }).parentId).not.toBeNull()
+  })
+
+  it('GlobalScope.launch KHÔNG bị cancel theo cây — khác biệt cốt lõi với launch thường', () => {
+    // Hệ quả quan sát được của việc thoát khỏi cây: cancel job bao quanh kéo
+    // theo launch thường nhưng KHÔNG chạm tới coroutine của GlobalScope.
+    const e = evs(
+      'fun main() = runBlocking {\n' +
+      '  val p = launch {\n' +
+      '    GlobalScope.launch { delay(1000) }\n' +
+      '    launch { delay(1000) }\n' +
+      '    delay(1000)\n' +
+      '  }\n' +
+      '  delay(10)\n' +
+      '  p.cancel()\n' +
+      '}')
+    const globalId = (e.find(x => x.k === 'COROUTINE_CREATED' && x.parentId === null
+      && x.builder === 'launch') as { id: string } | undefined)?.id
+    expect(globalId).toBeTruthy()
+    expect(e.some(x => x.k === 'CANCEL_REQUESTED' && x.to === globalId)).toBe(false)
+  })
+
+  it('CoroutineScope(ctx).launch dùng dispatcher của scope, không nuốt mất', () => {
+    const e = evs(
+      'fun main() = runBlocking {\n' +
+      '  val scope = CoroutineScope(Dispatchers.Default)\n' +
+      '  scope.launch { delay(1) }\n' +
+      '}')
+    const launched = e.find(x => x.k === 'COROUTINE_CREATED' && x.builder === 'launch')
+    expect(launched).toMatchObject({ parentId: null, ctx: { dispatcher: 'Default' } })
+  })
+
   it('launch bên trong suspend fun gắn đúng coroutine scope của caller', () => {
     // Bịt khoảng trống Task 15 để lại: callFun truyền env.enclosingJobId vào
     // scope của thân hàm, nhưng Task 15 chưa có builder nào nên bỏ tham số đó

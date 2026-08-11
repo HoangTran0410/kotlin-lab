@@ -1,5 +1,6 @@
 import type { Block, Expr, FunDecl, Program, Stmt } from '../ast/nodes'
 import { CoroutineContext } from '../runtime/context'
+import type { JobId } from '../trace/events'
 import { toCause, type Scheduler } from '../runtime/scheduler'
 import type { CoroutineBody, Suspension } from '../runtime/suspension'
 import { Env } from './env'
@@ -275,12 +276,19 @@ export class Interpreter {
     if (calleeName === 'launch' || calleeName === 'async') {
       const lambda = e.lambda
       if (!lambda) return UNIT
-      const ctx = yield* this.contextFromArgs(e, env)
+      const argCtx = yield* this.contextFromArgs(e, env)
+      // Receiver quyết định CHA và context nền. Bỏ qua nó thì
+      // GlobalScope.launch { } gắn vào job bao quanh y hệt launch thường —
+      // "GlobalScope thoát khỏi cây job" là bài học công cụ này thay thế, nên
+      // hai thứ đó bắt buộc phải phân biệt được.
+      const recv = yield* this.scopeReceiver(e, env)
+      const parentJobId = recv ? recv.parentJobId : env.enclosingJobId
+      const ctx = recv ? recv.ctx.plus(argCtx) : argCtx
       const body = lambda.body
       // Không alias `this` (vi phạm no-this-alias) — bind evalBlock thay vào đó.
       const evalBlock = this.evalBlock.bind(this)
       // Factory nhận Job vừa tạo, nên Env con mang đúng jobId của chính coroutine này.
-      const job = this.scheduler.spawnChildOf(env.enclosingJobId, ctx, calleeName, created =>
+      const job = this.scheduler.spawnChildOf(parentJobId, ctx, calleeName, created =>
         (function* (): CoroutineBody {
           yield* evalBlock(body, env.child(created.id))
           // Job của launch/async KHÔNG được Completed ngay khi thân nó chạy xong —
@@ -304,7 +312,12 @@ export class Interpreter {
       }
     }
     if (calleeName === 'CoroutineScope' || calleeName === 'MainScope') {
-      const arg = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
+      // MainScope() = Dispatchers.Main + SupervisorJob. Không gắn dispatcher
+      // vào thì nó im lặng thành Default — cùng dạng "sai lặng lẽ" mà receiver
+      // của launch vừa được sửa, chỉ khác chỗ biểu hiện.
+      const arg = calleeName === 'MainScope'
+        ? { t: 'obj' as const, className: 'Dispatchers.Main', fields: new Map<string, KValue>() }
+        : e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
       return { t: 'obj', className: 'CoroutineScope', fields: new Map([['__ctx', arg]]) }
     }
     if (calleeName === 'CoroutineName') {
@@ -355,6 +368,35 @@ export class Interpreter {
       if (err instanceof ReturnSignal) return err.value
       throw err
     }
+  }
+
+  /**
+   * Receiver của `x.launch { }` / `x.async { }`.
+   *
+   * Trả null nghĩa là "không nhận ra receiver nào đặc biệt, dùng scope bao
+   * quanh về mặt từ vựng" — đó là đường của `this.launch`, `scope.launch` với
+   * scope là CoroutineScope được truyền vào một suspend fun, và của mọi lời gọi
+   * không có receiver.
+   *
+   * GlobalScope và CoroutineScope(ctx) đều cho parentJobId = null: chúng mang
+   * Job GỐC của riêng mình, KHÔNG treo dưới coroutine bao quanh. Đó chính là
+   * điều làm chúng thoát khỏi structured concurrency.
+   */
+  protected *scopeReceiver(
+    e: Expr & { k: 'Call' }, env: Env,
+  ): Eval<{ parentJobId: JobId | null; ctx: CoroutineContext } | null> {
+    if (e.callee.k !== 'Member') return null
+    const target = yield* this.evalExpr(e.callee.target, env)
+    if (target.t !== 'obj') return null
+    if (target.className === 'GlobalScope') {
+      return { parentJobId: null, ctx: CoroutineContext.empty() }
+    }
+    if (target.className === 'CoroutineScope') {
+      const raw = target.fields.get('__ctx')
+      const ctx = raw ? this.applyCtxValue(CoroutineContext.empty(), raw) : CoroutineContext.empty()
+      return { parentJobId: null, ctx }
+    }
+    return null
   }
 
   /**
