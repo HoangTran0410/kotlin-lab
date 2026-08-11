@@ -1,0 +1,93 @@
+/* Lưới ba cột: editor cố định 380px · graph co giãn · panel phụ cố định 320px.
+   Timeline chiếm hết chiều ngang ở đáy shell, ngoài lưới ba cột. */
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
+}
+
+.shell__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.shell__head h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* §2.4/§12: mô phỏng deterministic, KHÔNG phải thứ tự duy nhất khả dĩ của
+   Kotlin thật. Viền trái vàng mượn màu runBlocking để tách khỏi các panel
+   thường — nền tối hơn panel để nổi bật ngay dưới header. */
+.sim-notice {
+  background: #1c2128;
+  border-left: 4px solid var(--k-runBlocking);
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+
+.sim-notice strong {
+  color: var(--fg);
+}
+
+.shell__main {
+  display: grid;
+  grid-template-columns: 380px 1fr 320px;
+  flex: 1;
+  min-height: 0;
+}
+
+.shell__left,
+.shell__center,
+.shell__right {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border-right: 1px solid var(--border);
+}
+
+.shell__right {
+  border-right: none;
+}
+
+.shell__foot {
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.panel--grow {
+  flex: 1;
+}
+
+.panel__title {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-dim);
+  border-bottom: 1px solid var(--border);
+}
+
+.panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
