@@ -3104,6 +3104,12 @@ export function cancelJob(
     cancelJob(child, cause, emitter, job.id)
   }
 
+  terminateAsFailed(job, cause, emitter)
+}
+
+/** Đưa một job về trạng thái kết thúc bất thường, phát đủ hai chặng JOB_STATE. */
+function terminateAsFailed(job: Job, cause: FailureCause, emitter: TraceEmitter): void {
+  if (job.isCompleted) return
   const prev = job.state
   if (prev !== 'Cancelling') {
     job.transitionTo('Cancelling')
@@ -3123,19 +3129,6 @@ export function cancelJob(
  *    sibling không bị đụng tới. (Exception chưa xử lý vẫn đi tiếp tới
  *    handler — việc đó do scheduler làm, không phải ở đây.)
  */
-/** Đưa một job về trạng thái kết thúc bất thường, phát đủ hai chặng JOB_STATE. */
-function terminateAsFailed(job: Job, cause: FailureCause, emitter: TraceEmitter): void {
-  if (job.isCompleted) return
-  const prev = job.state
-  if (prev !== 'Cancelling') {
-    job.transitionTo('Cancelling')
-    emitter.emit({ k: 'JOB_STATE', id: job.id, from: prev, to: 'Cancelling', cause: cause.exType })
-  }
-  job.cause = cause
-  job.transitionTo('Cancelled')
-  emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Cancelling', to: 'Cancelled', cause: cause.exType })
-}
-
 export function reportFailure(child: Job, cause: FailureCause, emitter: TraceEmitter): void {
   child.cause = cause
   terminateAsFailed(child, cause, emitter)
