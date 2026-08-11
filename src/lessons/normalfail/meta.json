@@ -1,0 +1,6 @@
+{
+  "id": "normalfail",
+  "order": 2,
+  "title": "Normal Job — child fail kéo sibling xuống",
+  "summary": "Failure đi lên parent thường, rồi cancellation quay xuống sibling."
+}
