@@ -355,12 +355,19 @@ describe('lexer — chuỗi và chú thích', () => {
   })
 
   it('template $ident tách thành part expr', () => {
+    // "a $x b" -> cột 1='"' 2='a' 3=' ' 4='$' 5='x'. Part expr phải trỏ vào
+    // vị trí BẮT ĐẦU của biểu thức (cột 5), giống hệt cách ${...} làm.
     const t = tokenize('"a $x b"')[0]!
     expect(t.parts).toEqual([
       { type: 'text', value: 'a ' },
-      { type: 'expr', source: 'x', line: 1, col: 6 },
+      { type: 'expr', source: 'x', line: 1, col: 5 },
       { type: 'text', value: ' b' },
     ])
+  })
+
+  it('$ident nhiều ký tự vẫn trỏ vào ký tự đầu tiên', () => {
+    const t = tokenize('"$name"')[0]!
+    expect(t.parts).toEqual([{ type: 'expr', source: 'name', line: 1, col: 3 }])
   })
 
   it('template ${expr} giữ nguyên biểu thức bên trong', () => {
@@ -378,9 +385,42 @@ describe('lexer — chuỗi và chú thích', () => {
     expect(toks.filter(t => t.kind === 'IDENT').map(t => t.text)).toEqual(['a', 'b'])
   })
 
+  it('nội dung trong chú thích không sinh token nào', () => {
+    // Test này thực sự kiểm tra việc bỏ qua chú thích: nếu comment không được
+    // xử lý thì 'val' và 'b' bên trong sẽ lọt ra thành token.
+    const toks = tokenize('/* val b = 1 */ val a')
+    expect(toks.filter(t => t.kind === 'IDENT' || t.kind === 'KEYWORD').map(t => t.text))
+      .toEqual(['val', 'a'])
+  })
+
   it('chú thích khối nhiều dòng vẫn đếm đúng số dòng', () => {
     const toks = tokenize('/* a\nb */\nval x')
     expect(toks.find(t => t.text === 'x')!.line).toBe(3)
+  })
+
+  it('lambda lồng trong ${} không làm part kết thúc sớm', () => {
+    const t = tokenize('"${list.map { it }}"')[0]!
+    expect(t.parts).toEqual([{ type: 'expr', source: 'list.map { it }', line: 1, col: 4 }])
+  })
+
+  it('$ đứng một mình là ký tự thường, không phải template', () => {
+    expect(tokenize('"giá 5$ thôi"')[0]!.parts).toEqual([{ type: 'text', value: 'giá 5$ thôi' }])
+  })
+
+  it('$ theo sau bởi chữ số không phải template', () => {
+    expect(tokenize('"$5"')[0]!.parts).toEqual([{ type: 'text', value: '$5' }])
+  })
+
+  it('chuỗi chưa đóng ném lỗi tiếng Việt kèm vị trí mở', () => {
+    expect(() => tokenize('val s = "abc')).toThrow(/chuỗi chưa được đóng.*dòng 1.*cột 9/)
+  })
+
+  it('chú thích khối chưa đóng ném lỗi tiếng Việt', () => {
+    expect(() => tokenize('val a\n/* chưa đóng')).toThrow(/chú thích khối chưa được đóng.*dòng 2/)
+  })
+
+  it('${ chưa đóng ném lỗi tiếng Việt', () => {
+    expect(() => tokenize('"n=${a"')).toThrow(/thiếu .* đóng/)
   })
 })
 ```
@@ -399,8 +439,12 @@ Chèn ngay sau nhánh bỏ qua khoảng trắng, **trước** nhánh `ARROW`:
       continue
     }
     if (ch === '/' && src[i + 1] === '*') {
+      const l = line, c = col
       advance(2)
       while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) advance(1)
+      if (i >= src.length) {
+        throw new Error(`Lexer: chú thích khối chưa được đóng, bắt đầu ở dòng ${l}, cột ${c}`)
+      }
       advance(2)
       continue
     }
@@ -425,7 +469,10 @@ Chèn ngay trước nhánh `NUMBER`:
           advance(2)
           continue
         }
-        if (src[i] === '$') {
+        // '$' chỉ mở template khi theo sau là '{' hoặc ký tự bắt đầu định danh.
+        // Nếu không ('giá 5$ thôi', '$5') thì nó là ký tự thường — nếu bỏ điều
+        // kiện này sẽ sinh ra part expr rỗng và parser ở Task 3 sẽ chết.
+        if (src[i] === '$' && (src[i + 1] === '{' || /[A-Za-z_]/.test(src[i + 1] ?? ''))) {
           flush()
           if (src[i + 1] === '{') {
             advance(2)
@@ -437,10 +484,15 @@ Chèn ngay trước nhánh `NUMBER`:
               else if (src[i] === '}') { depth--; if (depth === 0) break }
               advance(1)
             }
+            if (depth > 0) {
+              throw new Error(`Lexer: thiếu '}' đóng cho \${...} bắt đầu ở dòng ${sl}, cột ${sc}`)
+            }
             parts.push({ type: 'expr', source: src.slice(start, i), line: sl, col: sc })
             advance(1) // dấu }
           } else {
-            advance(1)
+            advance(1) // bỏ qua '$'
+            // sl/sc lấy TRƯỚC vòng quét: part phải trỏ vào vị trí BẮT ĐẦU của
+            // biểu thức, đồng nhất với nhánh ${...} ở trên.
             const sl = line, sc = col
             const start = i
             while (i < src.length && /[A-Za-z0-9_]/.test(src[i]!)) advance(1)
@@ -450,6 +502,9 @@ Chèn ngay trước nhánh `NUMBER`:
         }
         text += src[i]
         advance(1)
+      }
+      if (i >= src.length) {
+        throw new Error(`Lexer: chuỗi chưa được đóng, bắt đầu ở dòng ${l}, cột ${c}`)
       }
       flush()
       advance(1) // dấu " đóng
@@ -466,7 +521,7 @@ import { KEYWORDS, OPERATORS, type StringPart, type Token, type TokenKind } from
 - [ ] **Step 5: Chạy test, xác nhận pass**
 
 Run: `npx vitest run tests/engine/lexer-string.test.ts`
-Expected: PASS — 6 test.
+Expected: PASS — 14 test.
 
 - [ ] **Step 6: Chạy toàn bộ test + lint**
 
