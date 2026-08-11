@@ -1615,9 +1615,24 @@ describe('validator', () => {
     expect(d.length).toBeGreaterThanOrEqual(2)
   })
 
-  it('nhận diện construct chưa hỗ trợ ở dạng gọi thành viên', () => {
-    const d = check('fun main() {\n  val m = Mutex()\n  m.withLock { }\n}')
-    expect(d.some(x => x.message.includes('Mutex'))).toBe(true)
+  it('nhận diện toán tử Flow chưa hỗ trợ gọi kiểu thành viên', () => {
+    // Đường Member là đường DUY NHẤT bắt được buffer/conflate/debounce/
+    // combine/zip — 5/13 mục trong danh mục. Phải test bằng một tên THẬT SỰ
+    // có trong UNSUPPORTED, và assert đúng mục đó, không phải mục khác lọt vào.
+    const d = check('fun main() {\n  flowOf(1).buffer()\n}')
+    expect(d).toHaveLength(1)
+    expect(d[0]!.message).toContain('buffer')
+    expect(d[0]!.line).toBe(2)
+  })
+
+  it('nhận diện withLock ở dạng gọi thành viên, tách khỏi Mutex', () => {
+    const d = check('fun main() {\n  m.withLock { }\n}')
+    expect(d.some(x => x.message.includes('withLock'))).toBe(true)
+  })
+
+  it('gom lỗi trên NHIỀU hàm khác nhau, không chỉ trong một hàm', () => {
+    const d = check('fun a() {\n  select { }\n}\nfun main() {\n  Channel<Int>()\n}')
+    expect(d.map(x => x.line)).toEqual([2, 5])
   })
 })
 ```
@@ -1648,6 +1663,16 @@ Thêm vào class `Parser` trong `src/engine/parser/parser.ts`:
    */
   private trySkipTypeArgs(): boolean {
     if (!this.at('OP', '<')) return false
+
+    // Chỉ '>' theo sau bởi '(' là KHÔNG đủ: `x < y > (z)` cũng khớp mẫu đó và
+    // sẽ bị nuốt thành Call(x, [z]) một cách im lặng — tệ hơn cả lỗi parse.
+    // Chốt thêm bằng quy ước Kotlin: tên kiểu viết hoa chữ đầu.
+    // Giới hạn đã biết: `x < Y > (z)` với Y là biến viết hoa vẫn nhầm. Chấp
+    // nhận ở M1 — trình biên dịch thật phân giải chỗ này bằng thông tin kiểu
+    // mà engine này không có, và subset M1 không cho user tự định nghĩa generic.
+    const first = this.peek(1)
+    if (first.kind !== 'IDENT' || !/^[A-Z]/.test(first.text)) return false
+
     const save = this.i
     this.next()
     let depth = 1
@@ -1693,17 +1718,29 @@ describe('parser — đối số kiểu', () => {
 
   it('a < b vẫn là so sánh, KHÔNG phải đối số kiểu', () => {
     expect(parseExprSource('a < b')).toMatchObject({ k: 'Binary', op: '<' })
+    expect(parseExprSource('x < y + 1')).toMatchObject({ k: 'Binary', op: '<' })
   })
 
-  it('a < b > c không bị nuốt nhầm khi không có ( theo sau', () => {
-    expect(parseExprSource('a < b')).toMatchObject({ k: 'Binary', op: '<' })
-    expect(parseExprSource('x < y + 1')).toMatchObject({ k: 'Binary', op: '<' })
+  it('x < y > (z) là so sánh chứ KHÔNG phải lời gọi generic', () => {
+    // Ca nguy hiểm nhất: khớp đúng mẫu '<' ... '>' rồi '(' nhưng lại là
+    // so sánh. Nếu nuốt nhầm sẽ ra Call(x,[z]) và KHÔNG báo lỗi gì.
+    expect(parseExprSource('x < y > (z)')).toMatchObject({
+      k: 'Binary', op: '>',
+      left: { k: 'Binary', op: '<', left: { k: 'Ident', name: 'x' } },
+    })
+  })
+
+  it('dấu phẩy giữa hai so sánh trong đối số không bị gộp thành đối số kiểu', () => {
+    // f(a < b, c > (d)) — dấu phẩy nằm trong whitelist nên đây là ca dễ lọt.
+    const ast = parseExprSource('f(a < b, c > (d))')
+    expect(ast).toMatchObject({ k: 'Call', callee: { k: 'Ident', name: 'f' } })
+    expect((ast as { args: unknown[] }).args).toHaveLength(2)
   })
 })
 ```
 
 Run: `npx vitest run tests/engine/parser-expr.test.ts`
-Expected: PASS — 18 test.
+Expected: PASS — 19 test.
 
 - [ ] **Step 3: Viết `diagnostics.ts`**
 
@@ -1723,6 +1760,7 @@ export const UNSUPPORTED: Record<string, string> = {
   actor: 'actor chưa có ở v1.',
   select: 'select chưa có ở v1. Tách thành các nhánh await() riêng.',
   Mutex: 'Mutex chưa có ở v1. Ở M1 chưa mô phỏng tranh chấp tài nguyên.',
+  withLock: 'withLock chưa có ở v1 (đi kèm Mutex).',
   Semaphore: 'Semaphore chưa có ở v1.',
   buffer: 'Toán tử buffer chưa có ở v1.',
   conflate: 'Toán tử conflate chưa có ở v1.',
@@ -1831,7 +1869,7 @@ export function validate(program: Program): Diagnostic[] {
 - [ ] **Step 5: Chạy test, xác nhận pass**
 
 Run: `npx vitest run tests/engine/validator.test.ts`
-Expected: PASS — 6 test.
+Expected: PASS — 8 test.
 
 - [ ] **Step 6: Commit**
 
