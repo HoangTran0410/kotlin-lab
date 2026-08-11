@@ -1,0 +1,6 @@
+{
+  "id": "jobtree",
+  "order": 1,
+  "title": "Job Tree — parent cancel kéo theo children",
+  "summary": "Structured concurrency: cancellation đi xuống toàn bộ cây."
+}

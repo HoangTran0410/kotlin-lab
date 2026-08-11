@@ -267,7 +267,15 @@ export class Interpreter {
       const evalBlock = this.evalBlock.bind(this)
       // Factory nhận Job vừa tạo, nên Env con mang đúng jobId của chính coroutine này.
       const job = this.scheduler.spawnChildOf(env.enclosingJobId, ctx, calleeName, created =>
-        (function* (): CoroutineBody { yield* evalBlock(body, env.child(created.id)) })())
+        (function* (): CoroutineBody {
+          yield* evalBlock(body, env.child(created.id))
+          // Job của launch/async KHÔNG được Completed ngay khi thân nó chạy xong —
+          // structured concurrency đòi mọi child (vd. launch lồng bên trong launch)
+          // cũng phải xong trước. Thiếu bước này, Job cha coi như Completed trong
+          // khi cháu vẫn Active, nên parent.cancel() gọi sau đó thấy job.isCompleted
+          // và no-op — cancel không bao giờ lan tới cháu (lesson jobtree).
+          yield { s: 'joinChildren', jobId: created.id }
+        })())
       return {
         t: 'obj', className: calleeName === 'launch' ? 'Job' : 'Deferred',
         fields: new Map([['__jobId', { t: 'str', v: job.id } as KValue]]),
