@@ -49,6 +49,8 @@ export class Scheduler {
   /** Mảng song song với `tasks`, để duyệt theo đúng thứ tự tạo. */
   private readonly taskOrder: Task[] = []
   private currentJob: Job | null = null
+  /** Coroutine gốc. Chương trình kết thúc khi nó kết thúc — xem runToCompletion. */
+  private rootJobId: JobId | null = null
 
   /**
    * Task đang chờ một job khác kết thúc. Mảng, không phải Map lồng, để thứ tự
@@ -67,7 +69,10 @@ export class Scheduler {
   }
 
   spawnRoot(makeBody: (job: Job) => CoroutineBody): Job {
-    return this.spawn(null, false, 'runBlocking', CoroutineContext.empty().withDispatcher('Main'), makeBody)
+    const job = this.spawn(
+      null, false, 'runBlocking', CoroutineContext.empty().withDispatcher('Main'), makeBody)
+    this.rootJobId = job.id
+    return job
   }
 
   /** Tiện ích cho unit test của Scheduler; interpreter dùng spawnChildOf. */
@@ -164,6 +169,27 @@ export class Scheduler {
       // thể đã mở khoá một waiter; nếu bỏ dòng này thì đồng hồ sẽ nhảy vượt qua
       // việc vốn đã sẵn sàng chạy. Quét mỗi step vừa thừa vừa tốn.
       if (this.sweepWaiters()) continue
+      // Chương trình KẾT THÚC khi coroutine gốc kết thúc, y như JVM thoát ngay
+      // sau khi `main` trả về và giết mọi thread daemon.
+      //
+      // Không có chốt này thì runToCompletion vắt cạn MỌI timer, nên coroutine
+      // của GlobalScope (đã thoát khỏi cây job, không ai chờ nó) vẫn in tiếp
+      // sau khi chương trình đáng lẽ đã xong — dạy ngược nửa sau của bài học
+      // "GlobalScope thoát khỏi structured concurrency": thoát rồi thì cũng
+      // KHÔNG được sống lâu hơn chương trình.
+      //
+      // Đặt SAU unwindCancelled và sweepWaiters, không phải trước: khi root
+      // FAIL, task của nó finished ngay trong step() trong khi con vừa bị huỷ
+      // còn chưa unwind. Chốt sớm hơn sẽ nuốt mất `finally` của chúng — Kotlin
+      // thì runBlocking chờ con unwind xong mới ném ra ngoài. Đã đo: dời chốt
+      // lên trước unwindCancelled -> test 'root FAIL vẫn để con chạy nốt
+      // finally' ĐỎ ([] thay vì ['cleanup']).
+      //
+      // CỐ Ý không phát cancel tổng hợp cho những coroutine bị bỏ lại: JVM giết
+      // thread daemon mà KHÔNG unwind, nên bịa ra Cancelled sẽ làm `finally`
+      // của chúng chạy — sai theo một kiểu khác. Trace để chúng nằm nguyên ở
+      // COROUTINE_SUSPENDED không có resume, đúng thứ đã xảy ra thật.
+      if (this.rootJobId !== null && this.isJobSettled(this.rootJobId)) break
       this.emitter.setClock(this.clock.now)
       if (!this.clock.advanceToNextTimer()) break
       this.emitter.setClock(this.clock.now)
@@ -251,10 +277,19 @@ export class Scheduler {
       task.finished = true
       this.pool.release(threadId)
       this.emitter.emit({ k: 'THREAD_STATE', threadId, state: 'FREE' })
+      this.currentJob = null
+      // Cùng lý do (và cùng cách canh) như failInline: job đã kết thúc RỒI thì
+      // đây không phải failure mới, chỉ là cùng một exception đang đi ngược ra
+      // qua khung của nó. Ghi lại lần nữa là nhân đôi sự kiện — và tệ hơn, ghi
+      // EXCEPTION_THROWN cho một job mà trace vừa tuyên bố là đã chết.
+      //
+      // job.isCompleted ở ĐÂY khác với lần kiểm ở đầu step(): nó có thể vừa
+      // chuyển sang kết thúc TRONG lúc body.next() chạy, do chính thân nó làm
+      // failure leo lên qua job này.
+      if (job.isCompleted) return
       const cause = toCause(err)
       this.emitter.emit({ k: 'EXCEPTION_THROWN', id: job.id, exType: cause.exType, message: cause.message })
       reportFailure(job, cause, this.emitter)
-      this.currentJob = null
       return
     }
 
@@ -340,7 +375,9 @@ export class Scheduler {
     const parentCtx = parent ? this.tasks.get(parent.id)!.ctx : CoroutineContext.empty()
     const merged = parentCtx.plus(ctx)
     const id = this.newJobId()
-    const job = new Job(id, merged.name ?? id, parent, isSupervisor)
+    // runBlocking KHÔNG phải scope coroutine: BlockingCoroutine của kotlinx
+    // chặn luồng gọi chứ không trả exception vào continuation. Xem Job.isScopeCoroutine.
+    const job = new Job(id, merged.name ?? id, parent, isSupervisor, builder !== 'runBlocking')
     parent?.addChild(job)
     const jobCtx = merged.withJob(job)
     this.emitter.emit({

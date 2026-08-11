@@ -88,6 +88,52 @@ describe('cancel làm unwind thân coroutine', () => {
       '}')).toEqual(['cleanup', 'done'])
   })
 
+  it('catch quanh coroutineScope chạy SAU finally của anh em bị huỷ', () => {
+    // Kotlin: coroutineScope không ném lại cho tới khi MỌI con đã unwind xong,
+    // nên ["cleanup A", "caught boom"]. Engine cho ngược lại: failure của con
+    // leo lên đánh dấu chính job runBlocking là Cancelled, và unwindCancelled
+    // duyệt taskOrder — tức thứ tự TẠO, nông trước — nên tổ tiên được ném vào
+    // (chạy catch) trước khi con cháu kịp chạy finally.
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '    try {\n' +
+      '        coroutineScope {\n' +
+      '            launch { try { delay(1000) } finally { println("cleanup A") } }\n' +
+      '            launch { delay(10); throw RuntimeException("boom") }\n' +
+      '        }\n' +
+      '    } catch (e: Exception) { println("caught " + e.message) }\n' +
+      '}')).toEqual(['cleanup A', 'caught boom'])
+  })
+
+  it('THÂN coroutineScope ném: cũng phải chờ con unwind xong mới ném ra ngoài', () => {
+    // Đường thứ hai của cùng một luật. Ở trên exception đến TỪ con nên đi qua
+    // reportFailure; ở đây chính thân scope ném nên đi qua failInline. Nếu chỉ
+    // sửa đường trên thì đường này vẫn cho ["caught boom", "cleanup A"].
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '  try {\n' +
+      '    coroutineScope {\n' +
+      '      launch { try { delay(1000) } finally { println("cleanup A") } }\n' +
+      '      delay(10)\n' +
+      '      throw RuntimeException("boom")\n' +
+      '    }\n' +
+      '  } catch (e: Exception) { println("caught " + e.message) }\n' +
+      '}')).toEqual(['cleanup A', 'caught boom'])
+  })
+
+  it('root FAIL vẫn để con chạy nốt finally trước khi chương trình dừng', () => {
+    // Bẫy của việc dừng vòng lặp khi root kết thúc (chốt "JVM thoát"): khi root
+    // FAIL, task của nó được đánh finished ngay trong step() trong khi con vừa
+    // bị huỷ còn chưa unwind. Chốt đặt sớm hơn unwindCancelled sẽ nuốt mất
+    // `finally` của con — Kotlin thì runBlocking chờ con unwind xong mới ném ra.
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '  launch { try { delay(1000) } finally { println("cleanup") } }\n' +
+      '  delay(10)\n' +
+      '  throw RuntimeException("x")\n' +
+      '}')).toEqual(['cleanup'])
+  })
+
   it('cancel() là BẤT ĐỒNG BỘ — lệnh sau nó chạy trước finally', () => {
     // Đây là bẫy thật của Kotlin, đáng dạy. `cancel()` chỉ YÊU CẦU huỷ rồi
     // trả về ngay; `println("sau cancel")` chạy tức thì, còn finally của

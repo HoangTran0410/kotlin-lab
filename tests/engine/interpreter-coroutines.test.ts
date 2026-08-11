@@ -156,6 +156,81 @@ describe('interpreter — coroutine builder', () => {
       '}')).toEqual(['DUNG: Job was cancelled'])
   })
 
+  it('bắt được failure của coroutineScope thì job bao ngoài KHÔNG bị đánh dấu Cancelled', () => {
+    // kotlinx: ScopeCoroutine trả exception vào continuation của CALLER
+    // (JobSupport.cancelParent trả về sớm khi isScopedCoroutine), nó KHÔNG huỷ
+    // job cha. Engine để failure leo thẳng lên, nên trace nói runBlocking đã
+    // chết trong khi chương trình vẫn chạy tiếp và in ra — UI vẽ job state sẽ
+    // hiển thị một coroutine gốc đã Cancelled còn đang làm việc.
+    const r = runSource(
+      'fun main() = runBlocking {\n' +
+      '  try {\n' +
+      '    coroutineScope { launch { delay(10); throw RuntimeException("boom") } }\n' +
+      '  } catch (e: Exception) { println("caught " + e.message) }\n' +
+      '  println("van chay tiep")\n' +
+      '}')
+    expect(r.output).toEqual(['caught boom', 'van chay tiep'])
+
+    const rootId = (r.events.find(x => x.k === 'COROUTINE_CREATED') as { id: string }).id
+    const rootStates = r.events
+      .filter(x => x.k === 'JOB_STATE' && x.id === rootId)
+      .map(x => (x as { to: string }).to)
+    expect(rootStates).toEqual(['Active', 'Completing', 'Completed'])
+    expect(r.events.some(x => x.k === 'CANCEL_REQUESTED' && x.to === rootId)).toBe(false)
+  })
+
+  it('coroutineScope fail KHÔNG kéo theo anh em NGOÀI scope khi failure được bắt', () => {
+    // Hệ quả quan sát được của cùng một luật: scope không huỷ job cha, nên các
+    // con khác của cha không bị đụng tới. Nếu failure vẫn leo lên cha thì
+    // cancelJob quét hết sibling và "song song vẫn sống" không bao giờ in.
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '  launch { delay(200); println("song song van song") }\n' +
+      '  try {\n' +
+      '    coroutineScope { launch { delay(10); throw RuntimeException("boom") } }\n' +
+      '  } catch (e: Exception) { println("caught") }\n' +
+      '}')).toEqual(['caught', 'song song van song'])
+  })
+
+  it('supervisorScope KHÔNG ném lại failure của con — khác coroutineScope', () => {
+    // Mặt kia của cùng một luật, và là cái bẫy khi cài "scope ném lại": chỉ
+    // coroutineScope/withContext mới trả failure của con về caller.
+    // supervisorScope chặn ngay ở ranh giới nên caller không thấy gì cả.
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '  try {\n' +
+      '    supervisorScope { launch { delay(10); throw RuntimeException("boom") } }\n' +
+      '  } catch (e: Exception) { println("KHONG DUOC BAT: " + e.message) }\n' +
+      '  println("xong")\n' +
+      '}')).toEqual(['xong'])
+  })
+
+  it('EXCEPTION_THROWN KHÔNG được phát cho job đã ở trạng thái kết thúc', () => {
+    // failInline canh `if (job.isCompleted) return` đúng vì lý do này, nhưng
+    // khối catch của step() thì không, và run.ts bóc lớp runBlocking gốc nên
+    // job root đi qua đúng đường không được canh ấy. Kết quả: cùng một
+    // exception được ghi hai lần, lần sau cho một job mà trace vừa tuyên bố là
+    // đã chết — UI vẽ theo trace sẽ thấy một job Cancelled còn ném exception.
+    //
+    // Khẳng định theo BẤT BIẾN chứ không đếm sự kiện: đếm "đúng một
+    // EXCEPTION_THROWN" sẽ sai ngay khi ngữ nghĩa scope được sửa, vì lúc đó
+    // exception thoát ra thật sự đi qua hai khung coroutine khác nhau.
+    const r = runSource(
+      'fun main() = runBlocking {\n' +
+      '  coroutineScope {\n' +
+      '    launch { delay(1000); println("orphan") }\n' +
+      '    throw RuntimeException("boom")\n' +
+      '  }\n' +
+      '}')
+    const dead = new Set<string>()
+    const offenders: string[] = []
+    for (const e of r.events) {
+      if (e.k === 'JOB_STATE' && (e.to === 'Completed' || e.to === 'Cancelled')) dead.add(e.id)
+      if (e.k === 'EXCEPTION_THROWN' && dead.has(e.id)) offenders.push(`${e.seq}:${e.id}`)
+    }
+    expect(offenders).toEqual([])
+  })
+
   it('cancel job phát CANCEL_REQUESTED', () => {
     const e = evs(
       'fun main() = runBlocking {\n' +
@@ -217,6 +292,40 @@ describe('interpreter — coroutine builder', () => {
       && x.builder === 'launch') as { id: string } | undefined)?.id
     expect(globalId).toBeTruthy()
     expect(e.some(x => x.k === 'CANCEL_REQUESTED' && x.to === globalId)).toBe(false)
+  })
+
+  it('GlobalScope.launch CHẾT khi runBlocking kết thúc — như JVM thoát', () => {
+    // Mặt còn lại của "thoát khỏi cây job": thoát rồi thì cũng KHÔNG được sống
+    // lâu hơn chương trình. JVM thật chạy coroutine của GlobalScope trên thread
+    // daemon, nên `main` trả về là chúng bị giết ngay, không kịp in.
+    // runToCompletion vắt cạn MỌI timer nên engine cho chúng in tiếp sau khi
+    // chương trình đã xong — dạy ngược đúng nửa sau của bài học.
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '  GlobalScope.launch { delay(100); println("khong duoc in") }\n' +
+      '  println("main xong")\n' +
+      '}')).toEqual(['main xong'])
+  })
+
+  it('coroutine GlobalScope bị bỏ lại hiện rõ trên trace: treo ở suspend, không có state kết thúc', () => {
+    // "Chết ở lúc thoát" phải NHÌN THẤY ĐƯỢC chứ không phải im lặng biến mất.
+    // Engine cố ý KHÔNG bịa ra cancel tổng hợp cho nó: JVM giết thread daemon
+    // mà không unwind, nên phát CANCEL_REQUESTED/Cancelled sẽ khiến `finally`
+    // của nó chạy — sai theo một kiểu khác. Trace để nó nằm nguyên ở
+    // COROUTINE_SUSPENDED không có resume: đúng thứ đã xảy ra thật.
+    const e = evs(
+      'fun main() = runBlocking {\n' +
+      '  GlobalScope.launch { delay(100); println("khong duoc in") }\n' +
+      '  println("main xong")\n' +
+      '}')
+    const globalId = (e.find(x => x.k === 'COROUTINE_CREATED' && x.parentId === null
+      && x.builder === 'launch') as { id: string } | undefined)?.id
+    expect(globalId).toBeTruthy()
+    expect(e.some(x => x.k === 'COROUTINE_STARTED' && x.id === globalId)).toBe(true)
+    expect(e.some(x => x.k === 'COROUTINE_SUSPENDED' && x.id === globalId)).toBe(true)
+    expect(e.some(x => x.k === 'COROUTINE_RESUMED' && x.id === globalId)).toBe(false)
+    expect(e.some(x => x.k === 'JOB_STATE' && x.id === globalId
+      && (x.to === 'Completed' || x.to === 'Cancelled'))).toBe(false)
   })
 
   it('CoroutineScope(ctx).launch dùng dispatcher của scope, không nuốt mất', () => {

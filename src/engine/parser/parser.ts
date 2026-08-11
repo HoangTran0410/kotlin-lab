@@ -24,6 +24,94 @@ export class ParseError extends Error {
   constructor(message: string, readonly pos: Pos) { super(message) }
 }
 
+/**
+ * Quy MỘT vị trí trong mẩu `${...}` về toạ độ thật của file.
+ *
+ * Cùng quy tắc với phần rebase của ParseError trong stringParts: chỉ cộng bù
+ * cột khi vị trí nằm ở dòng ĐẦU của mẩu, vì từ dòng 2 trở đi cột trong mẩu đã
+ * là cột thật. Sửa TẠI CHỖ — Pos do parser dựng là object riêng của node, không
+ * dùng chung với gì bên ngoài sub-AST này.
+ */
+function rebasePos(pos: Pos, base: Pos, seen: Set<Pos>): void {
+  // parsePostfix dùng LẠI chính object `lambda.pos` làm pos của Call bao ngoài
+  // (`{ k: 'Call', ..., pos: lambda.pos }`), nên hai node có thể trỏ vào cùng
+  // một Pos. Không canh thì nó bị dời hai lần và cột chạy đi gấp đôi.
+  if (seen.has(pos)) return
+  seen.add(pos)
+  if (pos.line === 1) pos.col = base.col + pos.col - 1
+  pos.line = base.line + pos.line - 1
+}
+
+/**
+ * Dời toàn bộ sub-AST dựng bên trong một `${...}` về toạ độ thật của file.
+ *
+ * Task 3 đã rebase vị trí của ParseError, nhưng các NODE dựng THÀNH CÔNG thì
+ * chưa: parser lồng chỉ thấy một mẩu mã rời nên mọi node của nó nằm ở dòng 1.
+ * Validator đọc thẳng `pos` đó, nên mọi chẩn đoán bên trong template đều báo
+ * dòng 1 trong khi dạng không-template ngay bên cạnh lại báo đúng.
+ *
+ * Template lồng nhau tự đúng theo phép hợp thành: parser lồng bên trong đã dời
+ * node của nó về toạ độ của MẨU BAO NGOÀI trước, rồi lần dời này đưa cả cụm về
+ * toạ độ file — mỗi node đúng một lần cho mỗi tầng.
+ */
+function rebaseExpr(e: Expr, base: Pos, seen: Set<Pos>): void {
+  rebasePos(e.pos, base, seen)
+  switch (e.k) {
+    case 'StringLit':
+      e.parts.forEach(p => { if (p.type === 'expr') rebaseExpr(p.expr, base, seen) })
+      break
+    case 'Unary': rebaseExpr(e.operand, base, seen); break
+    case 'Binary': rebaseExpr(e.left, base, seen); rebaseExpr(e.right, base, seen); break
+    case 'Range': rebaseExpr(e.from, base, seen); rebaseExpr(e.to, base, seen); break
+    case 'Member': rebaseExpr(e.target, base, seen); break
+    case 'Call':
+      rebaseExpr(e.callee, base, seen)
+      e.args.forEach(a => rebaseExpr(a.value, base, seen))
+      if (e.lambda) rebaseLambda(e.lambda, base, seen)
+      break
+    case 'LambdaExpr': rebaseLambda(e.lambda, base, seen); break
+    case 'IfExpr':
+      rebaseExpr(e.cond, base, seen)
+      rebaseBlock(e.thenBlock, base, seen)
+      if (e.elseBlock) rebaseBlock(e.elseBlock, base, seen)
+      break
+    case 'WhenExpr':
+      if (e.subject) rebaseExpr(e.subject, base, seen)
+      e.branches.forEach(b => { rebaseExpr(b.cond, base, seen); rebaseBlock(b.block, base, seen) })
+      if (e.elseBlock) rebaseBlock(e.elseBlock, base, seen)
+      break
+    default: break
+  }
+}
+
+function rebaseLambda(l: Lambda, base: Pos, seen: Set<Pos>): void {
+  rebasePos(l.pos, base, seen)
+  rebaseBlock(l.body, base, seen)
+}
+
+function rebaseBlock(b: Block, base: Pos, seen: Set<Pos>): void {
+  rebasePos(b.pos, base, seen)
+  b.stmts.forEach(s => rebaseStmt(s, base, seen))
+}
+
+function rebaseStmt(s: Stmt, base: Pos, seen: Set<Pos>): void {
+  rebasePos(s.pos, base, seen)
+  switch (s.k) {
+    case 'ValDecl': rebaseExpr(s.init, base, seen); break
+    case 'Assign': rebaseExpr(s.target, base, seen); rebaseExpr(s.value, base, seen); break
+    case 'ExprStmt': rebaseExpr(s.expr, base, seen); break
+    case 'While': rebaseExpr(s.cond, base, seen); rebaseBlock(s.body, base, seen); break
+    case 'For': rebaseExpr(s.iterable, base, seen); rebaseBlock(s.body, base, seen); break
+    case 'Throw': rebaseExpr(s.expr, base, seen); break
+    case 'Return': if (s.expr) rebaseExpr(s.expr, base, seen); break
+    case 'Try':
+      rebaseBlock(s.body, base, seen)
+      s.catches.forEach(c => rebaseBlock(c.block, base, seen))
+      if (s.finallyBlock) rebaseBlock(s.finallyBlock, base, seen)
+      break
+  }
+}
+
 export class Parser {
   private i = 0
   constructor(private readonly toks: Token[]) {}
@@ -276,7 +364,12 @@ export class Parser {
       }
 
       try {
-        return { type: 'expr' as const, expr: new Parser(tokenize(p.source)).parseExpr() }
+        const expr = new Parser(tokenize(p.source)).parseExpr()
+        // Rebase node CŨNG cần thiết y như rebase ParseError ở dưới, chỉ khác
+        // là nó im lặng: parse thành công nên không ai thấy gì sai cho tới khi
+        // validator báo lỗi ở dòng 1.
+        rebaseExpr(expr, { line: p.line, col: p.col }, new Set())
+        return { type: 'expr' as const, expr }
       } catch (err) {
         if (!(err instanceof ParseError)) throw err
         throw new ParseError(err.message, {

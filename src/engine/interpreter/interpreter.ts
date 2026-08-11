@@ -203,127 +203,31 @@ export class Interpreter {
     return UNIT
   }
 
+  /**
+   * Điều phối một lời gọi qua BA nhóm handler, theo đúng thứ tự ưu tiên cũ.
+   * Mỗi handler trả `undefined` nghĩa là "không phải của tôi" nên lời gọi đi
+   * tiếp xuống nhóm sau; trả KValue — kể cả UNIT — nghĩa là đã xử lý xong.
+   *
+   * Thứ tự là MỘT PHẦN CỦA NGỮ NGHĨA, không được đảo. `Job()` phải rơi vào
+   * nhóm factory context; nếu nó xuống tới quy tắc "tên viết hoa -> dựng
+   * object" ở cuối thì cờ __supervisor biến mất không một tiếng động.
+   */
   protected *evalCall(e: Expr & { k: 'Call' }, env: Env): Eval<KValue> {
+    // Một tên chung cho cả `foo()` lẫn `x.foo()`. Receiver do từng handler tự
+    // đọc khi cần (join/await/cancel, và scopeReceiver của launch/async), nên
+    // đừng suy ra "không có receiver" từ biến này — nhóm cuối dùng `name`.
     const calleeName = e.callee.k === 'Ident'
       ? e.callee.name
       : e.callee.k === 'Member' ? e.callee.name : null
 
-    // ---- điểm suspend ----
-    if (calleeName === 'delay') {
-      const ms = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : { t: 'num' as const, v: 0 }
-      yield { s: 'delay', ms: ms.t === 'num' ? ms.v : 0 }
-      return UNIT
-    }
-    if (calleeName === 'yield') { yield { s: 'yield' }; return UNIT }
+    const suspension = yield* this.trySuspensionPoint(calleeName, e, env)
+    if (suspension !== undefined) return suspension
 
-    if (calleeName === 'join' || calleeName === 'await') {
-      const target = e.callee.k === 'Member' ? yield* this.evalExpr(e.callee.target, env) : UNIT
-      const jobId = target.t === 'obj' ? target.fields.get('__jobId') : undefined
-      if (jobId && jobId.t === 'str') yield { s: calleeName === 'join' ? 'join' : 'await', jobId: jobId.v }
-      return UNIT
-    }
+    const builder = yield* this.tryBuilder(calleeName, e, env)
+    if (builder !== undefined) return builder
 
-    if (calleeName === 'cancel' || calleeName === 'cancelAndJoin') {
-      const target = e.callee.k === 'Member' ? yield* this.evalExpr(e.callee.target, env) : UNIT
-      const jobId = target.t === 'obj' ? target.fields.get('__jobId') : undefined
-      if (jobId && jobId.t === 'str') {
-        this.scheduler.cancelById(jobId.v, {
-          exType: 'CancellationException', message: 'Job was cancelled', isCancellation: true,
-        })
-        // cancelAndJoin từng được nối thẳng vào nhánh này và im lặng KHÔNG join,
-        // nên nó cho ra đúng thứ tự sai mà người học dùng nó để tránh: lệnh sau
-        // nó chạy trước khi finally của coroutine bị huỷ kịp chạy.
-        if (calleeName === 'cancelAndJoin') yield { s: 'join', jobId: jobId.v }
-      }
-      return UNIT
-    }
-
-    // ---- coroutine builder ----
-    if (calleeName === 'runBlocking' || calleeName === 'coroutineScope'
-        || calleeName === 'supervisorScope' || calleeName === 'withContext') {
-      const lambda = e.lambda
-      if (!lambda) return UNIT
-      const isSupervisor = calleeName === 'supervisorScope'
-      const ctx = yield* this.contextFromArgs(e, env)
-      const job = this.scheduler.spawnInline(
-        calleeName === 'runBlocking' ? 'runBlocking'
-          : calleeName === 'withContext' ? 'withContext'
-          : calleeName === 'coroutineScope' ? 'coroutineScope' : 'supervisorScope',
-        env.enclosingJobId, isSupervisor, ctx,
-      )
-      try {
-        // Thân scope chạy trong Env mang jobId của scope, nên launch bên trong
-        // gắn đúng cha kể cả sau khi suspend/resume.
-        const result = yield* this.evalBlock(lambda.body, env.child(job.id))
-        // coroutineScope/supervisorScope/runBlocking chỉ trả về khi mọi child xong.
-        yield { s: 'joinChildren', jobId: job.id }
-        this.scheduler.completeInline(job)
-        return result
-      } catch (err) {
-        // KHÔNG được gộp hai đường vào `finally { completeInline(job) }`.
-        // completeInline không có đường thất bại, nên một exception thoát khỏi
-        // thân scope sẽ báo scope HOÀN THÀNH THÀNH CÔNG: con của nó không ai
-        // huỷ và chạy tiếp như mồ côi, và failure không bao giờ đi qua
-        // reportFailure. Đúng thứ ngữ nghĩa mà công cụ này tồn tại để dạy.
-        if (err instanceof KotlinThrow) this.scheduler.failInline(job, toCause(err))
-        // ReturnSignal (lệnh `return`) là kết thúc BÌNH THƯỜNG của scope, không
-        // phải failure — vẫn completeInline như đường thuận.
-        else this.scheduler.completeInline(job)
-        throw err
-      }
-    }
-
-    if (calleeName === 'launch' || calleeName === 'async') {
-      const lambda = e.lambda
-      if (!lambda) return UNIT
-      const argCtx = yield* this.contextFromArgs(e, env)
-      // Receiver quyết định CHA và context nền. Bỏ qua nó thì
-      // GlobalScope.launch { } gắn vào job bao quanh y hệt launch thường —
-      // "GlobalScope thoát khỏi cây job" là bài học công cụ này thay thế, nên
-      // hai thứ đó bắt buộc phải phân biệt được.
-      const recv = yield* this.scopeReceiver(e, env)
-      const parentJobId = recv ? recv.parentJobId : env.enclosingJobId
-      const ctx = recv ? recv.ctx.plus(argCtx) : argCtx
-      const body = lambda.body
-      // Không alias `this` (vi phạm no-this-alias) — bind evalBlock thay vào đó.
-      const evalBlock = this.evalBlock.bind(this)
-      // Factory nhận Job vừa tạo, nên Env con mang đúng jobId của chính coroutine này.
-      const job = this.scheduler.spawnChildOf(parentJobId, ctx, calleeName, created =>
-        (function* (): CoroutineBody {
-          yield* evalBlock(body, env.child(created.id))
-          // Job của launch/async KHÔNG được Completed ngay khi thân nó chạy xong —
-          // structured concurrency đòi mọi child (vd. launch lồng bên trong launch)
-          // cũng phải xong trước. Thiếu bước này, Job cha coi như Completed trong
-          // khi cháu vẫn Active, nên parent.cancel() gọi sau đó thấy job.isCompleted
-          // và no-op — cancel không bao giờ lan tới cháu (lesson jobtree).
-          yield { s: 'joinChildren', jobId: created.id }
-        })())
-      return {
-        t: 'obj', className: calleeName === 'launch' ? 'Job' : 'Deferred',
-        fields: new Map([['__jobId', { t: 'str', v: job.id } as KValue]]),
-      }
-    }
-
-    // ---- factory context ----
-    if (calleeName === 'SupervisorJob' || calleeName === 'Job') {
-      return {
-        t: 'obj', className: calleeName,
-        fields: new Map([['__supervisor', { t: 'bool', v: calleeName === 'SupervisorJob' } as KValue]]),
-      }
-    }
-    if (calleeName === 'CoroutineScope' || calleeName === 'MainScope') {
-      // MainScope() = Dispatchers.Main + SupervisorJob. Không gắn dispatcher
-      // vào thì nó im lặng thành Default — cùng dạng "sai lặng lẽ" mà receiver
-      // của launch vừa được sửa, chỉ khác chỗ biểu hiện.
-      const arg = calleeName === 'MainScope'
-        ? { t: 'obj' as const, className: 'Dispatchers.Main', fields: new Map<string, KValue>() }
-        : e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
-      return { t: 'obj', className: 'CoroutineScope', fields: new Map([['__ctx', arg]]) }
-    }
-    if (calleeName === 'CoroutineName') {
-      const arg = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
-      return { t: 'obj', className: 'CoroutineName', fields: new Map([['name', arg]]) }
-    }
+    const ctxValue = yield* this.tryContextFactory(calleeName, e, env)
+    if (ctxValue !== undefined) return ctxValue
 
     const name = e.callee.k === 'Ident' ? e.callee.name : null
 
@@ -369,6 +273,173 @@ export class Interpreter {
     return UNIT
   }
 
+  /**
+   * delay/yield/join/await/cancel/cancelAndJoin — những lời gọi NHƯỜNG QUYỀN
+   * điều khiển về scheduler. Phải xét TRƯỚC mọi nhóm khác: `cancel` và
+   * `join` là gọi kiểu thành viên trên Job, nếu để chúng rơi xuống dưới thì
+   * nhánh nào bắt được trước cũng nuốt mất điểm suspend.
+   */
+  protected *trySuspensionPoint(
+    calleeName: string | null, e: Expr & { k: 'Call' }, env: Env,
+  ): Eval<KValue | undefined> {
+    if (calleeName === 'delay') {
+      const ms = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : { t: 'num' as const, v: 0 }
+      yield { s: 'delay', ms: ms.t === 'num' ? ms.v : 0 }
+      return UNIT
+    }
+    if (calleeName === 'yield') { yield { s: 'yield' }; return UNIT }
+
+    if (calleeName === 'join' || calleeName === 'await') {
+      const target = e.callee.k === 'Member' ? yield* this.evalExpr(e.callee.target, env) : UNIT
+      const jobId = target.t === 'obj' ? target.fields.get('__jobId') : undefined
+      if (jobId && jobId.t === 'str') yield { s: calleeName === 'join' ? 'join' : 'await', jobId: jobId.v }
+      return UNIT
+    }
+
+    if (calleeName === 'cancel' || calleeName === 'cancelAndJoin') {
+      const target = e.callee.k === 'Member' ? yield* this.evalExpr(e.callee.target, env) : UNIT
+      const jobId = target.t === 'obj' ? target.fields.get('__jobId') : undefined
+      if (jobId && jobId.t === 'str') {
+        this.scheduler.cancelById(jobId.v, {
+          exType: 'CancellationException', message: 'Job was cancelled', isCancellation: true,
+        })
+        // cancelAndJoin từng được nối thẳng vào nhánh này và im lặng KHÔNG join,
+        // nên nó cho ra đúng thứ tự sai mà người học dùng nó để tránh: lệnh sau
+        // nó chạy trước khi finally của coroutine bị huỷ kịp chạy.
+        if (calleeName === 'cancelAndJoin') yield { s: 'join', jobId: jobId.v }
+      }
+      return UNIT
+    }
+    return undefined
+  }
+
+  /**
+   * runBlocking/coroutineScope/supervisorScope/withContext (chạy TẠI CHỖ) và
+   * launch/async (tạo coroutine con chạy sau).
+   */
+  protected *tryBuilder(
+    calleeName: string | null, e: Expr & { k: 'Call' }, env: Env,
+  ): Eval<KValue | undefined> {
+    if (calleeName === 'runBlocking' || calleeName === 'coroutineScope'
+        || calleeName === 'supervisorScope' || calleeName === 'withContext') {
+      const lambda = e.lambda
+      if (!lambda) return UNIT
+      const isSupervisor = calleeName === 'supervisorScope'
+      const ctx = yield* this.contextFromArgs(e, env)
+      const job = this.scheduler.spawnInline(
+        calleeName === 'runBlocking' ? 'runBlocking'
+          : calleeName === 'withContext' ? 'withContext'
+          : calleeName === 'coroutineScope' ? 'coroutineScope' : 'supervisorScope',
+        env.enclosingJobId, isSupervisor, ctx,
+      )
+      let result: KValue
+      try {
+        // Thân scope chạy trong Env mang jobId của scope, nên launch bên trong
+        // gắn đúng cha kể cả sau khi suspend/resume.
+        result = yield* this.evalBlock(lambda.body, env.child(job.id))
+        // coroutineScope/supervisorScope/runBlocking chỉ trả về khi mọi child xong.
+        yield { s: 'joinChildren', jobId: job.id }
+      } catch (err) {
+        // KHÔNG được gộp hai đường vào `finally { completeInline(job) }`.
+        // completeInline không có đường thất bại, nên một exception thoát khỏi
+        // thân scope sẽ báo scope HOÀN THÀNH THÀNH CÔNG: con của nó không ai
+        // huỷ và chạy tiếp như mồ côi, và failure không bao giờ đi qua
+        // reportFailure. Đúng thứ ngữ nghĩa mà công cụ này tồn tại để dạy.
+        if (err instanceof KotlinThrow) {
+          this.scheduler.failInline(job, toCause(err))
+          // Chờ con unwind XONG rồi mới ném ra ngoài. failInline vừa huỷ chúng,
+          // nhưng huỷ chỉ lật trạng thái Job — khối `finally` trong code Kotlin
+          // chỉ chạy khi scheduler ném vào generator ở vòng lặp sau. Bỏ bước
+          // này thì catch của người gọi chạy TRƯỚC finally của con, ngược hẳn
+          // Kotlin: cùng lỗi R1, chỉ khác đường đi tới (thân scope ném, thay vì
+          // con của scope fail).
+          yield { s: 'joinChildren', jobId: job.id }
+        } else {
+          // ReturnSignal (lệnh `return`) là kết thúc BÌNH THƯỜNG của scope,
+          // không phải failure — vẫn completeInline như đường thuận.
+          this.scheduler.completeInline(job)
+        }
+        throw err
+      }
+      // Con fail => scope NÉM LẠI ĐÚNG TẠI ĐÂY, tức trong khung của người gọi.
+      //
+      // Trước đây việc ném lại xảy ra gián tiếp: failure của con leo lên đánh
+      // dấu job bao ngoài là Cancelled, rồi unwindCancelled ném vào generator
+      // của nó. Cách đó cho ra output đúng nhưng SAI hai chỗ — trace nói
+      // runBlocking đã chết dù người học bắt được exception (R2), và tổ tiên bị
+      // ném vào trước khi con cháu kịp chạy finally (R1). Ném ở đây thì cả hai
+      // tự đúng: joinChildren ở trên đã bảo đảm mọi con unwind xong.
+      //
+      // `failure` chứ không phải `cause`: chỉ job THẬT SỰ fail mới ném lại.
+      // supervisorScope chặn failure của con ngay tại ranh giới nên `failure`
+      // của nó là null — đúng như Kotlin, caller không thấy gì cả.
+      const failure = job.failure
+      if (failure) throw new KotlinThrow(failure.exType, failure.message)
+      this.scheduler.completeInline(job)
+      return result
+    }
+
+    if (calleeName === 'launch' || calleeName === 'async') {
+      const lambda = e.lambda
+      if (!lambda) return UNIT
+      const argCtx = yield* this.contextFromArgs(e, env)
+      // Receiver quyết định CHA và context nền. Bỏ qua nó thì
+      // GlobalScope.launch { } gắn vào job bao quanh y hệt launch thường —
+      // "GlobalScope thoát khỏi cây job" là bài học công cụ này thay thế, nên
+      // hai thứ đó bắt buộc phải phân biệt được.
+      const recv = yield* this.scopeReceiver(e, env)
+      const parentJobId = recv ? recv.parentJobId : env.enclosingJobId
+      const ctx = recv ? recv.ctx.plus(argCtx) : argCtx
+      const body = lambda.body
+      // Không alias `this` (vi phạm no-this-alias) — bind evalBlock thay vào đó.
+      const evalBlock = this.evalBlock.bind(this)
+      // Factory nhận Job vừa tạo, nên Env con mang đúng jobId của chính coroutine này.
+      const job = this.scheduler.spawnChildOf(parentJobId, ctx, calleeName, created =>
+        (function* (): CoroutineBody {
+          yield* evalBlock(body, env.child(created.id))
+          // Job của launch/async KHÔNG được Completed ngay khi thân nó chạy xong —
+          // structured concurrency đòi mọi child (vd. launch lồng bên trong launch)
+          // cũng phải xong trước. Thiếu bước này, Job cha coi như Completed trong
+          // khi cháu vẫn Active, nên parent.cancel() gọi sau đó thấy job.isCompleted
+          // và no-op — cancel không bao giờ lan tới cháu (lesson jobtree).
+          yield { s: 'joinChildren', jobId: created.id }
+        })())
+      return {
+        t: 'obj', className: calleeName === 'launch' ? 'Job' : 'Deferred',
+        fields: new Map([['__jobId', { t: 'str', v: job.id } as KValue]]),
+      }
+    }
+    return undefined
+  }
+
+  /**
+   * SupervisorJob/Job/CoroutineScope/MainScope/CoroutineName — dựng giá trị
+   * CoroutineContext, không chạy gì và không suspend.
+   */
+  protected *tryContextFactory(
+    calleeName: string | null, e: Expr & { k: 'Call' }, env: Env,
+  ): Eval<KValue | undefined> {
+    if (calleeName === 'SupervisorJob' || calleeName === 'Job') {
+      return {
+        t: 'obj', className: calleeName,
+        fields: new Map([['__supervisor', { t: 'bool', v: calleeName === 'SupervisorJob' } as KValue]]),
+      }
+    }
+    if (calleeName === 'CoroutineScope' || calleeName === 'MainScope') {
+      // MainScope() = Dispatchers.Main + SupervisorJob. Không gắn dispatcher
+      // vào thì nó im lặng thành Default — cùng dạng "sai lặng lẽ" mà receiver
+      // của launch vừa được sửa, chỉ khác chỗ biểu hiện.
+      const arg = calleeName === 'MainScope'
+        ? { t: 'obj' as const, className: 'Dispatchers.Main', fields: new Map<string, KValue>() }
+        : e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
+      return { t: 'obj', className: 'CoroutineScope', fields: new Map([['__ctx', arg]]) }
+    }
+    if (calleeName === 'CoroutineName') {
+      const arg = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
+      return { t: 'obj', className: 'CoroutineName', fields: new Map([['name', arg]]) }
+    }
+    return undefined
+  }
   *callFun(fn: FunDecl, args: readonly { name: string | null; value: Expr }[], env: Env): Eval<KValue> {
     // Thân hàm không thấy biến cục bộ của caller, NHƯNG kế thừa coroutine scope
     // bao quanh — nhờ vậy launch bên trong một suspend fun gắn đúng cha.

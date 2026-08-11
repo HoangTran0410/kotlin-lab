@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { parseExprSource } from '../../src/engine/parser/parser'
+import { parseExprSource, parseProgram } from '../../src/engine/parser/parser'
+import type { Pos } from '../../src/engine/ast/nodes'
 
 describe('parser — biểu thức', () => {
   it('literal số', () => {
@@ -126,5 +127,33 @@ describe('parser — đối số kiểu', () => {
     const ast = parseExprSource('f(a < b, c > (d))')
     expect(ast).toMatchObject({ k: 'Call', callee: { k: 'Ident', name: 'f' } })
     expect((ast as { args: unknown[] }).args).toHaveLength(2)
+  })
+})
+
+describe('parser — vị trí của AST dựng trong string template', () => {
+  // Task 3 đã quy vị trí của ParseError ném ra từ parser lồng về toạ độ file,
+  // nhưng các NODE dựng thành công bên trong ${...} vẫn giữ toạ độ của mẩu
+  // (luôn bắt đầu từ dòng 1, cột 1). Validator đọc thẳng pos đó nên mọi chẩn
+  // đoán bên trong template đều báo dòng 1 — trỏ vào một dòng không liên quan.
+  it('node bên trong ${...} mang toạ độ THẬT của file, không phải của mẩu', () => {
+    const prog = parseProgram(
+      'fun main() {\n' +
+      '  val a = 1\n' +
+      '  println("x ${a.isActive} y")\n' +
+      '}')
+    const stmt = prog.funs[0]!.body!.stmts[1]!
+    const call = (stmt as { expr: { args: { value: { parts: unknown[] } }[] } }).expr
+    const part = call.args[0]!.value.parts[1] as { type: string; expr: { pos: Pos } }
+    expect(part.type).toBe('expr')
+    // 'isActive' nằm ở dòng 3; cột 18 là chữ 'i' trong `  println("x ${a.isActive}`.
+    expect(part.expr.pos).toEqual({ line: 3, col: 18 })
+  })
+
+  it('template nhiều tầng: node ở tầng trong cùng cũng về đúng toạ độ file', () => {
+    const e = parseExprSource('"a ${ "b ${zz}" }"') as { parts: unknown[] }
+    const outer = e.parts[1] as { type: string; expr: { parts: unknown[] } }
+    const inner = outer.expr.parts[1] as { type: string; expr: { pos: Pos } }
+    // `"a ${ "b ${zz}" }"` — 'zz' bắt đầu ở cột 12 (1-based) của cùng dòng 1.
+    expect(inner.expr.pos).toEqual({ line: 1, col: 12 })
   })
 })
