@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { runSource } from '../../src/engine/run'
 
 const out = (src: string) => runSource(src).output
+
 const evs = (src: string) => runSource(src).events
 
 describe('interpreter — coroutine builder', () => {
@@ -80,6 +81,43 @@ describe('interpreter — coroutine builder', () => {
       '  }\n' +
       '}')
     expect(o).toEqual([])
+
+    // ĐƯỜNG THỨ HAI, cùng một luật: thân của coroutineScope ném. Đường launch ở
+    // trên đi qua step() nên vẫn tới được reportFailure; đường inline-scope thì
+    // KHÔNG — nó bọc thân trong try/finally không có catch, nên exception thoát
+    // ra mà scope vẫn được báo là Completed và con của nó không ai huỷ.
+    const o2 = out(
+      'fun main() = runBlocking {\n' +
+      '  coroutineScope {\n' +
+      '    launch { delay(1000); println("orphan") }\n' +
+      '    throw RuntimeException("boom")\n' +
+      '  }\n' +
+      '}')
+    expect(o2).toEqual([])
+  })
+
+  it('throw trong thân coroutineScope: scope FAIL, không phải Completed', () => {
+    // Kotlin thật: coroutineScope { launch { ... }; throw } huỷ mọi con rồi ném
+    // tiếp lên. Engine cũ báo Active->Completing->Completed cho scope trong khi
+    // con của nó còn New, và không phát FAILURE_PROPAGATED nào — công cụ dạy
+    // học nói ngược hẳn ngữ nghĩa nó tồn tại để dạy.
+    const r = runSource(
+      'fun main() = runBlocking {\n' +
+      '  coroutineScope {\n' +
+      '    launch { delay(1000); println("orphan") }\n' +
+      '    throw RuntimeException("boom")\n' +
+      '  }\n' +
+      '}')
+    const created = r.events.find(x => x.k === 'COROUTINE_CREATED' && x.builder === 'coroutineScope')
+    const scopeId = (created as { id: string }).id
+
+    expect(r.events.some(x => x.k === 'JOB_STATE' && x.id === scopeId && x.to === 'Completed'))
+      .toBe(false)
+    expect(r.events.some(x => x.k === 'JOB_STATE' && x.id === scopeId && x.to === 'Cancelled'))
+      .toBe(true)
+    expect(r.events.some(x => x.k === 'EXCEPTION_THROWN' && x.id === scopeId
+      && x.exType === 'RuntimeException')).toBe(true)
+    expect(r.events.some(x => x.k === 'FAILURE_PROPAGATED' && x.from === scopeId)).toBe(true)
   })
 
   it('cancel job phát CANCEL_REQUESTED', () => {

@@ -19,12 +19,19 @@ interface Task {
   finished: boolean
 }
 
-function toCause(err: unknown): FailureCause {
+export function toCause(err: unknown): FailureCause {
+  // Nhận dạng theo hình dạng chứ không phải `instanceof KotlinThrow`: test của
+  // Scheduler dựng exception giả bằng Object.assign(new Error, { kotlinType }),
+  // và Scheduler không có lý do gì phải phụ thuộc vào lớp cụ thể của interpreter.
   if (err && typeof err === 'object' && 'kotlinType' in err) {
-    const e = err as { kotlinType: string; message?: string }
+    const e = err as { kotlinType: string; kotlinMessage?: string; message?: string }
     return {
       exType: e.kotlinType,
-      message: e.message ?? '',
+      // Ưu tiên kotlinMessage. Error.message của KotlinThrow được dựng thành
+      // `${kotlinType}: ${kotlinMessage}`, nên đọc nhầm sẽ nhân đôi tên kiểu:
+      // `catch (e: RuntimeException) { println(e.message) }` in ra
+      // "RuntimeException: boom" thay vì "boom".
+      message: e.kotlinMessage ?? e.message ?? '',
       isCancellation: e.kotlinType === 'CancellationException',
     }
   }
@@ -319,6 +326,27 @@ export class Scheduler {
     this.emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Active', to: 'Completing' })
     job.transitionTo('Completed')
     this.emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Completing', to: 'Completed' })
+  }
+
+  /**
+   * Đối xứng với completeInline, cho đường THẤT BẠI của scope inline
+   * (coroutineScope/supervisorScope/runBlocking/withContext).
+   *
+   * Không có hàm này thì interpreter chỉ có completeInline để gọi trong
+   * `finally`, nghĩa là một exception thoát khỏi thân scope vẫn được ghi vào
+   * trace là HOÀN THÀNH THÀNH CÔNG: con của scope không ai huỷ (chạy tiếp như
+   * mồ côi), không có FAILURE_PROPAGATED nào, và EXCEPTION_THROWN bị gán cho
+   * job bao ngoài chứ không phải cho chính scope.
+   */
+  failInline(job: Job, cause: FailureCause): void {
+    // Job đã kết thúc rồi thì đây không phải failure mới — chỉ là cùng một
+    // exception đang đi ngược ra qua khung của scope (vd. scope đã bị con của
+    // nó kéo chết trước đó). Ghi lại lần nữa là nhân đôi sự kiện.
+    if (job.isCompleted) return
+    this.emitter.emit({
+      k: 'EXCEPTION_THROWN', id: job.id, exType: cause.exType, message: cause.message,
+    })
+    reportFailure(job, cause, this.emitter)
   }
 
   cancelById(jobId: JobId, cause: FailureCause): void {

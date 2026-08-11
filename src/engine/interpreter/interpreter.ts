@@ -1,6 +1,6 @@
 import type { Block, Expr, FunDecl, Program, Stmt } from '../ast/nodes'
 import { CoroutineContext } from '../runtime/context'
-import type { Scheduler } from '../runtime/scheduler'
+import { toCause, type Scheduler } from '../runtime/scheduler'
 import type { CoroutineBody, Suspension } from '../runtime/suspension'
 import { Env } from './env'
 import { KotlinThrow, UNIT, display, truthy, type KValue } from './values'
@@ -252,9 +252,19 @@ export class Interpreter {
         const result = yield* this.evalBlock(lambda.body, env.child(job.id))
         // coroutineScope/supervisorScope/runBlocking chỉ trả về khi mọi child xong.
         yield { s: 'joinChildren', jobId: job.id }
-        return result
-      } finally {
         this.scheduler.completeInline(job)
+        return result
+      } catch (err) {
+        // KHÔNG được gộp hai đường vào `finally { completeInline(job) }`.
+        // completeInline không có đường thất bại, nên một exception thoát khỏi
+        // thân scope sẽ báo scope HOÀN THÀNH THÀNH CÔNG: con của nó không ai
+        // huỷ và chạy tiếp như mồ côi, và failure không bao giờ đi qua
+        // reportFailure. Đúng thứ ngữ nghĩa mà công cụ này tồn tại để dạy.
+        if (err instanceof KotlinThrow) this.scheduler.failInline(job, toCause(err))
+        // ReturnSignal (lệnh `return`) là kết thúc BÌNH THƯỜNG của scope, không
+        // phải failure — vẫn completeInline như đường thuận.
+        else this.scheduler.completeInline(job)
+        throw err
       }
     }
 
