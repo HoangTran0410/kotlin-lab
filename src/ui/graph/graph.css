@@ -95,3 +95,24 @@
   opacity: 0;
   pointer-events: none;
 }
+
+/* Task 14: dấu chặn failure bị supervisor — đoạn ngang đặc thay cho mũi tên. */
+.k-edge-block-mark {
+  position: absolute;
+  width: 14px;
+  height: 3px;
+  background: var(--state-cancelled);
+  pointer-events: none;
+}
+
+.k-edge-block-label {
+  position: absolute;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--panel);
+  border: 1px solid var(--state-cancelled);
+  color: var(--state-cancelled);
+  font-size: 10px;
+  white-space: nowrap;
+  pointer-events: none;
+}

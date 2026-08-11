@@ -5,6 +5,11 @@
   --k-runBlocking: #d29922; --k-launch: #58a6ff; --k-async: #bc8cff;
   --k-coroutineScope: #3fb950; --k-supervisorScope: #2ea043; --k-withContext: #79c0ff;
   --state-cancelled: #f85149; --state-completed: #3fb950; --state-active: #58a6ff;
+  /* Task 14: màu cạnh cancel. Cố ý KHÔNG dùng lại --k-runBlocking (cũng cam) —
+     trùng màu với accent builder sẽ trông như trùng hợp chứ không phải chủ ý,
+     và một node runBlocking có cạnh cancel đi ra sẽ đọc nhầm thành hai lớp ý
+     nghĩa chồng lên nhau. */
+  --edge-cancel: #f0883e;
 }
 body { margin: 0; background: var(--bg); color: var(--fg);
   font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; }
