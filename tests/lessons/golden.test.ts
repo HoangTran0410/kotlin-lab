@@ -21,14 +21,33 @@ describe('lesson — nghiệm thu M1', () => {
   })
 
   describe('jobtree — cancel đi xuống', () => {
-    it('mọi job đều kết thúc, không còn Active', () => {
+    it('mọi job đều đạt trạng thái KẾT THÚC, không kẹt ở New/Completing', () => {
+      // Lọc theo state === 'Active' là chưa đủ: một job kẹt ở 'New' (không bao
+      // giờ được chạy) hay ở 'Completing' (không bao giờ chốt xong) đều lọt qua,
+      // trong khi cả hai đều là hỏng. Khẳng định theo chiều dương.
       const w = finalWorld('jobtree')
-      expect([...w.jobs.values()].filter(j => j.state === 'Active')).toEqual([])
+      const states = [...w.jobs.values()].map(j => j.state)
+      expect(states.length).toBeGreaterThan(0)
+      expect(states.filter(s => s !== 'Completed' && s !== 'Cancelled')).toEqual([])
     })
 
-    it('có ít nhất 3 CANCEL_REQUESTED xuống các child', () => {
-      const e = runLesson('jobtree').events.filter(x => x.k === 'CANCEL_REQUESTED')
-      expect(e.length).toBeGreaterThanOrEqual(3)
+    it('CANCEL_REQUESTED đi ĐÚNG CHIỀU: từ user xuống parent, rồi parent xuống 3 con', () => {
+      // Đếm >= 3 không kiểm được chiều nào cả: ba sự kiện đi ngược lên, hay ba
+      // sự kiện trùng nhau, đều thoả. Cancel đi XUỐNG là luật mà bài học này dạy.
+      const e = runLesson('jobtree').events
+      const created = e.filter(x => x.k === 'COROUTINE_CREATED')
+      const rootId = (created[0] as { id: string }).id
+      // parent là launch đầu tiên dưới root; 3 con của nó là các launch còn lại.
+      const parentId = (created[1] as { id: string }).id
+      const cancels = e.filter(x => x.k === 'CANCEL_REQUESTED')
+        .map(x => [(x as { from: string }).from, (x as { to: string }).to])
+
+      expect(cancels[0]).toEqual(['user', parentId])
+      const fromParent = cancels.filter(([from]) => from === parentId).map(([, to]) => to)
+      expect(fromParent).toHaveLength(3)
+      // Đúng 3 con phân biệt, và không sự kiện nào trỏ ngược lên root.
+      expect(new Set(fromParent).size).toBe(3)
+      expect(cancels.some(([, to]) => to === rootId)).toBe(false)
     })
 
     it('không job nào in ra gì — bị cancel trước khi delay xong', () => {
