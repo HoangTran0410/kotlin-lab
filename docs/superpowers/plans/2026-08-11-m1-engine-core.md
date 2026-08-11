@@ -4351,7 +4351,14 @@ Chèn vào đầu `evalCall`, **trước** nhánh `println`:
       const self = this
       // Factory nhận Job vừa tạo, nên Env con mang đúng jobId của chính coroutine này.
       const job = this.scheduler.spawnChildOf(env.enclosingJobId, ctx, calleeName, created =>
-        (function* (): CoroutineBody { yield* self.evalBlock(body, env.child(created.id)) })())
+        (function* (): CoroutineBody {
+          yield* self.evalBlock(body, env.child(created.id))
+          // launch/async cũng phải chờ CON CỦA CHÍNH NÓ trước khi Completed.
+          // Thiếu bước này, một `launch { launch {...} }` tự đánh dấu hoàn tất
+          // ngay khi thân ngoài chạy xong, và `parent.cancel()` sau đó thành vô
+          // tác dụng vì cancelJob bỏ qua job đã isCompleted.
+          yield { s: 'joinChildren', jobId: created.id }
+        })())
       return {
         t: 'obj', className: calleeName === 'launch' ? 'Job' : 'Deferred',
         fields: new Map([['__jobId', { t: 'str', v: job.id } as KValue]]),
