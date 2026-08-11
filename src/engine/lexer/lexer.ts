@@ -30,8 +30,12 @@ export function tokenize(src: string): Token[] {
       continue
     }
     if (ch === '/' && src[i + 1] === '*') {
+      const l = line, c = col
       advance(2)
       while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) advance(1)
+      if (i >= src.length) {
+        throw new Error(`Lexer: chú thích khối chưa được đóng, bắt đầu ở dòng ${l}, cột ${c}`)
+      }
       advance(2)
       continue
     }
@@ -60,7 +64,10 @@ export function tokenize(src: string): Token[] {
           advance(2)
           continue
         }
-        if (src[i] === '$') {
+        // '$' chỉ mở template khi theo sau là '{' hoặc ký tự bắt đầu định danh.
+        // Nếu không ('giá 5$ thôi', '$5') thì nó là ký tự thường — nếu bỏ điều
+        // kiện này sẽ sinh ra part expr rỗng và parser ở Task 3 sẽ chết.
+        if (src[i] === '$' && (src[i + 1] === '{' || /[A-Za-z_]/.test(src[i + 1] ?? ''))) {
           flush()
           if (src[i + 1] === '{') {
             advance(2)
@@ -72,20 +79,27 @@ export function tokenize(src: string): Token[] {
               else if (src[i] === '}') { depth--; if (depth === 0) break }
               advance(1)
             }
+            if (depth > 0) {
+              throw new Error(`Lexer: thiếu '}' đóng cho \${...} bắt đầu ở dòng ${sl}, cột ${sc}`)
+            }
             parts.push({ type: 'expr', source: src.slice(start, i), line: sl, col: sc })
             advance(1) // dấu }
           } else {
-            advance(1)
+            advance(1) // bỏ qua '$'
+            // sl/sc lấy TRƯỚC vòng quét: part phải trỏ vào vị trí BẮT ĐẦU của
+            // biểu thức, đồng nhất với nhánh ${...} ở trên.
+            const sl = line, sc = col
             const start = i
-            const sl = line
             while (i < src.length && /[A-Za-z0-9_]/.test(src[i]!)) advance(1)
-            const sc = col
             parts.push({ type: 'expr', source: src.slice(start, i), line: sl, col: sc })
           }
           continue
         }
         text += src[i]
         advance(1)
+      }
+      if (i >= src.length) {
+        throw new Error(`Lexer: chuỗi chưa được đóng, bắt đầu ở dòng ${l}, cột ${c}`)
       }
       flush()
       advance(1) // dấu " đóng
