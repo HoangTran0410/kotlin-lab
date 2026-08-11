@@ -16,3 +16,22 @@ body { margin: 0; background: var(--bg); color: var(--fg);
   background: rgba(88, 166, 255, 0.15);
   border-left: 3px solid var(--k-launch);
 }
+
+/* Task 10: dòng mang chẩn đoán lỗi. "Gạch chân" = viền dưới cả dòng, độc lập
+   với .cm-current-line (nền) nên hai thứ chồng nhau vẫn đọc được cả hai. */
+.cm-diagnostic-line {
+  border-bottom: 2px solid var(--state-cancelled);
+}
+
+.cm-diagnostic-gutter {
+  width: 14px;
+}
+
+.cm-diagnostic-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin: 5px 3px;
+  border-radius: 50%;
+  background: var(--state-cancelled);
+}

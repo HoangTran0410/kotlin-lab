@@ -1,0 +1,42 @@
+.diagnostics-empty {
+  color: var(--fg-dim);
+}
+
+.diagnostics-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.diagnostic-item__button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--state-cancelled);
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.diagnostic-item__button:hover {
+  background: rgba(248, 81, 73, 0.08);
+}
+
+.diagnostic-item__line {
+  font-weight: 600;
+  color: var(--state-cancelled);
+}
+
+.diagnostic-item__hint {
+  color: var(--fg-dim);
+}

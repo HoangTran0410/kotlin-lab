@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef } from 'react'
+import { EditorView } from '@codemirror/view'
 import { Panel } from './layout/Panel'
 import { Shell } from './layout/Shell'
 import { CodeEditor } from './editor/CodeEditor'
+import { diagnosticMarks, setDiagnosticLines } from './editor/diagnosticMarks'
+import { DiagnosticsPanel } from './diagnostics/DiagnosticsPanel'
+import { clampDiagnosticLine } from './diagnostics/clampLine'
 import { useLabStore } from '../state/store'
 import { selectCurrentLine } from '../state/selectors'
 
@@ -28,17 +32,63 @@ function useDebouncedSetSource(): (src: string) => void {
   )
 }
 
+/**
+ * CodeEditor (Task 9) không lộ EditorView của nó ra ngoài — theo đúng ranh
+ * giới của task này, CodeEditor.tsx là interface CHỈ ĐỌC, không sửa. Tìm view
+ * qua DOM bằng `EditorView.findFromDOM` là kỹ thuật bộ test của dự án đã dùng
+ * để chạm view từ bên ngoài component (tests/ui/code-editor.test.tsx,
+ * current-line-wiring.test.tsx) — dùng lại đúng kỹ thuật đó ở đây thay vì
+ * thêm một prop/ref mới vào CodeEditor.
+ */
+function findEditorView(host: HTMLDivElement | null): EditorView | null {
+  const el = host?.querySelector<HTMLElement>('[data-testid="code-editor"]')
+  return el ? EditorView.findFromDOM(el) : null
+}
+
 export function App() {
   const source = useLabStore(s => s.source)
   const currentLine = useLabStore(selectCurrentLine)
+  const diagnostics = useLabStore(s => s.compiled.diagnostics)
   const handleChange = useDebouncedSetSource()
+  const editorHost = useRef<HTMLDivElement>(null)
+
+  // Đẩy diagnostic vào diagnosticMarks (gutter chấm đỏ + gạch chân) mỗi khi
+  // danh sách đổi. Cắm field/gutter qua `extraExtensions` (đã có sẵn từ Task
+  // 8) lúc mount; ở đây chỉ dispatch DỮ LIỆU — StateField tự kẹp dòng bằng
+  // doc THẬT tại thời điểm effect chạy (xem diagnosticMarks.ts), nên dù
+  // `source` trong store trễ hơn vài kí tự so với EditorView đang gõ dở thì
+  // vẫn không ném.
+  useEffect(() => {
+    const view = findEditorView(editorHost.current)
+    if (!view) return
+    view.dispatch({ effects: setDiagnosticLines.of(diagnostics.map(d => d.line)) })
+  }, [diagnostics])
+
+  // Bấm một diagnostic trong panel -> cuộn CodeEditor tới dòng đó. Kẹp LẦN
+  // NỮA bằng doc thật của view lúc bấm (không chỉ tin số đã kẹp mà
+  // DiagnosticsPanel trả về, vốn kẹp theo `source` của store — có thể lệch
+  // với doc sống của CodeMirror trong lúc debounce chưa chạy xong).
+  const handleJumpToLine = useCallback((line: number) => {
+    const view = findEditorView(editorHost.current)
+    if (!view) return
+    const safeLine = clampDiagnosticLine(line, view.state.doc.lines)
+    const pos = view.state.doc.line(safeLine).from
+    view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'center' }) })
+  }, [])
 
   return (
     <Shell
       nav={<nav>Bài học</nav>}
       editor={
         <Panel title="Mã Kotlin" grow>
-          <CodeEditor value={source} onChange={handleChange} currentLine={currentLine} />
+          <div ref={editorHost}>
+            <CodeEditor
+              value={source}
+              onChange={handleChange}
+              currentLine={currentLine}
+              extraExtensions={diagnosticMarks}
+            />
+          </div>
         </Panel>
       }
       graph={
@@ -53,7 +103,12 @@ export function App() {
       }
       side={
         <Panel title="Console & chẩn đoán" grow>
-          <p>Console và chẩn đoán sẽ vào đây ở task sau.</p>
+          <DiagnosticsPanel
+            diagnostics={diagnostics}
+            docLines={source.split('\n').length}
+            onJumpToLine={handleJumpToLine}
+          />
+          <p>Console sẽ vào đây ở task sau.</p>
         </Panel>
       }
     />
