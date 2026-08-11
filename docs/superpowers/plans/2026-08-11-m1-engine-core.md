@@ -3218,7 +3218,7 @@ export type Suspension =
   | { s: 'yield' }
 
 /** Thân coroutine: generator yield ra điểm suspend, nhận lại giá trị resume. */
-export type CoroutineBody = Generator<Suspension, unknown, unknown>
+export type CoroutineBody = Generator<Suspension, void, unknown>
 ```
 
 - [ ] **Step 2: Viết test thất bại**
@@ -3331,6 +3331,34 @@ describe('Scheduler', () => {
     })
     s.runToCompletion()
     expect(s.clock.now).toBe(500)
+  })
+
+  it('ready là FIFO — nhiều coroutine sẵn sàng CÙNG LÚC chạy theo thứ tự tạo', () => {
+    // Mọi test khác dùng delay khác nhau, nên thứ tự do ĐỒNG HỒ quyết định và
+    // tính FIFO của ready không bao giờ bị chạm tới. Ở đây không có delay nào,
+    // nên thứ tự in ra lộ thẳng thứ tự lấy khỏi hàng đợi: shift -> A,B,C;
+    // pop -> C,B,A.
+    const s = new Scheduler()
+    s.spawnRoot(function* (): CoroutineBody {
+      s.spawnChild(function* (): CoroutineBody { s.println('A') })
+      s.spawnChild(function* (): CoroutineBody { s.println('B') })
+      s.spawnChild(function* (): CoroutineBody { s.println('C') })
+      yield { s: 'yield' }
+    })
+    s.runToCompletion()
+    expect(collectPrints(s)).toEqual(['A', 'B', 'C'])
+  })
+
+  it('cùng mốc delay thì vẫn resume theo thứ tự tạo', () => {
+    const s = new Scheduler()
+    s.spawnRoot(function* (): CoroutineBody {
+      s.spawnChild(function* (): CoroutineBody { yield { s: 'delay', ms: 100 }; s.println('A') })
+      s.spawnChild(function* (): CoroutineBody { yield { s: 'delay', ms: 100 }; s.println('B') })
+      s.spawnChild(function* (): CoroutineBody { yield { s: 'delay', ms: 100 }; s.println('C') })
+      yield { s: 'delay', ms: 200 }
+    })
+    s.runToCompletion()
+    expect(collectPrints(s)).toEqual(['A', 'B', 'C'])
   })
 
   it('joinChildren chờ mọi child, kể cả child chậm nhất', () => {
@@ -3476,9 +3504,10 @@ export class Scheduler {
       while (this.ready.length > 0) {
         if (++guard > 100_000) throw new Error('Scheduler: nghi ngờ lặp vô hạn')
         this.step(this.ready.shift()!)
-        this.sweepWaiters()
       }
-      // Waiter có thể đã thoả nhờ job vừa kết thúc — xử lý trước khi nhảy đồng hồ.
+      // Quét waiter SAU KHI ready cạn, không quét sau mỗi step. Job vừa xong có
+      // thể đã mở khoá một waiter; nếu bỏ dòng này thì đồng hồ sẽ nhảy vượt qua
+      // việc vốn đã sẵn sàng chạy. Quét mỗi step vừa thừa vừa tốn.
       if (this.sweepWaiters()) continue
       this.emitter.setClock(this.clock.now)
       if (!this.clock.advanceToNextTimer()) break
@@ -3571,7 +3600,7 @@ export class Scheduler {
 - [ ] **Step 5: Chạy test, xác nhận pass**
 
 Run: `npx vitest run tests/engine/runtime-scheduler.test.ts`
-Expected: PASS — 10 test.
+Expected: PASS — 12 test.
 
 Nếu test "hai coroutine xen kẽ" cho thứ tự sai, kiểm tra `advanceToNextTimer` chạy hết timer cùng mốc trước khi trả về, và `ready` là FIFO (`shift`, không `pop`).
 
