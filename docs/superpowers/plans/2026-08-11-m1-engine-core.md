@@ -3131,6 +3131,15 @@ function terminateAsFailed(job: Job, cause: FailureCause, emitter: TraceEmitter)
  */
 export function reportFailure(child: Job, cause: FailureCause, emitter: TraceEmitter): void {
   child.cause = cause
+
+  // Con của CHÍNH job đang fail cũng phải chết. Thiếu bước này thì
+  // `launch { launch { delay(1000); println(...) }; throw ... }` để lại một
+  // coroutine mồ côi chạy tiếp và in ra SAU khi cha đã Cancelled — vi phạm
+  // structured concurrency, đúng nền tảng mà công cụ này dạy.
+  for (const c of child.children) {
+    if (!c.isCompleted) cancelJob(c, cause, emitter, child.id)
+  }
+
   terminateAsFailed(child, cause, emitter)
 
   if (cause.isCancellation) return
@@ -4094,6 +4103,9 @@ export function runSource(src: string): RunResult {
     wrapped?.k === 'Call' &&
     wrapped.callee.k === 'Ident' &&
     wrapped.callee.name === 'runBlocking' &&
+    // Chỉ bóc khi runBlocking KHÔNG có đối số. `runBlocking(Dispatchers.IO) {}`
+    // mang context riêng mà root task không dựng được, bóc sẽ nuốt mất nó.
+    wrapped.args.length === 0 &&
     wrapped.lambda
       ? wrapped.lambda.body
       : null
@@ -4378,6 +4390,15 @@ Chèn vào đầu `evalCall`, **trước** nhánh `println`:
 
   protected applyCtxValue(ctx: CoroutineContext, v: KValue): CoroutineContext {
     if (v.t !== 'obj') return ctx
+    if (v.className === '__CtxPlus') {
+      let out = ctx
+      for (let i = 0; ; i++) {
+        const it = v.fields.get(String(i))
+        if (!it) break
+        out = this.applyCtxValue(out, it)
+      }
+      return out
+    }
     if (v.className.startsWith('Dispatchers.')) {
       return ctx.withDispatcher(v.className.slice('Dispatchers.'.length))
     }
@@ -4395,9 +4416,24 @@ Bổ sung import: `CoroutineContext` từ `../runtime/context`.
 Cho toán tử `+` trên object context: trong `evalBinary`, thêm ngay trước nhánh `l.t === 'num'`:
 ```ts
     if (e.op === '+' && l.t === 'obj' && r.t === 'obj') {
-      const merged = new Map(l.fields)
-      r.fields.forEach((val, key) => merged.set(key, val))
-      return { t: 'obj', className: `${l.className}+${r.className}`, fields: merged }
+      // KHÔNG trộn fields và nối className. Cách đó tạo ra className rác kiểu
+      // 'Dispatchers.IO+CoroutineName', rồi applyCtxValue nhận dạng sai hết:
+      // đã đo được dispatcher thành "IO+CoroutineName" còn name bị mất trắng.
+      // Giữ danh sách phần tử theo đúng thứ tự để applyCtxValue duyệt lần lượt.
+      const items: KValue[] = []
+      const flatten = (v: KValue): void => {
+        if (v.t === 'obj' && v.className === '__CtxPlus') {
+          for (let i = 0; ; i++) {
+            const it = v.fields.get(String(i))
+            if (!it) break
+            flatten(it)
+          }
+        } else items.push(v)
+      }
+      flatten(l); flatten(r)
+      const fields = new Map<string, KValue>()
+      items.forEach((it, i) => fields.set(String(i), it))
+      return { t: 'obj', className: '__CtxPlus', fields }
     }
 ```
 
