@@ -1,0 +1,211 @@
+import { TraceEmitter } from '../trace/emitter'
+import type { JobId } from '../trace/events'
+import { VirtualClock } from './clock'
+import { CoroutineContext } from './context'
+import { DispatcherPool } from './dispatcher'
+import { Job, type FailureCause } from './job'
+import { cancelJob, reportFailure } from './propagation'
+import type { CoroutineBody, Suspension } from './suspension'
+
+interface Task {
+  job: Job
+  ctx: CoroutineContext
+  body: CoroutineBody
+  /** Giá trị trả vào .next() ở lần resume tới. */
+  resumeValue: unknown
+  started: boolean
+}
+
+function toCause(err: unknown): FailureCause {
+  if (err && typeof err === 'object' && 'kotlinType' in err) {
+    const e = err as { kotlinType: string; message?: string }
+    return {
+      exType: e.kotlinType,
+      message: e.message ?? '',
+      isCancellation: e.kotlinType === 'CancellationException',
+    }
+  }
+  return { exType: 'Exception', message: String(err), isCancellation: false }
+}
+
+export class Scheduler {
+  readonly emitter = new TraceEmitter()
+  readonly clock = new VirtualClock()
+  readonly pool = new DispatcherPool()
+
+  private nextJobId = 1
+  private readonly ready: Task[] = []
+  private readonly tasks = new Map<JobId, Task>()
+  private currentJob: Job | null = null
+
+  /**
+   * Task đang chờ một job khác kết thúc. Mảng, không phải Map lồng, để thứ tự
+   * đánh thức ổn định — đây là điều kiện cho trace deterministic.
+   *
+   * KHÔNG được cài chờ bằng cách tự lên lịch lại ở cùng mốc thời gian: làm vậy
+   * thì `ready` không bao giờ rỗng, đồng hồ ảo không bao giờ nhảy, và mọi thứ
+   * đứng hình. Waiter phải nằm NGOÀI `ready` cho tới khi điều kiện thoả.
+   */
+  private waiters: { task: Task; kind: 'job' | 'children'; targetId: JobId }[] = []
+
+  private newJobId(): JobId { return `j${this.nextJobId++}` }
+
+  println(text: string, srcLine?: number): void {
+    this.emitter.emit({ k: 'PRINTLN', id: this.currentJob?.id ?? 'j0', text }, srcLine)
+  }
+
+  spawnRoot(makeBody: (job: Job) => CoroutineBody): Job {
+    return this.spawn(null, false, 'runBlocking', CoroutineContext.empty().withDispatcher('Main'), makeBody)
+  }
+
+  /** Tiện ích cho unit test của Scheduler; interpreter dùng spawnChildOf. */
+  spawnChild(makeBody: (job: Job) => CoroutineBody, builder: 'launch' | 'async' = 'launch'): Job {
+    const parent = this.currentJob
+    const ctx = parent ? this.tasks.get(parent.id)!.ctx : CoroutineContext.empty()
+    return this.spawn(parent, false, builder, ctx, makeBody)
+  }
+
+  /**
+   * `makeBody` nhận chính Job vừa tạo, để thân coroutine biết jobId của mình
+   * mà không cần biến trung gian (Task 16 dùng nó dựng Env con đúng scope).
+   */
+  spawn(
+    parent: Job | null,
+    isSupervisor: boolean,
+    builder: 'launch' | 'async' | 'runBlocking' | 'coroutineScope' | 'supervisorScope' | 'withContext',
+    ctx: CoroutineContext,
+    makeBody: (job: Job) => CoroutineBody,
+  ): Job {
+    const id = this.newJobId()
+    const job = new Job(id, ctx.name ?? id, parent, isSupervisor)
+    parent?.addChild(job)
+
+    const jobCtx = ctx.withJob(job)
+    this.emitter.emit({
+      k: 'COROUTINE_CREATED', id, parentId: parent?.id ?? null, builder, ctx: jobCtx.summary(),
+    })
+
+    const task: Task = { job, ctx: jobCtx, body: makeBody(job), resumeValue: undefined, started: false }
+    this.tasks.set(id, task)
+    this.ready.push(task)
+    return job
+  }
+
+  jobById(id: JobId | null): Job | null {
+    return id ? this.tasks.get(id)?.job ?? null : null
+  }
+
+  /**
+   * Đánh thức waiter có điều kiện đã thoả. Giữ nguyên thứ tự đăng ký.
+   * Trả true nếu có waiter được đưa vào ready.
+   */
+  private sweepWaiters(): boolean {
+    const still: typeof this.waiters = []
+    let woke = false
+    for (const w of this.waiters) {
+      const done = w.kind === 'job'
+        ? (this.tasks.get(w.targetId)?.job.isCompleted ?? true)
+        : (this.tasks.get(w.targetId)?.job.children.every(c => c.isCompleted) ?? true)
+      if (done) { this.ready.push(w.task); woke = true } else { still.push(w) }
+    }
+    this.waiters = still
+    return woke
+  }
+
+  /** Chạy cho tới khi không còn task ready, không còn waiter thoả, không còn timer. */
+  runToCompletion(): void {
+    let guard = 0
+    for (;;) {
+      while (this.ready.length > 0) {
+        if (++guard > 100_000) throw new Error('Scheduler: nghi ngờ lặp vô hạn')
+        this.step(this.ready.shift()!)
+        this.sweepWaiters()
+      }
+      // Waiter có thể đã thoả nhờ job vừa kết thúc — xử lý trước khi nhảy đồng hồ.
+      if (this.sweepWaiters()) continue
+      this.emitter.setClock(this.clock.now)
+      if (!this.clock.advanceToNextTimer()) break
+      this.emitter.setClock(this.clock.now)
+      this.sweepWaiters()
+    }
+  }
+
+  private step(task: Task): void {
+    const { job } = task
+    if (job.isCompleted) return
+
+    const threadId = this.pool.acquire(task.ctx.dispatcher, job.id) ?? `${task.ctx.dispatcher}-1`
+    this.currentJob = job
+
+    if (!task.started) {
+      task.started = true
+      job.transitionTo('Active')
+      this.emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'New', to: 'Active' })
+      this.emitter.emit({ k: 'COROUTINE_STARTED', id: job.id, threadId })
+    } else {
+      this.emitter.emit({ k: 'COROUTINE_RESUMED', id: job.id, threadId })
+    }
+    this.emitter.emit({ k: 'THREAD_STATE', threadId, state: 'RUNNING' })
+
+    let result: IteratorResult<Suspension, unknown>
+    try {
+      result = task.body.next(task.resumeValue)
+    } catch (err) {
+      this.pool.release(threadId)
+      this.emitter.emit({ k: 'THREAD_STATE', threadId, state: 'FREE' })
+      const cause = toCause(err)
+      this.emitter.emit({ k: 'EXCEPTION_THROWN', id: job.id, exType: cause.exType, message: cause.message })
+      reportFailure(job, cause, this.emitter)
+      this.currentJob = null
+      return
+    }
+
+    this.pool.release(threadId)
+    this.emitter.emit({ k: 'THREAD_STATE', threadId, state: 'FREE' })
+    this.currentJob = null
+
+    if (result.done) {
+      if (!job.isCompleted) {
+        job.transitionTo('Completing')
+        this.emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Active', to: 'Completing' })
+        job.transitionTo('Completed')
+        this.emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Completing', to: 'Completed' })
+      }
+      return
+    }
+
+    this.suspend(task, result.value)
+  }
+
+  private suspend(task: Task, s: Suspension): void {
+    // 'joinChildren' không có trong schema Event — gom về 'join' khi ghi trace.
+    const reason = s.s === 'joinChildren' ? 'join' : s.s
+    this.emitter.emit({ k: 'COROUTINE_SUSPENDED', id: task.job.id, reason })
+
+    switch (s.s) {
+      case 'delay':
+        this.clock.schedule(this.clock.now + s.ms, () => { this.ready.push(task) })
+        break
+      case 'yield':
+        this.ready.push(task)
+        break
+      case 'join':
+      case 'await': {
+        const target = this.tasks.get(s.jobId)
+        if (!target || target.job.isCompleted) { this.ready.push(task); break }
+        this.waiters.push({ task, kind: 'job', targetId: s.jobId })
+        break
+      }
+      case 'joinChildren': {
+        const target = this.tasks.get(s.jobId)
+        if (!target || target.job.children.every(c => c.isCompleted)) { this.ready.push(task); break }
+        this.waiters.push({ task, kind: 'children', targetId: s.jobId })
+        break
+      }
+    }
+  }
+
+  cancel(job: Job, cause: FailureCause): void {
+    cancelJob(job, cause, this.emitter, 'user')
+  }
+}
