@@ -5,6 +5,10 @@ export default tseslint.config(
   {
     files: ['src/engine/**/*.ts'],
     rules: {
+      '@typescript-eslint/no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+      }],
       'no-restricted-imports': ['error', {
         paths: [
           { name: 'react', message: 'engine phải thuần TypeScript, không phụ thuộc UI' },

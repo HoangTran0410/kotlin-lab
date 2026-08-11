@@ -50,6 +50,42 @@ describe('parser — biểu thức', () => {
     expect(parseExprSource('1..3')).toMatchObject({ k: 'Range' })
   })
 
+  it("'..' lỏng hơn cộng trừ — 1..n-1 là 1..(n-1), KHÔNG phải (1..n)-1", () => {
+    expect(parseExprSource('1..n-1')).toMatchObject({
+      k: 'Range',
+      from: { k: 'NumberLit', value: 1 },
+      to: { k: 'Binary', op: '-', left: { k: 'Ident', name: 'n' } },
+    })
+  })
+
+  it("'..' chặt hơn so sánh — a < 1..n là a < (1..n)", () => {
+    expect(parseExprSource('a < 1..n')).toMatchObject({
+      k: 'Binary', op: '<', right: { k: 'Range' },
+    })
+  })
+
+  it('cùng độ ưu tiên thì kết hợp trái — 1-2-3 là (1-2)-3', () => {
+    expect(parseExprSource('1 - 2 - 3')).toMatchObject({
+      k: 'Binary', op: '-',
+      left: { k: 'Binary', op: '-', left: { k: 'NumberLit', value: 1 } },
+      right: { k: 'NumberLit', value: 3 },
+    })
+  })
+
+  it('lỗi trong ${...} báo vị trí THẬT trong file, không phải vị trí trong mẩu', () => {
+    // '"n=${a +}"' — dấu ')' thiếu toán hạng. '${' ở cột 4, nên 'a' ở cột 6.
+    expect(() => parseExprSource('"n=${a +}"')).toThrow()
+    try {
+      parseExprSource('"n=${a +}"')
+    } catch (e) {
+      expect((e as { pos: { col: number } }).pos.col).toBeGreaterThanOrEqual(6)
+    }
+  })
+
+  it('${} rỗng báo lỗi rõ ràng thay vì chết vì EOF', () => {
+    expect(() => parseExprSource('"n=${}"')).toThrow(/rỗng/)
+  })
+
   it('ngoặc đơn đổi độ ưu tiên', () => {
     expect(parseExprSource('(1 + 2) * 3')).toMatchObject({
       k: 'Binary', op: '*', left: { k: 'Binary', op: '+' },

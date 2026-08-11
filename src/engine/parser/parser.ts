@@ -1,16 +1,23 @@
 import { tokenize } from '../lexer/lexer'
 import type { StringPart, Token } from '../lexer/token'
-import type {
-  Arg, Block, Expr, Pos, Program, StringPartNode,
-} from '../ast/nodes'
+// Chỉ import kiểu thực sự dùng ở task này. Task 4 thêm Lambda, Task 5 thêm
+// Stmt/CatchClause/WhenBranch, Task 6 thêm FunDecl/Param — thêm khi cần.
+import type { Arg, Block, Expr, Pos, Program, StringPartNode } from '../ast/nodes'
 
-/** Độ ưu tiên càng cao càng bám chặt. */
+/**
+ * Độ ưu tiên càng cao càng bám chặt. Thứ tự theo đúng Kotlin.
+ *
+ * Chú ý '..': trong Kotlin nó LỎNG HƠN cộng/trừ và CHẶT HƠN so sánh.
+ * Nếu cho '..' bám chặt hơn số học thì `1..n-1` — idiom range phổ biến nhất —
+ * sẽ parse thành `(1..n)-1` thay vì `1..(n-1)`.
+ */
 const BINARY_PRECEDENCE: Record<string, number> = {
   '||': 1, '&&': 2,
   '==': 3, '!=': 3, '===': 3, '!==': 3,
   '<': 4, '>': 4, '<=': 4, '>=': 4,
-  '+': 5, '-': 5,
-  '*': 6, '/': 6, '%': 6,
+  '..': 5,
+  '+': 6, '-': 6,
+  '*': 7, '/': 7, '%': 7,
 }
 
 export class ParseError extends Error {
@@ -71,8 +78,9 @@ export class Parser {
   // ---- biểu thức ----
   parseExpr(): Expr { return this.parseBinary(0) }
 
+  /** Precedence climbing. `prec + 1` cho toán hạng phải ⇒ kết hợp trái. */
   private parseBinary(minPrec: number): Expr {
-    let left = this.parseRange()
+    let left = this.parseUnary()
     for (;;) {
       const t = this.peek()
       if (t.kind !== 'OP') break
@@ -80,18 +88,13 @@ export class Parser {
       if (prec === undefined || prec < minPrec) break
       this.next()
       const right = this.parseBinary(prec + 1)
-      left = { k: 'Binary', op: t.text, left, right, pos: this.posOf(t) }
+      // '..' đi chung bảng ưu tiên với toán tử nhị phân nhưng dựng ra node
+      // Range riêng — nhờ vậy ưu tiên đúng Kotlin mà AST vẫn tách bạch.
+      left = t.text === '..'
+        ? { k: 'Range', from: left, to: right, pos: this.posOf(t) }
+        : { k: 'Binary', op: t.text, left, right, pos: this.posOf(t) }
     }
     return left
-  }
-
-  private parseRange(): Expr {
-    const from = this.parseUnary()
-    if (this.at('OP', '..')) {
-      const t = this.next()
-      return { k: 'Range', from, to: this.parseUnary(), pos: this.posOf(t) }
-    }
-    return from
   }
 
   private parseUnary(): Expr {
@@ -161,10 +164,34 @@ export class Parser {
     throw new ParseError(`Không phân tích được biểu thức bắt đầu bằng '${t.text || t.kind}'`, pos)
   }
 
+  /**
+   * Parse lại từng phần biểu thức của string template.
+   *
+   * Vị trí lỗi phải được QUY VỀ vị trí thật trong file. Parser lồng chỉ thấy
+   * một mẩu mã rời nên mọi ParseError của nó đều báo dòng 1 cột 1; nếu ném
+   * thẳng ra thì người dùng nhận vị trí vô nghĩa. StringPart mang sẵn line/col
+   * của ký tự đầu mẩu — dùng nó để cộng bù.
+   */
   private stringParts(parts: StringPart[]): StringPartNode[] {
-    return parts.map(p => p.type === 'text'
-      ? { type: 'text' as const, value: p.value }
-      : { type: 'expr' as const, expr: new Parser(tokenize(p.source)).parseExpr() })
+    return parts.map(p => {
+      if (p.type === 'text') return { type: 'text' as const, value: p.value }
+
+      if (p.source.trim() === '') {
+        throw new ParseError('Biểu thức trong ${...} đang rỗng', { line: p.line, col: p.col })
+      }
+
+      try {
+        return { type: 'expr' as const, expr: new Parser(tokenize(p.source)).parseExpr() }
+      } catch (err) {
+        if (!(err instanceof ParseError)) throw err
+        throw new ParseError(err.message, {
+          line: p.line + err.pos.line - 1,
+          // Chỉ cộng bù cột khi lỗi nằm ở dòng đầu của mẩu; từ dòng 2 trở đi
+          // cột trong mẩu đã là cột thật.
+          col: err.pos.line === 1 ? p.col + err.pos.col - 1 : err.pos.col,
+        })
+      }
+    })
   }
 
   // Task 5 cài parseBlock/parseStmt; Task 6 cài parseProgram.
@@ -176,6 +203,5 @@ export function parseExprSource(src: string): Expr {
 }
 
 export function parseProgram(_src: string): Program {
-  void _src // tham số giữ đúng chữ ký cho Task 6; chưa dùng ở Task 3
   throw new ParseError('parseProgram chưa cài — Task 6', { line: 0, col: 0 })
 }
