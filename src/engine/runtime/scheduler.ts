@@ -6,6 +6,7 @@ import { DispatcherPool } from './dispatcher'
 import { Job, type FailureCause } from './job'
 import { cancelJob, reportFailure } from './propagation'
 import type { CoroutineBody, Suspension } from './suspension'
+import { KotlinThrow } from '../interpreter/values'
 
 interface Task {
   job: Job
@@ -14,6 +15,8 @@ interface Task {
   /** Giá trị trả vào .next() ở lần resume tới. */
   resumeValue: unknown
   started: boolean
+  /** Đã chạy xong hoặc đã unwind — không được đụng tới generator nữa. */
+  finished: boolean
 }
 
 function toCause(err: unknown): FailureCause {
@@ -36,6 +39,8 @@ export class Scheduler {
   private nextJobId = 1
   private readonly ready: Task[] = []
   private readonly tasks = new Map<JobId, Task>()
+  /** Mảng song song với `tasks`, để duyệt theo đúng thứ tự tạo. */
+  private readonly taskOrder: Task[] = []
   private currentJob: Job | null = null
 
   /**
@@ -85,8 +90,11 @@ export class Scheduler {
       k: 'COROUTINE_CREATED', id, parentId: parent?.id ?? null, builder, ctx: jobCtx.summary(),
     })
 
-    const task: Task = { job, ctx: jobCtx, body: makeBody(job), resumeValue: undefined, started: false }
+    const task: Task = {
+      job, ctx: jobCtx, body: makeBody(job), resumeValue: undefined, started: false, finished: false,
+    }
     this.tasks.set(id, task)
+    this.taskOrder.push(task)
     this.ready.push(task)
     return job
   }
@@ -124,12 +132,45 @@ export class Scheduler {
       // thể đã mở khoá một waiter; nếu bỏ dòng này thì đồng hồ sẽ nhảy vượt qua
       // việc vốn đã sẵn sàng chạy. Quét mỗi step vừa thừa vừa tốn.
       if (this.sweepWaiters()) continue
+      // Cho coroutine đã bị cancel chạy nốt finally TRƯỚC khi nhảy đồng hồ.
+      if (this.unwindCancelled()) continue
       this.emitter.setClock(this.clock.now)
       if (!this.clock.advanceToNextTimer()) break
       this.emitter.setClock(this.clock.now)
       // Không quét waiter lại ở đây: callback của timer chỉ đẩy task vào ready,
       // không đổi state job nào, nên không waiter nào có thể vừa được mở khoá.
     }
+  }
+
+  /**
+   * Ném CancellationException vào các coroutine đã bị cancel nhưng còn đang
+   * lửng ở một điểm suspend, để `finally` trong code Kotlin thật sự chạy.
+   *
+   * Không có bước này thì cancelJob chỉ lật trạng thái Job: generator không
+   * bao giờ được resume, nên mọi khối finally im lặng không chạy — đúng thứ
+   * mà việc chọn generator đáng ra cho không (xem spec §2.3).
+   *
+   * Trả true nếu có unwind, để runToCompletion lặp lại trước khi nhảy đồng hồ.
+   */
+  private unwindCancelled(): boolean {
+    let did = false
+    for (const task of this.taskOrder) {
+      if (task.finished || !task.started) continue
+      if (!task.job.isCancelled) continue
+
+      task.finished = true
+      did = true
+      this.currentJob = task.job
+      try {
+        // Generator chạy các finally trên đường unwind rồi ném lại.
+        task.body.throw(new KotlinThrow('CancellationException', 'Job was cancelled'))
+      } catch {
+        // Bình thường: ném lại sau khi finally đã chạy xong. Không phải lỗi.
+      } finally {
+        this.currentJob = null
+      }
+    }
+    return did
   }
 
   private step(task: Task): void {
@@ -165,6 +206,7 @@ export class Scheduler {
     try {
       result = task.body.next(task.resumeValue)
     } catch (err) {
+      task.finished = true
       this.pool.release(threadId)
       this.emitter.emit({ k: 'THREAD_STATE', threadId, state: 'FREE' })
       const cause = toCause(err)
@@ -179,6 +221,7 @@ export class Scheduler {
     this.currentJob = null
 
     if (result.done) {
+      task.finished = true
       if (!job.isCompleted) {
         job.transitionTo('Completing')
         this.emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Active', to: 'Completing' })
@@ -260,9 +303,12 @@ export class Scheduler {
     })
     job.transitionTo('Active')
     this.emitter.emit({ k: 'JOB_STATE', id, from: 'New', to: 'Active' })
-    this.tasks.set(id, {
+    const task: Task = {
       job, ctx: jobCtx, body: (function* (): CoroutineBody { })(), resumeValue: undefined, started: true,
-    })
+      finished: false,
+    }
+    this.tasks.set(id, task)
+    this.taskOrder.push(task)
     return job
   }
 
