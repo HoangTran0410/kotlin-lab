@@ -23,12 +23,19 @@ export interface RunResult {
  * node không tồn tại. Nhận diện đúng dạng này để root job CHÍNH LÀ coroutine
  * runBlocking, không bọc thêm lớp nào. Dạng `fun main() { ... }` (block, có
  * `body`) không đụng tới — vẫn đi qua `callFun` như cũ.
+ *
+ * Chỉ unwrap khi KHÔNG có đối số (`runBlocking { }`, không phải
+ * `runBlocking(Dispatchers.IO) { }`) — root job không đi qua contextFromArgs
+ * nên đối số như dispatcher sẽ bị bỏ rơi âm thầm nếu unwrap bất chấp. Có đối
+ * số thì để callFun/evalCall xử lý bình thường, dù lúc đó lại có hai job root
+ * lồng nhau; đây là đánh đổi chấp nhận được cho một trường hợp hiếm.
  */
 function runBlockingLambda(fn: FunDecl): Lambda | null {
   const call = fn.exprBody
   if (!call || call.k !== 'Call' || call.callee.k !== 'Ident' || call.callee.name !== 'runBlocking') {
     return null
   }
+  if (call.args.length !== 0) return null
   return call.lambda
 }
 

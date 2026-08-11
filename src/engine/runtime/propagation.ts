@@ -59,6 +59,16 @@ function terminateAsFailed(job: Job, cause: FailureCause, emitter: TraceEmitter)
 
 export function reportFailure(child: Job, cause: FailureCause, emitter: TraceEmitter): void {
   child.cause = cause
+
+  // Structured concurrency: một coroutine fail phải cancel CHÍNH CON CỦA NÓ
+  // trước khi coi là xong — không chỉ sibling ở các tầng tổ tiên. Thiếu bước
+  // này thì con của job fail tiếp tục chạy tự do sau khi cha đã Cancelled,
+  // vi phạm nguyên tắc nền tảng nhất mà công cụ này dạy.
+  for (const c of child.children) {
+    if (c.isCompleted) continue
+    cancelJob(c, cause, emitter, child.id)
+  }
+
   terminateAsFailed(child, cause, emitter)
 
   if (cause.isCancellation) return

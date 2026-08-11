@@ -165,9 +165,24 @@ export class Interpreter {
       return { t: 'str', v: display(l) + display(r) }
     }
     if (e.op === '+' && l.t === 'obj' && r.t === 'obj') {
-      const merged = new Map(l.fields)
-      r.fields.forEach((val, key) => merged.set(key, val))
-      return { t: 'obj', className: `${l.className}+${r.className}`, fields: merged }
+      // KHÔNG trộn fields và nối className. Cách đó tạo ra className rác kiểu
+      // 'Dispatchers.IO+CoroutineName', rồi applyCtxValue nhận dạng sai hết:
+      // đã đo được dispatcher thành "IO+CoroutineName" còn name bị mất trắng.
+      // Giữ danh sách phần tử theo đúng thứ tự để applyCtxValue duyệt lần lượt.
+      const items: KValue[] = []
+      const flatten = (v: KValue): void => {
+        if (v.t === 'obj' && v.className === '__CtxPlus') {
+          for (let i = 0; ; i++) {
+            const it = v.fields.get(String(i))
+            if (!it) break
+            flatten(it)
+          }
+        } else items.push(v)
+      }
+      flatten(l); flatten(r)
+      const fields = new Map<string, KValue>()
+      items.forEach((it, i) => fields.set(String(i), it))
+      return { t: 'obj', className: '__CtxPlus', fields }
     }
     if (l.t === 'num' && r.t === 'num') {
       switch (e.op) {
@@ -335,6 +350,15 @@ export class Interpreter {
 
   protected applyCtxValue(ctx: CoroutineContext, v: KValue): CoroutineContext {
     if (v.t !== 'obj') return ctx
+    if (v.className === '__CtxPlus') {
+      let out = ctx
+      for (let i = 0; ; i++) {
+        const it = v.fields.get(String(i))
+        if (!it) break
+        out = this.applyCtxValue(out, it)
+      }
+      return out
+    }
     if (v.className.startsWith('Dispatchers.')) {
       return ctx.withDispatcher(v.className.slice('Dispatchers.'.length))
     }

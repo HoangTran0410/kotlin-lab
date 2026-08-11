@@ -13,6 +13,9 @@ describe('interpreter — coroutine builder', () => {
     const e = evs('fun main() = runBlocking {\n  launch { println("child") }\n}')
     const created = e.filter(x => x.k === 'COROUTINE_CREATED')
     expect(created).toHaveLength(2)
+    // Event là union theo discriminant `k`; .filter() không tự thu hẹp kiểu phần
+    // tử (không phải type predicate), nên phải ép kiểu như các test khác trong
+    // repo (vd. runtime-propagation.test.ts) để qua strict typecheck.
     expect(created[1]).toMatchObject({ builder: 'launch', parentId: (created[0] as { id: string }).id })
   })
 
@@ -47,9 +50,36 @@ describe('interpreter — coroutine builder', () => {
     expect(e.some(x => x.k === 'COROUTINE_CREATED' && x.ctx.dispatcher === 'IO')).toBe(true)
   })
 
+  it('context + giữ cả dispatcher lẫn name, không phụ thuộc thứ tự cộng', () => {
+    // Bug cũ: '+' nối className ('Dispatchers.IO+CoroutineName') rồi applyCtxValue
+    // nhận nhầm, ra dispatcher "IO+CoroutineName" và mất trắng name. __CtxPlus giữ
+    // danh sách phần tử theo thứ tự nên phải còn đủ cả hai, đúng cả hai chiều cộng.
+    const e1 = evs('fun main() = runBlocking {\n  launch(Dispatchers.IO + CoroutineName("w")) { }\n}')
+    const created1 = e1.find(x => x.k === 'COROUTINE_CREATED' && x.builder === 'launch')
+    expect(created1).toMatchObject({ ctx: { dispatcher: 'IO', name: 'w' } })
+
+    const e2 = evs('fun main() = runBlocking {\n  launch(CoroutineName("w") + Dispatchers.IO) { }\n}')
+    const created2 = e2.find(x => x.k === 'COROUTINE_CREATED' && x.builder === 'launch')
+    expect(created2).toMatchObject({ ctx: { dispatcher: 'IO', name: 'w' } })
+  })
+
   it('exception chưa bắt trong launch làm child FAILED', () => {
     const e = evs('fun main() = runBlocking {\n  launch { throw RuntimeException("boom") }\n}')
     expect(e.some(x => x.k === 'EXCEPTION_THROWN' && x.exType === 'RuntimeException')).toBe(true)
+  })
+
+  it('con của job fail bị cancel — không orphan nào chạy tiếp', () => {
+    // Bug cũ: reportFailure cancel sibling ở từng tầng tổ tiên nhưng không bao
+    // giờ cancel CHÍNH CON của job fail — con cứ thế chạy tiếp và in ra sau khi
+    // cha đã Cancelled. Vi phạm structured concurrency, nền tảng công cụ này dạy.
+    const o = out(
+      'fun main() = runBlocking {\n' +
+      '  launch {\n' +
+      '    launch { delay(1000); println("orphan") }\n' +
+      '    throw RuntimeException("boom")\n' +
+      '  }\n' +
+      '}')
+    expect(o).toEqual([])
   })
 
   it('cancel job phát CANCEL_REQUESTED', () => {
@@ -95,11 +125,14 @@ describe('interpreter — coroutine builder', () => {
     expect((created[created.length - 1] as { parentId: string | null }).parentId).not.toBeNull()
   })
 
-  it('finally vẫn chạy khi coroutine bị cancel — kiểm chứng chọn generator là đúng', () => {
+  it('finally chạy khi coroutine kết thúc BÌNH THƯỜNG', () => {
+    // Tên cũ của test này là "finally vẫn chạy khi coroutine bị cancel" nhưng
+    // thân test KHÔNG HỀ gọi .cancel() — nó chỉ chạy hết bình thường. Ca cancel
+    // thật do Task 18 phủ, vì tới Task 16 nó vẫn CHƯA chạy được.
     const o = out(
       'fun main() = runBlocking {\n' +
       '  try { delay(10); println("xong") } finally { println("dontrolai") }\n' +
       '}')
-    expect(o).toContain('dontrolai')
+    expect(o).toEqual(['xong', 'dontrolai'])
   })
 })
