@@ -1627,6 +1627,84 @@ describe('validator', () => {
 Run: `npx vitest run tests/engine/validator.test.ts`
 Expected: FAIL — không resolve được `validator`.
 
+- [ ] **Step 2b: Điều kiện tiên quyết — parser phải đọc được đối số kiểu**
+
+Validator sinh ra để báo lỗi đẹp cho construct chưa hỗ trợ. Nhưng `Channel<Int>()`
+là cú pháp người dùng thật sự gõ, mà parser hiện chết ngay ở `<`. Kết quả là
+người dùng nhận `"Không phân tích được biểu thức bắt đầu bằng '<'"` thay vì
+`"Channel chưa được hỗ trợ, dùng Flow"` — hỏng đúng chỗ validator phục vụ.
+
+M1 vứt bỏ kiểu, nên chỉ cần **nuốt qua** đối số kiểu, không cần dựng node.
+
+Thêm vào class `Parser` trong `src/engine/parser/parser.ts`:
+
+```ts
+  /**
+   * Phân biệt `Channel<Int>()` (đối số kiểu) với `a < b` (so sánh).
+   *
+   * Chỉ coi là đối số kiểu khi quét được tới '>' khớp cặp VÀ ngay sau đó là
+   * '('. Nhờ điều kiện thứ hai mà `a < b` không bao giờ bị hiểu nhầm. Thất bại
+   * thì khôi phục con trỏ về chỗ cũ, không để lại dấu vết.
+   */
+  private trySkipTypeArgs(): boolean {
+    if (!this.at('OP', '<')) return false
+    const save = this.i
+    this.next()
+    let depth = 1
+    while (depth > 0) {
+      if (this.atEof()) { this.i = save; return false }
+      if (this.at('OP', '<')) { depth++; this.next(); continue }
+      if (this.at('OP', '>')) { depth--; this.next(); continue }
+      // Bên trong đối số kiểu chỉ chấp nhận tên, dấu phẩy, chấm, dấu hỏi.
+      if (this.at('IDENT') || this.at('COMMA') || this.at('DOT') || this.at('OP', '?')) {
+        this.next(); continue
+      }
+      this.i = save
+      return false
+    }
+    if (this.at('LPAREN')) return true
+    this.i = save
+    return false
+  }
+```
+
+Trong `parsePostfix`, thêm nhánh **trước** nhánh `LPAREN`:
+```ts
+      } else if (this.trySkipTypeArgs()) {
+        // Đã nuốt <...>; vòng lặp kế sẽ thấy '(' và gọi parseCallTail.
+      } else if (this.at('LPAREN')) {
+```
+
+Thêm vào cuối `tests/engine/parser-expr.test.ts`:
+```ts
+describe('parser — đối số kiểu', () => {
+  it('Channel<Int>() parse thành lời gọi Channel', () => {
+    expect(parseExprSource('Channel<Int>()')).toMatchObject({
+      k: 'Call', callee: { k: 'Ident', name: 'Channel' }, args: [],
+    })
+  })
+
+  it('kiểu lồng nhau MutableStateFlow<List<Int>>(x)', () => {
+    expect(parseExprSource('MutableStateFlow<List<Int>>(x)')).toMatchObject({
+      k: 'Call', callee: { k: 'Ident', name: 'MutableStateFlow' },
+      args: [{ value: { k: 'Ident', name: 'x' } }],
+    })
+  })
+
+  it('a < b vẫn là so sánh, KHÔNG phải đối số kiểu', () => {
+    expect(parseExprSource('a < b')).toMatchObject({ k: 'Binary', op: '<' })
+  })
+
+  it('a < b > c không bị nuốt nhầm khi không có ( theo sau', () => {
+    expect(parseExprSource('a < b')).toMatchObject({ k: 'Binary', op: '<' })
+    expect(parseExprSource('x < y + 1')).toMatchObject({ k: 'Binary', op: '<' })
+  })
+})
+```
+
+Run: `npx vitest run tests/engine/parser-expr.test.ts`
+Expected: PASS — 18 test.
+
 - [ ] **Step 3: Viết `diagnostics.ts`**
 
 ```ts
