@@ -2563,33 +2563,45 @@ describe('VirtualClock', () => {
   })
 
   it('timer cùng thời điểm chạy theo thứ tự đăng ký — bảo đảm deterministic', () => {
-    // Dùng nhiều timer và ĐĂNG KÝ XEN KẼ với mốc khác, để test không thể xanh
-    // nhờ may. Với chỉ 2 phần tử cùng mốc, Array.sort ổn định (ES2019+) sẽ giữ
-    // đúng thứ tự kể cả khi thiếu tiêu chí seq — test sẽ mù đúng thứ nó canh.
+    // Test này chốt HỢP ĐỒNG mà scheduler dựa vào, không chốt cơ chế.
+    // Ghi chú trung thực: tiêu chí phụ `a.seq - b.seq` trong comparator là
+    // THỪA về mặt chức năng — Array.sort ổn định từ ES2019 nên thứ tự chèn
+    // vốn đã được giữ. Đã kiểm chứng bằng thực nghiệm: bỏ tiêu chí đó đi
+    // test vẫn xanh. Giữ lại vì nó nói rõ ý đồ và vẫn đúng nếu sau này đổi
+    // sang cấu trúc khác (heap chẳng hạn) vốn không ổn định.
     const c = new VirtualClock()
     const fired: string[] = []
     c.schedule(100, () => fired.push('a'))
     c.schedule(50, () => fired.push('sớm'))
     c.schedule(100, () => fired.push('b'))
     c.schedule(100, () => fired.push('c'))
-    c.schedule(100, () => fired.push('d'))
     while (c.advanceToNextTimer()) { /* chạy hết */ }
-    expect(fired).toEqual(['sớm', 'a', 'b', 'c', 'd'])
+    expect(fired).toEqual(['sớm', 'a', 'b', 'c'])
   })
 
-  it('timer đặt trong lúc callback chạy không bị mất', () => {
-    // delay() lồng nhau sinh ra tình huống này: callback của timer lại đặt
-    // tiếp một timer. Nếu advanceToNextTimer chụp danh sách trước khi chạy
-    // callback thì timer mới sẽ rơi mất.
+  it('timer đặt CÙNG MỐC trong lúc callback chạy vẫn nổ, không rơi mất', () => {
+    // delay(0) lồng nhau sinh ra đúng tình huống này. Phải dùng CÙNG mốc:
+    // nếu đặt ở mốc khác thì vòng lặp advanceToNextTimer sẽ nhặt được ở lượt
+    // sau bất kể cài đặt thế nào, và test mất khả năng phân biệt.
     const c = new VirtualClock()
     const fired: string[] = []
     c.schedule(100, () => {
       fired.push('ngoài')
-      c.schedule(200, () => fired.push('trong'))
+      c.schedule(100, () => fired.push('trong'))
     })
     while (c.advanceToNextTimer()) { /* chạy hết */ }
     expect(fired).toEqual(['ngoài', 'trong'])
-    expect(c.now).toBe(200)
+    expect(c.now).toBe(100)
+  })
+
+  it('timer tự đặt lại chính nó không làm treo vòng lặp vô hạn', () => {
+    const c = new VirtualClock()
+    let n = 0
+    const tick = () => { if (++n < 3) c.schedule(c.now, tick) }
+    c.schedule(10, tick)
+    while (c.advanceToNextTimer()) { /* chạy hết */ }
+    expect(n).toBe(3)
+    expect(c.now).toBe(10)
   })
 
   it('cancel gỡ timer chưa chạy', () => {
