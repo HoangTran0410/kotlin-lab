@@ -1521,12 +1521,43 @@ Bổ sung import kiểu: `FunDecl, Param`.
 Run: `npx vitest run tests/engine/parser-program.test.ts`
 Expected: PASS — 6 test.
 
-- [ ] **Step 6: Chạy toàn bộ test + lint + typecheck**
+- [ ] **Step 6: Đóng các khoảng trống che phủ mà review Task 5 nêu**
+
+Thêm vào cuối `tests/engine/parser-stmt.test.ts`:
+
+```ts
+describe('parser — khoảng trống che phủ từ review Task 5', () => {
+  it('for (i in 1..n-1): số học nằm TRONG khoảng, không nằm ngoài', () => {
+    // Ghim lỗi ưu tiên '..' đã sửa ở Task 3, lần này ở tầng câu lệnh.
+    expect(first('for (i in 1..n-1) { f(i) }')).toMatchObject({
+      k: 'For',
+      iterable: { k: 'Range', to: { k: 'Binary', op: '-' } },
+    })
+  })
+
+  it('return có giá trị', () => {
+    expect(first('return x + 1')).toMatchObject({ k: 'Return', expr: { k: 'Binary', op: '+' } })
+  })
+
+  it('return rồi dấu chấm phẩy vẫn là return rỗng', () => {
+    expect(first('return;')).toMatchObject({ k: 'Return', expr: null })
+  })
+
+  it('when có subject', () => {
+    expect(first('when (x) { 1 -> { f() } else -> { g() } }')).toMatchObject({
+      k: 'ExprStmt',
+      expr: { k: 'WhenExpr', subject: { k: 'Ident', name: 'x' } },
+    })
+  })
+})
+```
+
+- [ ] **Step 7: Chạy toàn bộ test + lint + typecheck**
 
 Run: `npm test && npm run lint && npm run typecheck`
-Expected: sạch.
+Expected: sạch. `parser-stmt.test.ts` giờ có 15 test.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add -A
