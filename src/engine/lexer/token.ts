@@ -18,7 +18,7 @@ export interface Token {
 
 export const KEYWORDS = new Set([
   'val', 'var', 'fun', 'suspend', 'if', 'else', 'while', 'for', 'in',
-  'try', 'catch', 'finally', 'throw', 'return', 'when', 'true', 'false', 'null',
+  'try', 'catch', 'finally', 'throw', 'return', 'when', 'true', 'false', 'null', 'import',
 ])
 
 /** Toán tử nhiều ký tự phải đứng trước toán tử ngắn hơn để khớp tham lam. */

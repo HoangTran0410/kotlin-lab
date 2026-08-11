@@ -2,7 +2,7 @@ import { tokenize } from '../lexer/lexer'
 import type { StringPart, Token } from '../lexer/token'
 // Chỉ import kiểu thực sự dùng ở task này. Task 4 thêm Lambda, Task 5 thêm
 // CatchClause/WhenBranch, Task 6 thêm FunDecl/Param — thêm khi cần.
-import type { Arg, Block, CatchClause, Expr, Lambda, Pos, Program, Stmt, StringPartNode, WhenBranch } from '../ast/nodes'
+import type { Arg, Block, CatchClause, Expr, FunDecl, Lambda, Param, Pos, Program, Stmt, StringPartNode, WhenBranch } from '../ast/nodes'
 
 /**
  * Độ ưu tiên càng cao càng bám chặt. Thứ tự theo đúng Kotlin.
@@ -249,7 +249,55 @@ export class Parser {
     })
   }
 
-  // Task 6 cài parseProgram.
+  parseFunDecl(): FunDecl {
+    const start = this.peek()
+    const isSuspend = this.accept('KEYWORD', 'suspend')
+    this.expect('KEYWORD', 'fun')
+    const name = this.expect('IDENT').text
+    this.expect('LPAREN')
+    const params: Param[] = []
+    while (!this.at('RPAREN')) {
+      const pName = this.expect('IDENT').text
+      let type: string | null = null
+      if (this.accept('COLON')) {
+        type = this.expect('IDENT').text
+        while (this.accept('OP', '<')) { this.expect('IDENT'); this.expect('OP', '>') }
+      }
+      const defaultValue = this.accept('OP', '=') ? this.parseExpr() : null
+      params.push({ name: pName, type, defaultValue })
+      if (!this.accept('COMMA')) break
+    }
+    this.expect('RPAREN')
+    if (this.accept('COLON')) this.expect('IDENT') // kiểu trả về: bỏ qua
+
+    if (this.accept('OP', '=')) {
+      return { name, params, isSuspend, body: null, exprBody: this.parseExpr(), pos: this.posOf(start) }
+    }
+    return { name, params, isSuspend, body: this.parseBlock(), exprBody: null, pos: this.posOf(start) }
+  }
+
+  parseProgramBody(): Program {
+    const funs: FunDecl[] = []
+    const topLevel: Stmt[] = []
+    this.skipNewlines()
+    while (!this.atEof()) {
+      if (this.at('KEYWORD', 'import')) {
+        while (this.peekRaw().kind !== 'NEWLINE' && !this.atEof()) this.i++
+        this.skipNewlines()
+        continue
+      }
+      if (this.at('KEYWORD', 'fun') || (this.at('KEYWORD', 'suspend') && this.peek(1).text === 'fun')) {
+        funs.push(this.parseFunDecl())
+      } else {
+        topLevel.push(this.parseStmt())
+      }
+      this.skipNewlines()
+      this.accept('SEMI')
+      this.skipNewlines()
+    }
+    return { funs, topLevel }
+  }
+
   parseBlock(): Block {
     const lb = this.expect('LBRACE')
     const stmts: Stmt[] = []
@@ -371,6 +419,6 @@ export function parseBlockSource(src: string): Block {
   return new Parser(tokenize(src)).parseBlock()
 }
 
-export function parseProgram(_src: string): Program {
-  throw new ParseError('parseProgram chưa cài — Task 6', { line: 0, col: 0 })
+export function parseProgram(src: string): Program {
+  return new Parser(tokenize(src)).parseProgramBody()
 }

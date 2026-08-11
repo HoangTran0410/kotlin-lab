@@ -63,3 +63,28 @@ describe('parser — câu lệnh', () => {
     })
   })
 })
+
+describe('parser — khoảng trống che phủ từ review Task 5', () => {
+  it('for (i in 1..n-1): số học nằm TRONG khoảng, không nằm ngoài', () => {
+    // Ghim lỗi ưu tiên '..' đã sửa ở Task 3, lần này ở tầng câu lệnh.
+    expect(first('for (i in 1..n-1) { f(i) }')).toMatchObject({
+      k: 'For',
+      iterable: { k: 'Range', to: { k: 'Binary', op: '-' } },
+    })
+  })
+
+  it('return có giá trị', () => {
+    expect(first('return x + 1')).toMatchObject({ k: 'Return', expr: { k: 'Binary', op: '+' } })
+  })
+
+  it('return rồi dấu chấm phẩy vẫn là return rỗng', () => {
+    expect(first('return;')).toMatchObject({ k: 'Return', expr: null })
+  })
+
+  it('when có subject', () => {
+    expect(first('when (x) { 1 -> { f() } else -> { g() } }')).toMatchObject({
+      k: 'ExprStmt',
+      expr: { k: 'WhenExpr', subject: { k: 'Ident', name: 'x' } },
+    })
+  })
+})
