@@ -44,6 +44,25 @@ describe('interpreter — lõi', () => {
       .toEqual(['caught'])
   })
 
+  it('return bên trong try KHÔNG bị catch của Kotlin nuốt', () => {
+    // ReturnSignal cố ý KHÔNG kế thừa KotlinThrow. Nếu cho nó kế thừa thì
+    // 'return 1' bị chính khối catch bắt và hàm trả về 2 — sai lặng lẽ, không
+    // exception nào lọt ra. Đã kiểm chứng bằng repro thật, không phải suy đoán.
+    expect(printsOf(
+      'fun f(): Int {\n' +
+      '  try { return 1 } catch (e: Exception) { return 2 }\n' +
+      '}\n' +
+      'fun main() {\n  println("${f()}")\n}')).toEqual(['1'])
+  })
+
+  it('finally vẫn chạy khi thoát bằng return', () => {
+    expect(printsOf(
+      'fun f(): Int {\n' +
+      '  try { return 1 } finally { println("dọn dẹp") }\n' +
+      '}\n' +
+      'fun main() {\n  println("${f()}")\n}')).toEqual(['dọn dẹp', '1'])
+  })
+
   it('finally chạy kể cả khi có exception', () => {
     expect(printsOf(
       'fun main() {\n  try { throw RuntimeException("x") } catch (e: Exception) { println("c") } finally { println("f") }\n}'))
