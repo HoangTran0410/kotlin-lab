@@ -27,12 +27,23 @@ export function tokenize(src: string): Token[] {
 
     if (ch === '-' && src[i + 1] === '>') { push('ARROW', '->'); advance(2); continue }
 
+    // '..' PHẢI xét trước SINGLE, nếu không '.' bị nuốt thành DOT và toán tử
+    // khoảng không bao giờ tới lượt được khớp.
+    if (ch === '.' && src[i + 1] === '.') { push('OP', '..'); advance(2); continue }
+
     const single = SINGLE[ch]
     if (single) { push(single, ch); advance(1); continue }
 
     if (/[0-9]/.test(ch)) {
       const start = i, l = line, c = col
-      while (i < src.length && /[0-9_.]/.test(src[i]!)) advance(1)
+      while (i < src.length && /[0-9_]/.test(src[i]!)) advance(1)
+      // Chỉ nuốt dấu chấm thập phân khi SAU nó là chữ số. Nếu quét cả '.' một
+      // cách tham lam thì '1..3' biến thành một token NUMBER "1..3" và vòng
+      // for (i in 1..3) không bao giờ parse được.
+      if (src[i] === '.' && /[0-9]/.test(src[i + 1] ?? '')) {
+        advance(1)
+        while (i < src.length && /[0-9_]/.test(src[i]!)) advance(1)
+      }
       push('NUMBER', src.slice(start, i).replace(/_/g, ''), l, c)
       continue
     }
