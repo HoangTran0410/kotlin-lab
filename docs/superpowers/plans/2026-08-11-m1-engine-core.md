@@ -1973,12 +1973,32 @@ describe('trace', () => {
 
   it('fold là hàm thuần — không phụ thuộc lần gọi trước đó', () => {
     const evs = sample()
-    // Tua tới cuối rồi quay về step 2 phải cho đúng kết quả như fold thẳng tới 2.
-    // Đây là bất biến cho phép UI tua ngược mà không cần cơ chế undo.
-    const straightToTwo = foldTrace(evs, 2)
+    // Phải chụp BẢN SAO SÂU trước khi gọi cái có thể làm hỏng state.
+    // Nếu chỉ giữ tham chiếu thì một foldTrace stateful (hoist WorldState ra
+    // module scope) sẽ khiến biến này thay đổi theo, và phép so sánh cuối
+    // suy biến thành x === x — luôn đúng, không phát hiện được gì.
+    const straightToTwo = structuredClone(foldTrace(evs, 2))
     foldTrace(evs, evs.length)
-    const afterScrubbing = foldTrace(evs, 2)
-    expect(afterScrubbing).toEqual(straightToTwo)
+    expect(foldTrace(evs, 2)).toEqual(straightToTwo)
+  })
+
+  it('mỗi lần gọi trả về đối tượng MỚI, không dùng lại state cũ', () => {
+    // Đây mới là test thực sự chặn được kiểu hồi quy nói trên: so sánh
+    // tham chiếu, thứ mà toEqual không bao giờ nhìn thấy.
+    const evs = sample()
+    const a = foldTrace(evs, 2)
+    const b = foldTrace(evs, 2)
+    expect(a).not.toBe(b)
+    expect(a.jobs).not.toBe(b.jobs)
+    expect(a.output).not.toBe(b.output)
+    expect(a).toEqual(b)
+  })
+
+  it('foldTrace không làm thay đổi mảng event đầu vào', () => {
+    const evs = sample()
+    const before = structuredClone(evs)
+    foldTrace(evs, evs.length)
+    expect(evs).toEqual(before)
   })
 
   it('upTo vượt quá độ dài thì kẹp về step cuối', () => {
@@ -2011,6 +2031,12 @@ export class TraceEmitter {
   setClock(t: number): void { this.t = t }
   get clock(): number { return this.t }
 
+  /**
+   * Lưu ý cho bên GỌI: body được spread NÔNG, nên object lồng bên trong
+   * (vd ctx của COROUTINE_CREATED) được giữ theo THAM CHIẾU. Luôn dựng
+   * object mới cho mỗi lần emit; dùng lại rồi sửa sẽ làm event lịch sử
+   * đổi theo, phá vỡ tính 'trace là nguồn sự thật duy nhất'.
+   */
   emit(body: EventBody, srcLine?: number): void {
     const e = { ...body, seq: this.seq++, t: this.t } as Event
     if (srcLine !== undefined) e.srcLine = srcLine
@@ -2104,7 +2130,7 @@ export function foldTrace(events: readonly Event[], upTo: number): WorldState {
 - [ ] **Step 6: Chạy test, xác nhận pass**
 
 Run: `npx vitest run tests/engine/trace.test.ts`
-Expected: PASS — 8 test.
+Expected: PASS — 10 test.
 
 - [ ] **Step 7: Commit**
 
