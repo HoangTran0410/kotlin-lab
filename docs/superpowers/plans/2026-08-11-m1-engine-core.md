@@ -3333,6 +3333,21 @@ describe('Scheduler', () => {
     expect(s.clock.now).toBe(500)
   })
 
+  it('yield đưa coroutine TRỞ LẠI hàng đợi, không bỏ rơi nó', () => {
+    // Nếu xoá hẳn nhánh 'yield' trong suspend(), task bị bỏ rơi: 'sau' không
+    // bao giờ in và job kẹt ở Active mãi. Không test nào khác bắt được điều
+    // đó, vì chúng chỉ khẳng định các tác dụng phụ xảy ra TRƯỚC điểm yield.
+    const s = new Scheduler()
+    const root = s.spawnRoot(function* (): CoroutineBody {
+      s.println('trước')
+      yield { s: 'yield' }
+      s.println('sau')
+    })
+    s.runToCompletion()
+    expect(collectPrints(s)).toEqual(['trước', 'sau'])
+    expect(root.state).toBe('Completed')
+  })
+
   it('ready là FIFO — nhiều coroutine sẵn sàng CÙNG LÚC chạy theo thứ tự tạo', () => {
     // Mọi test khác dùng delay khác nhau, nên thứ tự do ĐỒNG HỒ quyết định và
     // tính FIFO của ready không bao giờ bị chạm tới. Ở đây không có delay nào,
@@ -3517,7 +3532,8 @@ export class Scheduler {
       this.emitter.setClock(this.clock.now)
       if (!this.clock.advanceToNextTimer()) break
       this.emitter.setClock(this.clock.now)
-      this.sweepWaiters()
+      // Không quét waiter lại ở đây: callback của timer chỉ đẩy task vào ready,
+      // không đổi state job nào, nên không waiter nào có thể vừa được mở khoá.
     }
   }
 
@@ -3525,7 +3541,19 @@ export class Scheduler {
     const { job } = task
     if (job.isCompleted) return
 
-    const threadId = this.pool.acquire(task.ctx.dispatcher, job.id) ?? `${task.ctx.dispatcher}-1`
+    const acquired = this.pool.acquire(task.ctx.dispatcher, job.id)
+    if (acquired === null) {
+      // KHÔNG được bịa ra một thread id ở đây. release() sau đó sẽ giải phóng
+      // đúng thread mang id bịa ấy — có thể đang bận chạy job khác — làm hỏng
+      // state của pool và sinh THREAD_STATE 'FREE' cho thread thật ra đang chạy.
+      // Ở M1 scheduler chạy tuần tự từng task nên pool không bao giờ cạn;
+      // nếu cạn thì đó là bất biến bị vỡ, phải chết ngay chứ không hỏng ngầm.
+      throw new Error(
+        `Scheduler: pool '${task.ctx.dispatcher}' cạn thread khi chạy ${job.id}. ` +
+        'Bất biến "mỗi lượt chỉ chạy một task" đã bị vỡ.',
+      )
+    }
+    const threadId = acquired
     this.currentJob = job
 
     if (!task.started) {
@@ -3605,7 +3633,7 @@ export class Scheduler {
 - [ ] **Step 5: Chạy test, xác nhận pass**
 
 Run: `npx vitest run tests/engine/runtime-scheduler.test.ts`
-Expected: PASS — 12 test.
+Expected: PASS — 13 test.
 
 Nếu test "hai coroutine xen kẽ" cho thứ tự sai, kiểm tra `advanceToNextTimer` chạy hết timer cùng mốc trước khi trả về, và `ready` là FIFO (`shift`, không `pop`).
 
