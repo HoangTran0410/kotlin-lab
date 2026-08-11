@@ -294,6 +294,40 @@ describe('interpreter — coroutine builder', () => {
     expect(e.some(x => x.k === 'CANCEL_REQUESTED' && x.to === globalId)).toBe(false)
   })
 
+  it('GlobalScope.launch CHẾT khi runBlocking kết thúc — như JVM thoát', () => {
+    // Mặt còn lại của "thoát khỏi cây job": thoát rồi thì cũng KHÔNG được sống
+    // lâu hơn chương trình. JVM thật chạy coroutine của GlobalScope trên thread
+    // daemon, nên `main` trả về là chúng bị giết ngay, không kịp in.
+    // runToCompletion vắt cạn MỌI timer nên engine cho chúng in tiếp sau khi
+    // chương trình đã xong — dạy ngược đúng nửa sau của bài học.
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '  GlobalScope.launch { delay(100); println("khong duoc in") }\n' +
+      '  println("main xong")\n' +
+      '}')).toEqual(['main xong'])
+  })
+
+  it('coroutine GlobalScope bị bỏ lại hiện rõ trên trace: treo ở suspend, không có state kết thúc', () => {
+    // "Chết ở lúc thoát" phải NHÌN THẤY ĐƯỢC chứ không phải im lặng biến mất.
+    // Engine cố ý KHÔNG bịa ra cancel tổng hợp cho nó: JVM giết thread daemon
+    // mà không unwind, nên phát CANCEL_REQUESTED/Cancelled sẽ khiến `finally`
+    // của nó chạy — sai theo một kiểu khác. Trace để nó nằm nguyên ở
+    // COROUTINE_SUSPENDED không có resume: đúng thứ đã xảy ra thật.
+    const e = evs(
+      'fun main() = runBlocking {\n' +
+      '  GlobalScope.launch { delay(100); println("khong duoc in") }\n' +
+      '  println("main xong")\n' +
+      '}')
+    const globalId = (e.find(x => x.k === 'COROUTINE_CREATED' && x.parentId === null
+      && x.builder === 'launch') as { id: string } | undefined)?.id
+    expect(globalId).toBeTruthy()
+    expect(e.some(x => x.k === 'COROUTINE_STARTED' && x.id === globalId)).toBe(true)
+    expect(e.some(x => x.k === 'COROUTINE_SUSPENDED' && x.id === globalId)).toBe(true)
+    expect(e.some(x => x.k === 'COROUTINE_RESUMED' && x.id === globalId)).toBe(false)
+    expect(e.some(x => x.k === 'JOB_STATE' && x.id === globalId
+      && (x.to === 'Completed' || x.to === 'Cancelled'))).toBe(false)
+  })
+
   it('CoroutineScope(ctx).launch dùng dispatcher của scope, không nuốt mất', () => {
     const e = evs(
       'fun main() = runBlocking {\n' +

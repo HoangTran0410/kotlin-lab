@@ -121,6 +121,19 @@ describe('cancel làm unwind thân coroutine', () => {
       '}')).toEqual(['cleanup A', 'caught boom'])
   })
 
+  it('root FAIL vẫn để con chạy nốt finally trước khi chương trình dừng', () => {
+    // Bẫy của việc dừng vòng lặp khi root kết thúc (chốt "JVM thoát"): khi root
+    // FAIL, task của nó được đánh finished ngay trong step() trong khi con vừa
+    // bị huỷ còn chưa unwind. Chốt đặt sớm hơn unwindCancelled sẽ nuốt mất
+    // `finally` của con — Kotlin thì runBlocking chờ con unwind xong mới ném ra.
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '  launch { try { delay(1000) } finally { println("cleanup") } }\n' +
+      '  delay(10)\n' +
+      '  throw RuntimeException("x")\n' +
+      '}')).toEqual(['cleanup'])
+  })
+
   it('cancel() là BẤT ĐỒNG BỘ — lệnh sau nó chạy trước finally', () => {
     // Đây là bẫy thật của Kotlin, đáng dạy. `cancel()` chỉ YÊU CẦU huỷ rồi
     // trả về ngay; `println("sau cancel")` chạy tức thì, còn finally của
