@@ -60,15 +60,17 @@ describe('cancel làm unwind thân coroutine', () => {
       '}')).toEqual(['con dọn dẹp'])
   })
 
-  it('finally chạy XONG rồi mới tới lệnh sau cancel — thứ tự quan trọng', () => {
-    // Chốt bug thứ tự: cancelJob đặt isCompleted đồng bộ, nên nếu sweepWaiters
-    // chạy trước unwindCancelled thì 'sau cancel' in TRƯỚC 'xong dọn'.
+  it('cancel() là BẤT ĐỒNG BỘ — lệnh sau nó chạy trước finally', () => {
+    // Đây là bẫy thật của Kotlin, đáng dạy. `cancel()` chỉ YÊU CẦU huỷ rồi
+    // trả về ngay; `println("sau cancel")` chạy tức thì, còn finally của
+    // coroutine bị huỷ chỉ chạy khi nó được resume để unwind.
+    // Muốn thứ tự ngược lại phải dùng cancelAndJoin() — chưa hỗ trợ ở M1.
     expect(out(
       'fun main() = runBlocking {\n' +
       '  val j = launch { try { delay(1000) } finally { println("xong dọn") } }\n' +
       '  yield()\n' +
       '  j.cancel()\n' +
       '  println("sau cancel")\n' +
-      '}')).toEqual(['xong dọn', 'sau cancel'])
+      '}')).toEqual(['sau cancel', 'xong dọn'])
   })
 })

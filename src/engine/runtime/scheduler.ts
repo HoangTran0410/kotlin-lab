@@ -128,9 +128,8 @@ export class Scheduler {
         if (++guard > 100_000) throw new Error('Scheduler: nghi ngờ lặp vô hạn')
         this.step(this.ready.shift()!)
       }
-      // unwind PHẢI chạy trước sweepWaiters. cancelJob đặt isCompleted đồng bộ,
-      // nên nếu quét waiter trước thì joinChildren thấy con "đã xong" và đánh
-      // thức cha TRƯỚC khi finally của con kịp chạy — sai thứ tự output.
+      // Cho coroutine đã bị cancel chạy nốt finally trước khi nhảy đồng hồ.
+      // Đặt trước sweepWaiters để finally không bị hoãn qua một vòng lặp nữa.
       if (this.unwindCancelled()) continue
       // Quét waiter SAU KHI ready cạn, không quét sau mỗi step. Job vừa xong có
       // thể đã mở khoá một waiter; nếu bỏ dòng này thì đồng hồ sẽ nhảy vượt qua
