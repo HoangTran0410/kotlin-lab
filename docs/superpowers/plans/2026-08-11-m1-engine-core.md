@@ -3792,6 +3792,25 @@ describe('interpreter — lõi', () => {
       .toEqual(['caught'])
   })
 
+  it('return bên trong try KHÔNG bị catch của Kotlin nuốt', () => {
+    // ReturnSignal cố ý KHÔNG kế thừa KotlinThrow. Nếu cho nó kế thừa thì
+    // 'return 1' bị chính khối catch bắt và hàm trả về 2 — sai lặng lẽ, không
+    // exception nào lọt ra. Đã kiểm chứng bằng repro thật, không phải suy đoán.
+    expect(printsOf(
+      'fun f(): Int {\n' +
+      '  try { return 1 } catch (e: Exception) { return 2 }\n' +
+      '}\n' +
+      'fun main() {\n  println("${f()}")\n}')).toEqual(['1'])
+  })
+
+  it('finally vẫn chạy khi thoát bằng return', () => {
+    expect(printsOf(
+      'fun f(): Int {\n' +
+      '  try { return 1 } finally { println("dọn dẹp") }\n' +
+      '}\n' +
+      'fun main() {\n  println("${f()}")\n}')).toEqual(['dọn dẹp', '1'])
+  })
+
   it('finally chạy kể cả khi có exception', () => {
     expect(printsOf(
       'fun main() {\n  try { throw RuntimeException("x") } catch (e: Exception) { println("c") } finally { println("f") }\n}'))
@@ -4085,7 +4104,7 @@ export function runSource(src: string): RunResult {
 - [ ] **Step 7: Chạy test, xác nhận pass**
 
 Run: `npx vitest run tests/engine/interpreter-core.test.ts`
-Expected: PASS — 10 test.
+Expected: PASS — 12 test.
 
 - [ ] **Step 8: Chạy toàn bộ test + typecheck + lint**
 
@@ -4176,6 +4195,21 @@ describe('interpreter — coroutine builder', () => {
       '  j.cancel()\n' +
       '}')
     expect(e.some(x => x.k === 'CANCEL_REQUESTED')).toBe(true)
+  })
+
+  it('launch bên trong suspend fun gắn đúng coroutine scope của caller', () => {
+    // Bịt khoảng trống Task 15 để lại: callFun truyền env.enclosingJobId vào
+    // scope của thân hàm, nhưng Task 15 chưa có builder nào nên bỏ tham số đó
+    // đi cũng không test nào đỏ. Giờ đã có launch thì kiểm được.
+    const e = evs(
+      'suspend fun work(scope: CoroutineScope) {\n' +
+      '  scope.launch { delay(1) }\n' +
+      '}\n' +
+      'fun main() = runBlocking {\n  work(this)\n}')
+    const created = e.filter(x => x.k === 'COROUTINE_CREATED')
+    // Coroutine do launch trong suspend fun tạo phải có parentId, không phải root rời.
+    expect(created.length).toBeGreaterThanOrEqual(2)
+    expect(created[created.length - 1]!.parentId).not.toBeNull()
   })
 
   it('finally vẫn chạy khi coroutine bị cancel — kiểm chứng chọn generator là đúng', () => {
@@ -4391,7 +4425,7 @@ Cho toán tử `+` trên object context: trong `evalBinary`, thêm ngay trước
 - [ ] **Step 6: Chạy test, xác nhận pass**
 
 Run: `npx vitest run tests/engine/interpreter-coroutines.test.ts`
-Expected: PASS — 10 test.
+Expected: PASS — 11 test.
 
 Nếu test "launch chạy sau khi thân cha nhường quyền" fail (ra `['B','A']`): `spawnChildOf` phải **xếp task vào cuối `ready`**, không chạy ngay.
 
