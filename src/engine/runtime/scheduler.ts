@@ -111,6 +111,28 @@ export class Scheduler {
   }
 
   /**
+   * "Xong" theo nghĩa mà người CHỜ quan tâm: state đã kết thúc VÀ thân coroutine
+   * đã unwind xong.
+   *
+   * Chỉ hỏi `job.isCompleted` là chưa đủ. cancelJob lật thẳng
+   * Active->Cancelling->Cancelled trong MỘT lời gọi đồng bộ, nên không job nào
+   * bao giờ NGHỈ ở Cancelling: ngay sau `j.cancel()` thì j đã isCompleted trong
+   * khi generator của nó còn treo ở điểm suspend và khối `finally` chưa hề chạy.
+   * Đánh thức người chờ lúc đó là để `j.join()` trả về TRƯỚC khi j kịp dọn dẹp —
+   * Kotlin cho ["cleanup", "done"], engine cũ cho ["done", "cleanup"].
+   *
+   * `!task.started` là ca huỷ-trước-khi-chạy: không có gì để unwind, nên xong
+   * ngay. Không có nhánh này thì unwindCancelled (vốn bỏ qua task chưa start)
+   * sẽ không bao giờ đặt `finished`, và người chờ treo vĩnh viễn.
+   */
+  private isJobSettled(id: JobId): boolean {
+    const task = this.tasks.get(id)
+    if (!task) return true
+    if (!task.job.isCompleted) return false
+    return task.finished || !task.started
+  }
+
+  /**
    * Đánh thức waiter có điều kiện đã thoả. Giữ nguyên thứ tự đăng ký.
    * Trả true nếu có waiter được đưa vào ready.
    */
@@ -119,8 +141,8 @@ export class Scheduler {
     let woke = false
     for (const w of this.waiters) {
       const done = w.kind === 'job'
-        ? (this.tasks.get(w.targetId)?.job.isCompleted ?? true)
-        : (this.tasks.get(w.targetId)?.job.children.every(c => c.isCompleted) ?? true)
+        ? this.isJobSettled(w.targetId)
+        : (this.tasks.get(w.targetId)?.job.children.every(c => this.isJobSettled(c.id)) ?? true)
       if (done) { this.ready.push(w.task); woke = true } else { still.push(w) }
     }
     this.waiters = still
@@ -268,14 +290,17 @@ export class Scheduler {
         break
       case 'join':
       case 'await': {
-        const target = this.tasks.get(s.jobId)
-        if (!target || target.job.isCompleted) { this.ready.push(task); break }
+        // Cùng điều kiện với sweepWaiters — nếu hai chỗ lệch nhau thì join()
+        // trả về ngay hay phải chờ sẽ phụ thuộc vào thời điểm ngẫu nhiên.
+        if (this.isJobSettled(s.jobId)) { this.ready.push(task); break }
         this.waiters.push({ task, kind: 'job', targetId: s.jobId })
         break
       }
       case 'joinChildren': {
         const target = this.tasks.get(s.jobId)
-        if (!target || target.job.children.every(c => c.isCompleted)) { this.ready.push(task); break }
+        if (!target || target.job.children.every(c => this.isJobSettled(c.id))) {
+          this.ready.push(task); break
+        }
         this.waiters.push({ task, kind: 'children', targetId: s.jobId })
         break
       }
@@ -332,7 +357,19 @@ export class Scheduler {
     return job
   }
 
+  /**
+   * Task của scope inline không có generator thật (thân chạy trong task bao
+   * ngoài), nên không đường nào đặt `finished` cho nó. Từ khi người chờ hỏi cả
+   * `finished` chứ không chỉ state, bỏ sót bước này sẽ làm joinChildren của cha
+   * treo vĩnh viễn trên một scope đã Completed.
+   */
+  private settleInline(job: Job): void {
+    const task = this.tasks.get(job.id)
+    if (task) task.finished = true
+  }
+
   completeInline(job: Job): void {
+    this.settleInline(job)
     if (job.isCompleted) return
     job.transitionTo('Completing')
     this.emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Active', to: 'Completing' })
@@ -351,6 +388,7 @@ export class Scheduler {
    * job bao ngoài chứ không phải cho chính scope.
    */
   failInline(job: Job, cause: FailureCause): void {
+    this.settleInline(job)
     // Job đã kết thúc rồi thì đây không phải failure mới — chỉ là cùng một
     // exception đang đi ngược ra qua khung của scope (vd. scope đã bị con của
     // nó kéo chết trước đó). Ghi lại lần nữa là nhân đôi sự kiện.

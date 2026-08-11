@@ -60,6 +60,34 @@ describe('cancel làm unwind thân coroutine', () => {
       '}')).toEqual(['con dọn dẹp'])
   })
 
+  it('join() chờ job bị huỷ UNWIND XONG mới trả về', () => {
+    // Ngược hẳn với test bất-đồng-bộ ở dưới: ở đó không ai chờ, ở đây có join().
+    // Bug: cancelJob lật thẳng Active->Cancelling->Cancelled trong MỘT lời gọi,
+    // nên không job nào bao giờ NGHỈ ở Cancelling; sweepWaiters chỉ nhìn state
+    // và đánh thức người chờ ngay lập tức, TRƯỚC khi finally của job bị huỷ kịp
+    // chạy. Kotlin cho ["cleanup", "done"], engine cho ["done", "cleanup"].
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '  val j = launch { try { delay(1000) } finally { println("cleanup") } }\n' +
+      '  delay(50)\n' +
+      '  j.cancel()\n' +
+      '  j.join()\n' +
+      '  println("done")\n' +
+      '}')).toEqual(['cleanup', 'done'])
+  })
+
+  it('cancelAndJoin() huỷ RỒI CHỜ — không phải bí danh của cancel()', () => {
+    // cancelAndJoin từng được nối thẳng vào nhánh cancel và im lặng KHÔNG join,
+    // nên nó cho ra đúng thứ tự sai mà người học dùng nó để tránh.
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '  val j = launch { try { delay(1000) } finally { println("cleanup") } }\n' +
+      '  delay(50)\n' +
+      '  j.cancelAndJoin()\n' +
+      '  println("done")\n' +
+      '}')).toEqual(['cleanup', 'done'])
+  })
+
   it('cancel() là BẤT ĐỒNG BỘ — lệnh sau nó chạy trước finally', () => {
     // Đây là bẫy thật của Kotlin, đáng dạy. `cancel()` chỉ YÊU CẦU huỷ rồi
     // trả về ngay; `println("sau cancel")` chạy tức thì, còn finally của

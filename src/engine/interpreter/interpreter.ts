@@ -229,6 +229,10 @@ export class Interpreter {
         this.scheduler.cancelById(jobId.v, {
           exType: 'CancellationException', message: 'Job was cancelled', isCancellation: true,
         })
+        // cancelAndJoin từng được nối thẳng vào nhánh này và im lặng KHÔNG join,
+        // nên nó cho ra đúng thứ tự sai mà người học dùng nó để tránh: lệnh sau
+        // nó chạy trước khi finally của coroutine bị huỷ kịp chạy.
+        if (calleeName === 'cancelAndJoin') yield { s: 'join', jobId: jobId.v }
       }
       return UNIT
     }
