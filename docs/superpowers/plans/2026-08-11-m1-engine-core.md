@@ -848,7 +848,10 @@ export class Parser {
     return expr
   }
 
-  /** Task 4 sẽ mở rộng để nuốt trailing lambda. */
+  /**
+   * Chỉ đọc phần `(args)`. Trailing lambda KHÔNG xử lý ở đây mà ở parsePostfix,
+   * vì `launch { }` không có ngoặc đơn nào để hàm này bám vào.
+   */
   protected parseCallTail(callee: Expr): Expr {
     const lp = this.expect('LPAREN')
     const args: Arg[] = []
@@ -1339,12 +1342,40 @@ export function parseBlockSource(src: string): Block {
 Run: `npx vitest run tests/engine/parser-stmt.test.ts`
 Expected: PASS — 11 test.
 
-- [ ] **Step 7: Chạy toàn bộ test + typecheck**
+- [ ] **Step 7: Thêm test hồi quy cho ranh giới trailing-lambda**
+
+Task 4 dựa vào `atSameLine()` để phân biệt trailing lambda với một khối rời ở
+dòng sau, nhưng không có test nào phủ chiều phủ định. Vì task này sửa
+`parseStmt` — thứ mà `parseBlock` và `parseLambda` đều gọi — hãy chốt bất biến
+đó lại trước khi nó có thể vỡ âm thầm.
+
+Thêm vào **cuối** `tests/engine/parser-lambda.test.ts`:
+
+```ts
+describe('parser — ranh giới trailing lambda', () => {
+  it('khối ở DÒNG SAU không bị nuốt thành trailing lambda', () => {
+    // `f()` kết thúc ở dòng 1. `{ g() }` ở dòng 2 là khối rời.
+    const blk = parseBlockSource('{ f()\n{ g() } }')
+    expect(blk.stmts).toHaveLength(2)
+    expect(blk.stmts[0]).toMatchObject({ k: 'ExprStmt', expr: { k: 'Call', lambda: null } })
+  })
+
+  it('khối cùng dòng thì vẫn là trailing lambda', () => {
+    const blk = parseBlockSource('{ f() { g() } }')
+    expect(blk.stmts).toHaveLength(1)
+    expect(blk.stmts[0]).toMatchObject({ k: 'ExprStmt', expr: { k: 'Call', lambda: {} } })
+  })
+})
+```
+
+Thêm `parseBlockSource` vào dòng import của file đó.
+
+- [ ] **Step 8: Chạy toàn bộ test + typecheck**
 
 Run: `npm test && npm run typecheck`
-Expected: sạch.
+Expected: sạch. `parser-lambda.test.ts` giờ có 8 test.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add -A
