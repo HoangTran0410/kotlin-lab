@@ -70,18 +70,29 @@ describe('buildGraphSpec — hình dạng KHÔNG phụ thuộc step', () => {
     }
   })
 
-  it('deterministic — xen kẽ dữ liệu KHÁC giữa hai lần gọi', () => {
-    // So hai lần gọi liên tiếp với nhau KHÔNG bắt được state rò rỉ ở module
-    // scope: cả hai cùng thấy state hỏng như nhau nên vẫn bằng nhau. Đã kiểm
-    // chứng: hoisting Set dedup ra ngoài hàm làm 2 test KHÁC đỏ, còn test
-    // "deterministic" kiểu cũ vẫn xanh. Xen một trace KHÁC vào giữa thì mọi
-    // state sống sót qua lời gọi sẽ lộ ra.
-    const a = ev('jobtree')
-    const b = ev('supervisor')
-    const a1 = JSON.stringify(buildGraphSpec(a))
-    buildGraphSpec(b)
-    const a2 = JSON.stringify(buildGraphSpec(a))
-    expect(a2).toBe(a1)
+  it('deterministic — id DUY NHẤT, không phụ thuộc thứ tự chạy trong file', () => {
+    // Hai bản trước đều mù. So hai lần gọi liên tiếp: state hỏng như nhau nên
+    // vẫn bằng nhau. Xen dữ liệu khác vào giữa: vẫn mù khi chạy CẢ FILE, vì
+    // các test trước đã làm bão hoà Set dùng chung cho mọi lesson.
+    // Cách duy nhất độc lập thứ tự: dùng id không test nào khác chạm tới.
+    // Nếu buildGraphSpec giữ state qua lời gọi, lần gọi thứ hai trên CÙNG dữ
+    // liệu sẽ thấy mọi cạnh "đã gặp" và bỏ hết -> khác lần đầu ngay.
+    const mk = () => ([
+      { seq: 0, t: 0, k: 'COROUTINE_CREATED', id: 'det-root', parentId: null,
+        builder: 'runBlocking',
+        ctx: { dispatcher: 'Main', name: null, isSupervisor: false, hasHandler: false } },
+      { seq: 1, t: 0, k: 'COROUTINE_CREATED', id: 'det-kid', parentId: 'det-root',
+        builder: 'launch',
+        ctx: { dispatcher: 'Main', name: null, isSupervisor: false, hasHandler: false } },
+      { seq: 2, t: 0, k: 'CANCEL_REQUESTED', from: 'det-root', to: 'det-kid',
+        cause: 'CancellationException' },
+    ] as unknown as Parameters<typeof buildGraphSpec>[0])
+
+    const first = JSON.stringify(buildGraphSpec(mk()))
+    const second = JSON.stringify(buildGraphSpec(mk()))
+    expect(second).toBe(first)
+    // Phải CÓ cạnh thì việc mất cạnh mới lộ ra được.
+    expect(JSON.parse(first).edges.length).toBeGreaterThan(0)
   })
 
   it('GraphSpec KHÔNG phụ thuộc step — cơ sở của toàn bộ chống rung', () => {
@@ -115,6 +126,22 @@ describe('buildGraphSpec — hình dạng KHÔNG phụ thuộc step', () => {
       for (const nid of earlyIds) expect(fullIds, id).toContain(nid)
       expect(fullIds.filter(x => earlyIds.includes(x)), id).toEqual(earlyIds)
     }
+  })
+
+  it('cạnh sinh từ event MUỘN vẫn có mặt — đây mới là thứ bắt được cắt cụt trace', () => {
+    // Node được tạo rất sớm (COROUTINE_CREATED cuối ở seq <= 12), nên cắt cụt
+    // trace KHÔNG làm mất node và mọi assertion dựa trên .nodes đều mù.
+    // Cạnh cancel/failure thì sinh ra ở CUỐI — kiểm .edges mới bắt được.
+    const events = ev('jobtree')
+    const cancelIdx = events
+      .map((e, i) => (e.k === 'CANCEL_REQUESTED' ? i : -1))
+      .filter(i => i >= 0)
+    expect(cancelIdx.length, 'fixture cần có CANCEL_REQUESTED').toBeGreaterThan(0)
+    // Ghim rằng chúng THẬT SỰ nằm ở nửa sau — nếu không, test này lại mù.
+    expect(cancelIdx[cancelIdx.length - 1]!).toBeGreaterThan(events.length / 2)
+
+    const spec = buildGraphSpec(events)
+    expect(spec.edges.filter(e => e.kind === 'cancel').length).toBeGreaterThan(0)
   })
 
   it('cạnh trùng bị gộp — dựng event thủ công vì lesson thật không sinh ra ca này', () => {
