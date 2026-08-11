@@ -106,6 +106,21 @@ describe('Scheduler', () => {
     expect(s.clock.now).toBe(500)
   })
 
+  it('yield đưa coroutine TRỞ LẠI hàng đợi, không bỏ rơi nó', () => {
+    // Nếu xoá hẳn nhánh 'yield' trong suspend(), task bị bỏ rơi: 'sau' không
+    // bao giờ in và job kẹt ở Active mãi. Không test nào khác bắt được điều
+    // đó, vì chúng chỉ khẳng định các tác dụng phụ xảy ra TRƯỚC điểm yield.
+    const s = new Scheduler()
+    const root = s.spawnRoot(function* (): CoroutineBody {
+      s.println('trước')
+      yield { s: 'yield' }
+      s.println('sau')
+    })
+    s.runToCompletion()
+    expect(collectPrints(s)).toEqual(['trước', 'sau'])
+    expect(root.state).toBe('Completed')
+  })
+
   it('ready là FIFO — nhiều coroutine sẵn sàng CÙNG LÚC chạy theo thứ tự tạo', () => {
     // Mọi test khác dùng delay khác nhau, nên thứ tự do ĐỒNG HỒ quyết định và
     // tính FIFO của ready không bao giờ bị chạm tới. Ở đây không có delay nào,
@@ -122,6 +137,11 @@ describe('Scheduler', () => {
     expect(collectPrints(s)).toEqual(['A', 'B', 'C'])
   })
 
+  // GHI CHÚ TRUNG THỰC: test này KHÔNG phân biệt được shift() với pop().
+  // Đã kiểm chứng: với pop(), thứ tự tạo bị đảo rồi thứ tự resume bị đảo lần
+  // nữa, hai lần triệt tiêu nhau và kết quả vẫn A,B,C. Nó chốt hành vi
+  // đầu-cuối (đồng hồ + scheduler khớp nhau), không chốt kỷ luật hàng đợi.
+  // Test không-delay ở trên mới là cái canh FIFO.
   it('cùng mốc delay thì vẫn resume theo thứ tự tạo', () => {
     const s = new Scheduler()
     s.spawnRoot(function* (): CoroutineBody {

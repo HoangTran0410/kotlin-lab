@@ -127,7 +127,8 @@ export class Scheduler {
       this.emitter.setClock(this.clock.now)
       if (!this.clock.advanceToNextTimer()) break
       this.emitter.setClock(this.clock.now)
-      this.sweepWaiters()
+      // Không quét waiter lại ở đây: callback của timer chỉ đẩy task vào ready,
+      // không đổi state job nào, nên không waiter nào có thể vừa được mở khoá.
     }
   }
 
@@ -135,7 +136,19 @@ export class Scheduler {
     const { job } = task
     if (job.isCompleted) return
 
-    const threadId = this.pool.acquire(task.ctx.dispatcher, job.id) ?? `${task.ctx.dispatcher}-1`
+    const acquired = this.pool.acquire(task.ctx.dispatcher, job.id)
+    if (acquired === null) {
+      // KHÔNG được bịa ra một thread id ở đây. release() sau đó sẽ giải phóng
+      // đúng thread mang id bịa ấy — có thể đang bận chạy job khác — làm hỏng
+      // state của pool và sinh THREAD_STATE 'FREE' cho thread thật ra đang chạy.
+      // Ở M1 scheduler chạy tuần tự từng task nên pool không bao giờ cạn;
+      // nếu cạn thì đó là bất biến bị vỡ, phải chết ngay chứ không hỏng ngầm.
+      throw new Error(
+        `Scheduler: pool '${task.ctx.dispatcher}' cạn thread khi chạy ${job.id}. ` +
+        'Bất biến "mỗi lượt chỉ chạy một task" đã bị vỡ.',
+      )
+    }
+    const threadId = acquired
     this.currentJob = job
 
     if (!task.started) {
