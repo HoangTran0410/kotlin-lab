@@ -203,12 +203,85 @@ export class Interpreter {
     return UNIT
   }
 
+  /**
+   * Điều phối một lời gọi qua BA nhóm handler, theo đúng thứ tự ưu tiên cũ.
+   * Mỗi handler trả `undefined` nghĩa là "không phải của tôi" nên lời gọi đi
+   * tiếp xuống nhóm sau; trả KValue — kể cả UNIT — nghĩa là đã xử lý xong.
+   *
+   * Thứ tự là MỘT PHẦN CỦA NGỮ NGHĨA, không được đảo. `Job()` phải rơi vào
+   * nhóm factory context; nếu nó xuống tới quy tắc "tên viết hoa -> dựng
+   * object" ở cuối thì cờ __supervisor biến mất không một tiếng động.
+   */
   protected *evalCall(e: Expr & { k: 'Call' }, env: Env): Eval<KValue> {
+    // Một tên chung cho cả `foo()` lẫn `x.foo()`. Receiver do từng handler tự
+    // đọc khi cần (join/await/cancel, và scopeReceiver của launch/async), nên
+    // đừng suy ra "không có receiver" từ biến này — nhóm cuối dùng `name`.
     const calleeName = e.callee.k === 'Ident'
       ? e.callee.name
       : e.callee.k === 'Member' ? e.callee.name : null
 
-    // ---- điểm suspend ----
+    const suspension = yield* this.trySuspensionPoint(calleeName, e, env)
+    if (suspension !== undefined) return suspension
+
+    const builder = yield* this.tryBuilder(calleeName, e, env)
+    if (builder !== undefined) return builder
+
+    const ctxValue = yield* this.tryContextFactory(calleeName, e, env)
+    if (ctxValue !== undefined) return ctxValue
+
+    const name = e.callee.k === 'Ident' ? e.callee.name : null
+
+    if (name === 'println') {
+      const arg = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
+      this.scheduler.println(display(arg), e.pos.line)
+      return UNIT
+    }
+
+    // repeat(n) { } nằm trong subset §4.1 và không có trong danh mục hoãn nào.
+    // Không cài thì nó rơi xuống nhánh cuối và trả Unit im lặng: không chạy lần
+    // nào, cũng không báo gì.
+    if (name === 'repeat') {
+      const lambda = e.lambda
+      const n = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
+      if (!lambda || n.t !== 'num') return UNIT
+      let guard = 0
+      for (let i = 0; i < n.v; i++) {
+        if (++guard > 100_000) throw new KotlinThrow('IllegalStateException', 'Vòng lặp quá dài')
+        const scope = env.child()
+        // Lambda một tham số: dùng tên tự đặt nếu có, không thì `it` như Kotlin.
+        scope.declare(lambda.params[0] ?? 'it', { t: 'num', v: i })
+        // yield* chứ không phải vòng lặp thường: điểm suspend bên trong repeat
+        // phải nhường quyền được ra ngoài như mọi chỗ khác.
+        yield* this.evalBlock(lambda.body, scope)
+      }
+      return UNIT
+    }
+
+    if (name && /^[A-Z]/.test(name)) {
+      const arg = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
+      return {
+        t: 'obj', className: name,
+        fields: new Map([['message', arg.t === 'str' ? arg : { t: 'str', v: '' } as KValue]]),
+      }
+    }
+
+    if (name) {
+      const fn = this.funs.get(name)
+      if (fn) return yield* this.callFun(fn, e.args, env)
+    }
+
+    return UNIT
+  }
+
+  /**
+   * delay/yield/join/await/cancel/cancelAndJoin — những lời gọi NHƯỜNG QUYỀN
+   * điều khiển về scheduler. Phải xét TRƯỚC mọi nhóm khác: `cancel` và
+   * `join` là gọi kiểu thành viên trên Job, nếu để chúng rơi xuống dưới thì
+   * nhánh nào bắt được trước cũng nuốt mất điểm suspend.
+   */
+  protected *trySuspensionPoint(
+    calleeName: string | null, e: Expr & { k: 'Call' }, env: Env,
+  ): Eval<KValue | undefined> {
     if (calleeName === 'delay') {
       const ms = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : { t: 'num' as const, v: 0 }
       yield { s: 'delay', ms: ms.t === 'num' ? ms.v : 0 }
@@ -237,8 +310,16 @@ export class Interpreter {
       }
       return UNIT
     }
+    return undefined
+  }
 
-    // ---- coroutine builder ----
+  /**
+   * runBlocking/coroutineScope/supervisorScope/withContext (chạy TẠI CHỖ) và
+   * launch/async (tạo coroutine con chạy sau).
+   */
+  protected *tryBuilder(
+    calleeName: string | null, e: Expr & { k: 'Call' }, env: Env,
+  ): Eval<KValue | undefined> {
     if (calleeName === 'runBlocking' || calleeName === 'coroutineScope'
         || calleeName === 'supervisorScope' || calleeName === 'withContext') {
       const lambda = e.lambda
@@ -328,8 +409,16 @@ export class Interpreter {
         fields: new Map([['__jobId', { t: 'str', v: job.id } as KValue]]),
       }
     }
+    return undefined
+  }
 
-    // ---- factory context ----
+  /**
+   * SupervisorJob/Job/CoroutineScope/MainScope/CoroutineName — dựng giá trị
+   * CoroutineContext, không chạy gì và không suspend.
+   */
+  protected *tryContextFactory(
+    calleeName: string | null, e: Expr & { k: 'Call' }, env: Env,
+  ): Eval<KValue | undefined> {
     if (calleeName === 'SupervisorJob' || calleeName === 'Job') {
       return {
         t: 'obj', className: calleeName,
@@ -349,51 +438,8 @@ export class Interpreter {
       const arg = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
       return { t: 'obj', className: 'CoroutineName', fields: new Map([['name', arg]]) }
     }
-
-    const name = e.callee.k === 'Ident' ? e.callee.name : null
-
-    if (name === 'println') {
-      const arg = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
-      this.scheduler.println(display(arg), e.pos.line)
-      return UNIT
-    }
-
-    // repeat(n) { } nằm trong subset §4.1 và không có trong danh mục hoãn nào.
-    // Không cài thì nó rơi xuống nhánh cuối và trả Unit im lặng: không chạy lần
-    // nào, cũng không báo gì.
-    if (name === 'repeat') {
-      const lambda = e.lambda
-      const n = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
-      if (!lambda || n.t !== 'num') return UNIT
-      let guard = 0
-      for (let i = 0; i < n.v; i++) {
-        if (++guard > 100_000) throw new KotlinThrow('IllegalStateException', 'Vòng lặp quá dài')
-        const scope = env.child()
-        // Lambda một tham số: dùng tên tự đặt nếu có, không thì `it` như Kotlin.
-        scope.declare(lambda.params[0] ?? 'it', { t: 'num', v: i })
-        // yield* chứ không phải vòng lặp thường: điểm suspend bên trong repeat
-        // phải nhường quyền được ra ngoài như mọi chỗ khác.
-        yield* this.evalBlock(lambda.body, scope)
-      }
-      return UNIT
-    }
-
-    if (name && /^[A-Z]/.test(name)) {
-      const arg = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
-      return {
-        t: 'obj', className: name,
-        fields: new Map([['message', arg.t === 'str' ? arg : { t: 'str', v: '' } as KValue]]),
-      }
-    }
-
-    if (name) {
-      const fn = this.funs.get(name)
-      if (fn) return yield* this.callFun(fn, e.args, env)
-    }
-
-    return UNIT
+    return undefined
   }
-
   *callFun(fn: FunDecl, args: readonly { name: string | null; value: Expr }[], env: Env): Eval<KValue> {
     // Thân hàm không thấy biến cục bộ của caller, NHƯNG kế thừa coroutine scope
     // bao quanh — nhờ vậy launch bên trong một suspend fun gắn đúng cha.
