@@ -1,7 +1,10 @@
+import { act } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { render } from '@testing-library/react'
 import { EditorView } from '@codemirror/view'
 import { CodeEditor } from '../../src/ui/editor/CodeEditor'
+import { App } from '../../src/ui/App'
+import { useLabStore } from '../../src/state/store'
 
 // CodeMirror 6 tự bắt sự kiện DOM thật (beforeinput + MutationObserver) để
 // suy ra thay đổi; jsdom không mô phỏng được luồng đó một cách đáng tin cậy.
@@ -49,5 +52,29 @@ describe('CodeEditor — CodeMirror 6 với cú pháp Kotlin', () => {
     const { rerender } = render(<CodeEditor value={same} onChange={onChange} />)
     rerender(<CodeEditor value={same} onChange={onChange} />)
     expect(onChange).toHaveBeenCalledTimes(0)
+  })
+
+  it('gõ liên tục chỉ biên dịch MỘT lần sau khi ngừng — debounce', () => {
+    vi.useFakeTimers()
+    try {
+      const setSource = vi.spyOn(useLabStore.getState(), 'setSource')
+      const { container } = render(<App />)
+      // Cùng cơ chế "gõ" như 5 test CodeEditor ở trên: lấy EditorView thật qua
+      // DOM rồi dispatch transaction, thay vì mô phỏng sự kiện input thô mà
+      // jsdom không xử lý đáng tin cậy cho contenteditable của CodeMirror 6.
+      const view = viewOf(container)
+
+      for (const ch of ['a', 'b', 'c', 'd', 'e']) {
+        view.dispatch({ changes: { from: view.state.doc.length, insert: ch } })
+      }
+
+      act(() => { vi.advanceTimersByTime(100) })
+      expect(setSource, 'chưa đủ 250ms thì chưa được biên dịch').not.toHaveBeenCalled()
+
+      act(() => { vi.advanceTimersByTime(200) })
+      expect(setSource, '5 lần gõ phải gộp thành ĐÚNG 1 lần biên dịch').toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
