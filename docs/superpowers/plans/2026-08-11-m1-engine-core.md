@@ -4101,8 +4101,16 @@ export function runSource(src: string): RunResult {
   scheduler.spawnRoot(rootJob => (function* (): CoroutineBody {
     // Env gốc mang jobId của root, để launch ở tầng ngoài cùng gắn đúng cây.
     const env = interp.globals.child(rootJob.id)
-    if (unwrapped) yield* interp.evalBlock(unwrapped, env)
-    else yield* interp.callFun(main, [], env)
+    if (unwrapped) {
+      yield* interp.evalBlock(unwrapped, env)
+      // Giống hệt nhánh runBlocking trong evalCall: chỉ coi là xong khi MỌI
+      // child đã xong. Bỏ bước này thì root báo Completed TRƯỚC các launch
+      // bên trong nó — output có thể vẫn đúng nhưng trace sai, và Task 17 sẽ
+      // nướng cái sai đó vào golden trace.
+      yield { s: 'joinChildren', jobId: rootJob.id }
+    } else {
+      yield* interp.callFun(main, [], env)
+    }
   })())
   scheduler.runToCompletion()
 
