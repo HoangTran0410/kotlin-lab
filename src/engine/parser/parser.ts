@@ -125,6 +125,8 @@ export class Parser {
         this.next()
         const name = this.expect('IDENT')
         expr = { k: 'Member', target: expr, name: name.text, pos: this.posOf(name) }
+      } else if (this.trySkipTypeArgs()) {
+        // Đã nuốt <...>; vòng lặp kế sẽ thấy '(' và gọi parseCallTail.
       } else if (this.at('LPAREN')) {
         expr = this.parseCallTail(expr)
       } else if (this.atSameLine('LBRACE')) {
@@ -137,6 +139,34 @@ export class Parser {
       }
     }
     return expr
+  }
+
+  /**
+   * Phân biệt `Channel<Int>()` (đối số kiểu) với `a < b` (so sánh).
+   *
+   * Chỉ coi là đối số kiểu khi quét được tới '>' khớp cặp VÀ ngay sau đó là
+   * '('. Nhờ điều kiện thứ hai mà `a < b` không bao giờ bị hiểu nhầm. Thất bại
+   * thì khôi phục con trỏ về chỗ cũ, không để lại dấu vết.
+   */
+  private trySkipTypeArgs(): boolean {
+    if (!this.at('OP', '<')) return false
+    const save = this.i
+    this.next()
+    let depth = 1
+    while (depth > 0) {
+      if (this.atEof()) { this.i = save; return false }
+      if (this.at('OP', '<')) { depth++; this.next(); continue }
+      if (this.at('OP', '>')) { depth--; this.next(); continue }
+      // Bên trong đối số kiểu chỉ chấp nhận tên, dấu phẩy, chấm, dấu hỏi.
+      if (this.at('IDENT') || this.at('COMMA') || this.at('DOT') || this.at('OP', '?')) {
+        this.next(); continue
+      }
+      this.i = save
+      return false
+    }
+    if (this.at('LPAREN')) return true
+    this.i = save
+    return false
   }
 
   /** Task 4 sẽ mở rộng để nuốt trailing lambda. */

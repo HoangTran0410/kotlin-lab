@@ -92,3 +92,27 @@ describe('parser — biểu thức', () => {
     })
   })
 })
+
+describe('parser — đối số kiểu', () => {
+  it('Channel<Int>() parse thành lời gọi Channel', () => {
+    expect(parseExprSource('Channel<Int>()')).toMatchObject({
+      k: 'Call', callee: { k: 'Ident', name: 'Channel' }, args: [],
+    })
+  })
+
+  it('kiểu lồng nhau MutableStateFlow<List<Int>>(x)', () => {
+    expect(parseExprSource('MutableStateFlow<List<Int>>(x)')).toMatchObject({
+      k: 'Call', callee: { k: 'Ident', name: 'MutableStateFlow' },
+      args: [{ value: { k: 'Ident', name: 'x' } }],
+    })
+  })
+
+  it('a < b vẫn là so sánh, KHÔNG phải đối số kiểu', () => {
+    expect(parseExprSource('a < b')).toMatchObject({ k: 'Binary', op: '<' })
+  })
+
+  it('a < b > c không bị nuốt nhầm khi không có ( theo sau', () => {
+    expect(parseExprSource('a < b')).toMatchObject({ k: 'Binary', op: '<' })
+    expect(parseExprSource('x < y + 1')).toMatchObject({ k: 'Binary', op: '<' })
+  })
+})
