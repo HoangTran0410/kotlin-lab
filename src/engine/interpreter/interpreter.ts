@@ -266,6 +266,13 @@ export class Interpreter {
         // reportFailure. Đúng thứ ngữ nghĩa mà công cụ này tồn tại để dạy.
         if (err instanceof KotlinThrow) {
           this.scheduler.failInline(job, toCause(err))
+          // Chờ con unwind XONG rồi mới ném ra ngoài. failInline vừa huỷ chúng,
+          // nhưng huỷ chỉ lật trạng thái Job — khối `finally` trong code Kotlin
+          // chỉ chạy khi scheduler ném vào generator ở vòng lặp sau. Bỏ bước
+          // này thì catch của người gọi chạy TRƯỚC finally của con, ngược hẳn
+          // Kotlin: cùng lỗi R1, chỉ khác đường đi tới (thân scope ném, thay vì
+          // con của scope fail).
+          yield { s: 'joinChildren', jobId: job.id }
         } else {
           // ReturnSignal (lệnh `return`) là kết thúc BÌNH THƯỜNG của scope,
           // không phải failure — vẫn completeInline như đường thuận.

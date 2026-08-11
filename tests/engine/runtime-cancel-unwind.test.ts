@@ -105,6 +105,22 @@ describe('cancel làm unwind thân coroutine', () => {
       '}')).toEqual(['cleanup A', 'caught boom'])
   })
 
+  it('THÂN coroutineScope ném: cũng phải chờ con unwind xong mới ném ra ngoài', () => {
+    // Đường thứ hai của cùng một luật. Ở trên exception đến TỪ con nên đi qua
+    // reportFailure; ở đây chính thân scope ném nên đi qua failInline. Nếu chỉ
+    // sửa đường trên thì đường này vẫn cho ["caught boom", "cleanup A"].
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '  try {\n' +
+      '    coroutineScope {\n' +
+      '      launch { try { delay(1000) } finally { println("cleanup A") } }\n' +
+      '      delay(10)\n' +
+      '      throw RuntimeException("boom")\n' +
+      '    }\n' +
+      '  } catch (e: Exception) { println("caught " + e.message) }\n' +
+      '}')).toEqual(['cleanup A', 'caught boom'])
+  })
+
   it('cancel() là BẤT ĐỒNG BỘ — lệnh sau nó chạy trước finally', () => {
     // Đây là bẫy thật của Kotlin, đáng dạy. `cancel()` chỉ YÊU CẦU huỷ rồi
     // trả về ngay; `println("sau cancel")` chạy tức thì, còn finally của
