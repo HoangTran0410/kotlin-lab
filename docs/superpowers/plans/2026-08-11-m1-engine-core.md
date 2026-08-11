@@ -936,7 +936,7 @@ export function parseProgram(_src: string): Program {
 - [ ] **Step 5: Chạy test, xác nhận pass**
 
 Run: `npx vitest run tests/engine/parser-expr.test.ts`
-Expected: PASS — 15 test.
+Expected: PASS — 14 test.
 
 - [ ] **Step 6: Commit**
 
