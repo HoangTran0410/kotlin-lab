@@ -93,6 +93,18 @@ export function reportFailure(child: Job, cause: FailureCause, emitter: TraceEmi
       blockedBySupervisor: parent.isSupervisor,
     })
 
+    // Ranh giới scope (coroutineScope/supervisorScope/withContext).
+    //
+    // Exception ĐI TỚI khung của cha — nên FAILURE_PROPAGATED ở trên vẫn được
+    // phát, UI vẫn vẽ được đường đi — nhưng job cha KHÔNG chết theo: kotlinx
+    // trả exception vào continuation của người gọi, để try/catch quanh chỗ gọi
+    // bắt được (JobSupport.cancelParent: `if (isScopedCoroutine) return true`).
+    // Việc ném lại tại chỗ gọi do interpreter làm sau khi joinChildren xong.
+    //
+    // Đặt TRƯỚC nhánh supervisor để hai cờ độc lập nhau: supervisorScope vừa
+    // là supervisor vừa là scope, và cả hai lý do đều dừng ở đây.
+    if (node.isScopeCoroutine) return
+
     // Supervisor chặn LAN TRUYỀN FAILURE. Nó không nuốt exception — việc đưa
     // exception chưa xử lý tới handler là của scheduler, không phải ở đây.
     if (parent.isSupervisor) return

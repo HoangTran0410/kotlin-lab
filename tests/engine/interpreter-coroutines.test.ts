@@ -156,6 +156,55 @@ describe('interpreter — coroutine builder', () => {
       '}')).toEqual(['DUNG: Job was cancelled'])
   })
 
+  it('bắt được failure của coroutineScope thì job bao ngoài KHÔNG bị đánh dấu Cancelled', () => {
+    // kotlinx: ScopeCoroutine trả exception vào continuation của CALLER
+    // (JobSupport.cancelParent trả về sớm khi isScopedCoroutine), nó KHÔNG huỷ
+    // job cha. Engine để failure leo thẳng lên, nên trace nói runBlocking đã
+    // chết trong khi chương trình vẫn chạy tiếp và in ra — UI vẽ job state sẽ
+    // hiển thị một coroutine gốc đã Cancelled còn đang làm việc.
+    const r = runSource(
+      'fun main() = runBlocking {\n' +
+      '  try {\n' +
+      '    coroutineScope { launch { delay(10); throw RuntimeException("boom") } }\n' +
+      '  } catch (e: Exception) { println("caught " + e.message) }\n' +
+      '  println("van chay tiep")\n' +
+      '}')
+    expect(r.output).toEqual(['caught boom', 'van chay tiep'])
+
+    const rootId = (r.events.find(x => x.k === 'COROUTINE_CREATED') as { id: string }).id
+    const rootStates = r.events
+      .filter(x => x.k === 'JOB_STATE' && x.id === rootId)
+      .map(x => (x as { to: string }).to)
+    expect(rootStates).toEqual(['Active', 'Completing', 'Completed'])
+    expect(r.events.some(x => x.k === 'CANCEL_REQUESTED' && x.to === rootId)).toBe(false)
+  })
+
+  it('coroutineScope fail KHÔNG kéo theo anh em NGOÀI scope khi failure được bắt', () => {
+    // Hệ quả quan sát được của cùng một luật: scope không huỷ job cha, nên các
+    // con khác của cha không bị đụng tới. Nếu failure vẫn leo lên cha thì
+    // cancelJob quét hết sibling và "song song vẫn sống" không bao giờ in.
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '  launch { delay(200); println("song song van song") }\n' +
+      '  try {\n' +
+      '    coroutineScope { launch { delay(10); throw RuntimeException("boom") } }\n' +
+      '  } catch (e: Exception) { println("caught") }\n' +
+      '}')).toEqual(['caught', 'song song van song'])
+  })
+
+  it('supervisorScope KHÔNG ném lại failure của con — khác coroutineScope', () => {
+    // Mặt kia của cùng một luật, và là cái bẫy khi cài "scope ném lại": chỉ
+    // coroutineScope/withContext mới trả failure của con về caller.
+    // supervisorScope chặn ngay ở ranh giới nên caller không thấy gì cả.
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '  try {\n' +
+      '    supervisorScope { launch { delay(10); throw RuntimeException("boom") } }\n' +
+      '  } catch (e: Exception) { println("KHONG DUOC BAT: " + e.message) }\n' +
+      '  println("xong")\n' +
+      '}')).toEqual(['xong'])
+  })
+
   it('EXCEPTION_THROWN KHÔNG được phát cho job đã ở trạng thái kết thúc', () => {
     // failInline canh `if (job.isCompleted) return` đúng vì lý do này, nhưng
     // khối catch của step() thì không, và run.ts bóc lớp runBlocking gốc nên

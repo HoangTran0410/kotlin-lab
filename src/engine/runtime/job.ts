@@ -46,12 +46,34 @@ export class Job {
   /** Mảng, không phải Set — thứ tự phải ổn định để trace deterministic. */
   private readonly _children: Job[] = []
 
+  /**
+   * Job của một scope builder chạy TẠI CHỖ: coroutineScope / supervisorScope /
+   * withContext. Đối ứng của `isScopedCoroutine` trong kotlinx.
+   *
+   * Ý nghĩa DUY NHẤT của cờ này: khi job kết thúc bất thường, exception được
+   * TRẢ VỀ continuation của người gọi (tức ném ra ngay tại chỗ gọi, bắt được
+   * bằng try/catch của Kotlin) chứ KHÔNG huỷ job cha. kotlinx làm đúng thế
+   * trong JobSupport.cancelParent: `if (isScopedCoroutine) return true`.
+   *
+   * Thiếu cờ này thì failure của con leo thẳng qua scope lên tới runBlocking:
+   * trace ghi coroutine gốc là Cancelled trong khi chương trình vẫn chạy tiếp
+   * và in ra, còn thứ tự unwind thì đảo — catch của tổ tiên chạy TRƯỚC finally
+   * của con cháu, ngược hẳn Kotlin.
+   *
+   * KHÔNG bật cho runBlocking: BlockingCoroutine của kotlinx không phải
+   * ScopeCoroutine, nó chặn luồng gọi chứ không trả exception vào continuation.
+   */
+  readonly isScopeCoroutine: boolean
+
   constructor(
     readonly id: JobId,
     readonly name: string,
     readonly parent: Job | null,
     readonly isSupervisor: boolean,
-  ) {}
+    isScopeCoroutine = false,
+  ) {
+    this.isScopeCoroutine = isScopeCoroutine
+  }
 
   get state(): JobState { return this._state }
 

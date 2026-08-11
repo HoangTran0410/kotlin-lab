@@ -349,7 +349,9 @@ export class Scheduler {
     const parentCtx = parent ? this.tasks.get(parent.id)!.ctx : CoroutineContext.empty()
     const merged = parentCtx.plus(ctx)
     const id = this.newJobId()
-    const job = new Job(id, merged.name ?? id, parent, isSupervisor)
+    // runBlocking KHÔNG phải scope coroutine: BlockingCoroutine của kotlinx
+    // chặn luồng gọi chứ không trả exception vào continuation. Xem Job.isScopeCoroutine.
+    const job = new Job(id, merged.name ?? id, parent, isSupervisor, builder !== 'runBlocking')
     parent?.addChild(job)
     const jobCtx = merged.withJob(job)
     this.emitter.emit({

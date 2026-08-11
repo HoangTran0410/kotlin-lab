@@ -251,26 +251,44 @@ export class Interpreter {
           : calleeName === 'coroutineScope' ? 'coroutineScope' : 'supervisorScope',
         env.enclosingJobId, isSupervisor, ctx,
       )
+      let result: KValue
       try {
         // Thân scope chạy trong Env mang jobId của scope, nên launch bên trong
         // gắn đúng cha kể cả sau khi suspend/resume.
-        const result = yield* this.evalBlock(lambda.body, env.child(job.id))
+        result = yield* this.evalBlock(lambda.body, env.child(job.id))
         // coroutineScope/supervisorScope/runBlocking chỉ trả về khi mọi child xong.
         yield { s: 'joinChildren', jobId: job.id }
-        this.scheduler.completeInline(job)
-        return result
       } catch (err) {
         // KHÔNG được gộp hai đường vào `finally { completeInline(job) }`.
         // completeInline không có đường thất bại, nên một exception thoát khỏi
         // thân scope sẽ báo scope HOÀN THÀNH THÀNH CÔNG: con của nó không ai
         // huỷ và chạy tiếp như mồ côi, và failure không bao giờ đi qua
         // reportFailure. Đúng thứ ngữ nghĩa mà công cụ này tồn tại để dạy.
-        if (err instanceof KotlinThrow) this.scheduler.failInline(job, toCause(err))
-        // ReturnSignal (lệnh `return`) là kết thúc BÌNH THƯỜNG của scope, không
-        // phải failure — vẫn completeInline như đường thuận.
-        else this.scheduler.completeInline(job)
+        if (err instanceof KotlinThrow) {
+          this.scheduler.failInline(job, toCause(err))
+        } else {
+          // ReturnSignal (lệnh `return`) là kết thúc BÌNH THƯỜNG của scope,
+          // không phải failure — vẫn completeInline như đường thuận.
+          this.scheduler.completeInline(job)
+        }
         throw err
       }
+      // Con fail => scope NÉM LẠI ĐÚNG TẠI ĐÂY, tức trong khung của người gọi.
+      //
+      // Trước đây việc ném lại xảy ra gián tiếp: failure của con leo lên đánh
+      // dấu job bao ngoài là Cancelled, rồi unwindCancelled ném vào generator
+      // của nó. Cách đó cho ra output đúng nhưng SAI hai chỗ — trace nói
+      // runBlocking đã chết dù người học bắt được exception (R2), và tổ tiên bị
+      // ném vào trước khi con cháu kịp chạy finally (R1). Ném ở đây thì cả hai
+      // tự đúng: joinChildren ở trên đã bảo đảm mọi con unwind xong.
+      //
+      // `failure` chứ không phải `cause`: chỉ job THẬT SỰ fail mới ném lại.
+      // supervisorScope chặn failure của con ngay tại ranh giới nên `failure`
+      // của nó là null — đúng như Kotlin, caller không thấy gì cả.
+      const failure = job.failure
+      if (failure) throw new KotlinThrow(failure.exType, failure.message)
+      this.scheduler.completeInline(job)
+      return result
     }
 
     if (calleeName === 'launch' || calleeName === 'async') {

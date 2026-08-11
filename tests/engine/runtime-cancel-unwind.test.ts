@@ -88,6 +88,23 @@ describe('cancel làm unwind thân coroutine', () => {
       '}')).toEqual(['cleanup', 'done'])
   })
 
+  it('catch quanh coroutineScope chạy SAU finally của anh em bị huỷ', () => {
+    // Kotlin: coroutineScope không ném lại cho tới khi MỌI con đã unwind xong,
+    // nên ["cleanup A", "caught boom"]. Engine cho ngược lại: failure của con
+    // leo lên đánh dấu chính job runBlocking là Cancelled, và unwindCancelled
+    // duyệt taskOrder — tức thứ tự TẠO, nông trước — nên tổ tiên được ném vào
+    // (chạy catch) trước khi con cháu kịp chạy finally.
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '    try {\n' +
+      '        coroutineScope {\n' +
+      '            launch { try { delay(1000) } finally { println("cleanup A") } }\n' +
+      '            launch { delay(10); throw RuntimeException("boom") }\n' +
+      '        }\n' +
+      '    } catch (e: Exception) { println("caught " + e.message) }\n' +
+      '}')).toEqual(['cleanup A', 'caught boom'])
+  })
+
   it('cancel() là BẤT ĐỒNG BỘ — lệnh sau nó chạy trước finally', () => {
     // Đây là bẫy thật của Kotlin, đáng dạy. `cancel()` chỉ YÊU CẦU huỷ rồi
     // trả về ngay; `println("sau cancel")` chạy tức thì, còn finally của
