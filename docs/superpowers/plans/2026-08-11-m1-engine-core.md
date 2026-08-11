@@ -3349,6 +3349,11 @@ describe('Scheduler', () => {
     expect(collectPrints(s)).toEqual(['A', 'B', 'C'])
   })
 
+  // GHI CHÚ TRUNG THỰC: test này KHÔNG phân biệt được shift() với pop().
+  // Đã kiểm chứng: với pop(), thứ tự tạo bị đảo rồi thứ tự resume bị đảo lần
+  // nữa, hai lần triệt tiêu nhau và kết quả vẫn A,B,C. Nó chốt hành vi
+  // đầu-cuối (đồng hồ + scheduler khớp nhau), không chốt kỷ luật hàng đợi.
+  // Test không-delay ở trên mới là cái canh FIFO.
   it('cùng mốc delay thì vẫn resume theo thứ tự tạo', () => {
     const s = new Scheduler()
     s.spawnRoot(function* (): CoroutineBody {
