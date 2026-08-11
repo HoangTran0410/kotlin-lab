@@ -78,6 +78,28 @@ describe('validator', () => {
       '}')).toEqual([])
   })
 
+  it('chẩn đoán BÊN TRONG string template báo đúng dòng, không phải dòng 1', () => {
+    // Node dựng bởi parser lồng của ${...} giữ toạ độ của MẨU (luôn dòng 1),
+    // còn validator đọc thẳng pos đó. Hệ quả: mọi chẩn đoán trong template trỏ
+    // vào dòng 1 — thường là dòng `fun main()`, chẳng liên quan gì. Dạng không
+    // template ngay bên cạnh lại đúng, nên lỗi này rất dễ tưởng là không có.
+    const d = check(
+      'fun main() = runBlocking {\n' +
+      '  val j = launch { delay(10) }\n' +
+      '  println("${j.isActive}")\n' +
+      '}')
+    expect(d).toHaveLength(1)
+    expect(d[0]!.message).toContain('isActive')
+    expect(d[0]!.line).toBe(3)
+    expect(d[0]!.col).toBe(16)
+  })
+
+  it('dạng $ident (không ngoặc) trong template cũng báo đúng dòng', () => {
+    const d = check('fun main() {\n  val x = 1\n  println("a $isActive b")\n}')
+    expect(d).toHaveLength(1)
+    expect(d[0]!.line).toBe(3)
+  })
+
   it('gom lỗi trên NHIỀU hàm khác nhau, không chỉ trong một hàm', () => {
     const d = check('fun a() {\n  select { }\n}\nfun main() {\n  Channel<Int>()\n}')
     expect(d.map(x => x.line)).toEqual([2, 5])
