@@ -167,6 +167,35 @@ describe('lexer — lõi', () => {
     const toks = tokenize('a >= b && c != d')
     expect(toks.filter(t => t.kind === 'OP').map(t => t.text)).toEqual(['>=', '&&', '!='])
   })
+
+  it('1..3 tách thành NUMBER, OP(..), NUMBER — không gộp thành một số', () => {
+    const toks = tokenize('1..3')
+    expect(toks.map(t => [t.kind, t.text])).toEqual([
+      ['NUMBER', '1'], ['OP', '..'], ['NUMBER', '3'], ['EOF', ''],
+    ])
+  })
+
+  it('for (i in 1..10) tokenize đúng — construct khoảng phổ biến nhất', () => {
+    const toks = tokenize('for (i in 1..10)')
+    expect(toks.filter(t => t.kind === 'NUMBER' || t.kind === 'OP').map(t => t.text))
+      .toEqual(['1', '..', '10'])
+  })
+
+  it('số thập phân vẫn giữ nguyên dấu chấm', () => {
+    expect(tokenize('1.5')[0]).toMatchObject({ kind: 'NUMBER', text: '1.5' })
+  })
+
+  it('a.b vẫn là truy cập thành viên, không phải khoảng', () => {
+    expect(tokenize('a.b').map(t => t.kind)).toEqual(['IDENT', 'DOT', 'IDENT', 'EOF'])
+  })
+
+  it('dấu gạch dưới trong số được loại bỏ', () => {
+    expect(tokenize('1_000_000')[0]!.text).toBe('1000000')
+  })
+
+  it('ký tự lạ ném lỗi tiếng Việt kèm dòng và cột 1-based', () => {
+    expect(() => tokenize('val a\nval #')).toThrow(/không nhận diện được.*dòng 2.*cột 5/)
+  })
 })
 ```
 
@@ -240,12 +269,23 @@ export function tokenize(src: string): Token[] {
 
     if (ch === '-' && src[i + 1] === '>') { push('ARROW', '->'); advance(2); continue }
 
+    // '..' PHẢI xét trước SINGLE, nếu không '.' bị nuốt thành DOT và toán tử
+    // khoảng không bao giờ tới lượt được khớp.
+    if (ch === '.' && src[i + 1] === '.') { push('OP', '..'); advance(2); continue }
+
     const single = SINGLE[ch]
     if (single) { push(single, ch); advance(1); continue }
 
     if (/[0-9]/.test(ch)) {
       const start = i, l = line, c = col
-      while (i < src.length && /[0-9_.]/.test(src[i]!)) advance(1)
+      while (i < src.length && /[0-9_]/.test(src[i]!)) advance(1)
+      // Chỉ nuốt dấu chấm thập phân khi SAU nó là chữ số. Nếu quét cả '.' một
+      // cách tham lam thì '1..3' biến thành một token NUMBER "1..3" và vòng
+      // for (i in 1..3) không bao giờ parse được.
+      if (src[i] === '.' && /[0-9]/.test(src[i + 1] ?? '')) {
+        advance(1)
+        while (i < src.length && /[0-9_]/.test(src[i]!)) advance(1)
+      }
       push('NUMBER', src.slice(start, i).replace(/_/g, ''), l, c)
       continue
     }
@@ -272,7 +312,7 @@ export function tokenize(src: string): Token[] {
 - [ ] **Step 6: Chạy test, xác nhận pass**
 
 Run: `npx vitest run tests/engine/lexer.test.ts`
-Expected: PASS — 4 test.
+Expected: PASS — 10 test.
 
 Chú ý: test đầu mong đợi **không có NEWLINE** giữa các token vì input một dòng; nếu fail vì có `NEWLINE` thừa, sửa test cho khớp thực tế chứ đừng bỏ NEWLINE khỏi lexer — parser cần nó.
 
