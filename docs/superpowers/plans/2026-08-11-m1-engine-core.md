@@ -2563,12 +2563,33 @@ describe('VirtualClock', () => {
   })
 
   it('timer cùng thời điểm chạy theo thứ tự đăng ký — bảo đảm deterministic', () => {
+    // Dùng nhiều timer và ĐĂNG KÝ XEN KẼ với mốc khác, để test không thể xanh
+    // nhờ may. Với chỉ 2 phần tử cùng mốc, Array.sort ổn định (ES2019+) sẽ giữ
+    // đúng thứ tự kể cả khi thiếu tiêu chí seq — test sẽ mù đúng thứ nó canh.
     const c = new VirtualClock()
     const fired: string[] = []
-    c.schedule(100, () => fired.push('first'))
-    c.schedule(100, () => fired.push('second'))
-    c.advanceToNextTimer()
-    expect(fired).toEqual(['first', 'second'])
+    c.schedule(100, () => fired.push('a'))
+    c.schedule(50, () => fired.push('sớm'))
+    c.schedule(100, () => fired.push('b'))
+    c.schedule(100, () => fired.push('c'))
+    c.schedule(100, () => fired.push('d'))
+    while (c.advanceToNextTimer()) { /* chạy hết */ }
+    expect(fired).toEqual(['sớm', 'a', 'b', 'c', 'd'])
+  })
+
+  it('timer đặt trong lúc callback chạy không bị mất', () => {
+    // delay() lồng nhau sinh ra tình huống này: callback của timer lại đặt
+    // tiếp một timer. Nếu advanceToNextTimer chụp danh sách trước khi chạy
+    // callback thì timer mới sẽ rơi mất.
+    const c = new VirtualClock()
+    const fired: string[] = []
+    c.schedule(100, () => {
+      fired.push('ngoài')
+      c.schedule(200, () => fired.push('trong'))
+    })
+    while (c.advanceToNextTimer()) { /* chạy hết */ }
+    expect(fired).toEqual(['ngoài', 'trong'])
+    expect(c.now).toBe(200)
   })
 
   it('cancel gỡ timer chưa chạy', () => {
@@ -2645,7 +2666,7 @@ export class VirtualClock {
 - [ ] **Step 4: Chạy test, xác nhận pass**
 
 Run: `npx vitest run tests/engine/runtime-clock.test.ts`
-Expected: PASS — 7 test.
+Expected: PASS — 9 test.
 
 - [ ] **Step 5: Commit**
 
