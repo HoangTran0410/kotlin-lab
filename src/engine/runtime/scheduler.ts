@@ -119,9 +119,10 @@ export class Scheduler {
       while (this.ready.length > 0) {
         if (++guard > 100_000) throw new Error('Scheduler: nghi ngờ lặp vô hạn')
         this.step(this.ready.shift()!)
-        this.sweepWaiters()
       }
-      // Waiter có thể đã thoả nhờ job vừa kết thúc — xử lý trước khi nhảy đồng hồ.
+      // Quét waiter SAU KHI ready cạn, không quét sau mỗi step. Job vừa xong có
+      // thể đã mở khoá một waiter; nếu bỏ dòng này thì đồng hồ sẽ nhảy vượt qua
+      // việc vốn đã sẵn sàng chạy. Quét mỗi step vừa thừa vừa tốn.
       if (this.sweepWaiters()) continue
       this.emitter.setClock(this.clock.now)
       if (!this.clock.advanceToNextTimer()) break

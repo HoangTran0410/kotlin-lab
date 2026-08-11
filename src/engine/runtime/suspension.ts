@@ -9,4 +9,4 @@ export type Suspension =
   | { s: 'yield' }
 
 /** Thân coroutine: generator yield ra điểm suspend, nhận lại giá trị resume. */
-export type CoroutineBody = Generator<Suspension, unknown, unknown>
+export type CoroutineBody = Generator<Suspension, void, unknown>

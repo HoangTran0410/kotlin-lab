@@ -106,6 +106,34 @@ describe('Scheduler', () => {
     expect(s.clock.now).toBe(500)
   })
 
+  it('ready là FIFO — nhiều coroutine sẵn sàng CÙNG LÚC chạy theo thứ tự tạo', () => {
+    // Mọi test khác dùng delay khác nhau, nên thứ tự do ĐỒNG HỒ quyết định và
+    // tính FIFO của ready không bao giờ bị chạm tới. Ở đây không có delay nào,
+    // nên thứ tự in ra lộ thẳng thứ tự lấy khỏi hàng đợi: shift -> A,B,C;
+    // pop -> C,B,A.
+    const s = new Scheduler()
+    s.spawnRoot(function* (): CoroutineBody {
+      s.spawnChild(function* (): CoroutineBody { s.println('A') })
+      s.spawnChild(function* (): CoroutineBody { s.println('B') })
+      s.spawnChild(function* (): CoroutineBody { s.println('C') })
+      yield { s: 'yield' }
+    })
+    s.runToCompletion()
+    expect(collectPrints(s)).toEqual(['A', 'B', 'C'])
+  })
+
+  it('cùng mốc delay thì vẫn resume theo thứ tự tạo', () => {
+    const s = new Scheduler()
+    s.spawnRoot(function* (): CoroutineBody {
+      s.spawnChild(function* (): CoroutineBody { yield { s: 'delay', ms: 100 }; s.println('A') })
+      s.spawnChild(function* (): CoroutineBody { yield { s: 'delay', ms: 100 }; s.println('B') })
+      s.spawnChild(function* (): CoroutineBody { yield { s: 'delay', ms: 100 }; s.println('C') })
+      yield { s: 'delay', ms: 200 }
+    })
+    s.runToCompletion()
+    expect(collectPrints(s)).toEqual(['A', 'B', 'C'])
+  })
+
   it('joinChildren chờ mọi child, kể cả child chậm nhất', () => {
     const s = new Scheduler()
     s.spawnRoot(rootJob => (function* (): CoroutineBody {
