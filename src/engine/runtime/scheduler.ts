@@ -171,7 +171,19 @@ export class Scheduler {
       this.currentJob = task.job
       try {
         // Generator chạy các finally trên đường unwind rồi ném lại.
-        task.body.throw(new KotlinThrow('CancellationException', 'Job was cancelled'))
+        //
+        // Job FAIL phải nhận lại ĐÚNG exception gốc, không phải một
+        // CancellationException tổng hợp. Nếu luôn ném cái tổng hợp thì
+        // `try { coroutineScope { launch { throw RuntimeException("boom") } } }
+        //  catch (e: RuntimeException) { ... }` không bao giờ khớp, và người
+        // học thấy "Job was cancelled" ở đúng chỗ Kotlin thật cho "boom" —
+        // tức là công cụ dạy ngược cái khác biệt nó tồn tại để dạy.
+        // Job bị CANCEL từ ngoài thì `failure` là null và vẫn nhận
+        // CancellationException, đúng như Kotlin.
+        const f = task.job.failure
+        task.body.throw(f
+          ? new KotlinThrow(f.exType, f.message)
+          : new KotlinThrow('CancellationException', 'Job was cancelled'))
       } catch {
         // Bình thường: ném lại sau khi finally đã chạy xong. Không phải lỗi.
       } finally {

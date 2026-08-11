@@ -120,6 +120,42 @@ describe('interpreter — coroutine builder', () => {
     expect(r.events.some(x => x.k === 'FAILURE_PROPAGATED' && x.from === scopeId)).toBe(true)
   })
 
+  it('coroutineScope ném lại ĐÚNG exception của con, không phải CancellationException', () => {
+    // "coroutineScope ném lại exception của con, supervisorScope thì không" là
+    // khác biệt mà cả milestone này tồn tại để dạy. Engine cũ để failure của con
+    // leo lên đánh dấu tổ tiên Cancelled, rồi unwindCancelled ném một
+    // CancellationException TỔNG HỢP vào generator của scope — nên người học
+    // thấy "EX: Job was cancelled" ở chỗ Kotlin thật in "RT: boom".
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '  try {\n' +
+      '    coroutineScope { launch { delay(10); throw RuntimeException("boom") } }\n' +
+      '  } catch (e: RuntimeException) {\n' +
+      '    println("RT: " + e.message)\n' +
+      '  } catch (e: Exception) {\n' +
+      '    println("EX: " + e.message)\n' +
+      '  }\n' +
+      '}')).toEqual(['RT: boom'])
+  })
+
+  it('job bị CANCEL từ ngoài vẫn nhận CancellationException, không phải exception của anh em', () => {
+    // Mặt kia của cùng một luật, và là cái bẫy khi sửa test trên: anh em bị kéo
+    // theo phải nhận CancellationException. Nếu unwind ném exception GỐC vào
+    // mọi job có `cause`, thì `catch (e: RuntimeException)` trong một coroutine
+    // vô can sẽ bắt được "boom" của thằng khác — sai hẳn Kotlin.
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '  coroutineScope {\n' +
+      '    launch {\n' +
+      '      try { delay(1000) }\n' +
+      '      catch (e: RuntimeException) { println("SAI: " + e.message) }\n' +
+      '      catch (e: Exception) { println("DUNG: " + e.message) }\n' +
+      '    }\n' +
+      '    launch { delay(10); throw RuntimeException("boom") }\n' +
+      '  }\n' +
+      '}')).toEqual(['DUNG: Job was cancelled'])
+  })
+
   it('cancel job phát CANCEL_REQUESTED', () => {
     const e = evs(
       'fun main() = runBlocking {\n' +

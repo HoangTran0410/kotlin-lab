@@ -53,6 +53,9 @@ function terminateAsFailed(job: Job, cause: FailureCause, emitter: TraceEmitter)
     emitter.emit({ k: 'JOB_STATE', id: job.id, from: prev, to: 'Cancelling', cause: cause.exType })
   }
   job.cause = cause
+  // Đây là đường FAIL, không phải đường cancel: thân coroutine phải nhận lại
+  // đúng exception gốc khi unwind. cancelJob cố ý KHÔNG đặt trường này.
+  job.failure = cause
   job.transitionTo('Cancelled')
   emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Cancelling', to: 'Cancelled', cause: cause.exType })
 }

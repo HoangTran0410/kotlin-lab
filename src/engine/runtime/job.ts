@@ -22,7 +22,26 @@ export class Job {
    * bảng ALLOWED mà class này sinh ra để canh.
    */
   private _state: JobState = 'New'
+
+  /** Vì-sao job kết thúc bất thường, cho trace. Đặt ở CẢ hai đường: bị cancel và fail. */
   cause: FailureCause | null = null
+
+  /**
+   * Chỉ đặt khi job THẬT SỰ FAIL — chính nó ném, hoặc failure của con leo lên
+   * qua nó. KHÔNG đặt khi job bị cancel từ ngoài (user gọi cancel(), hay bị kéo
+   * theo vì anh em fail).
+   *
+   * Đây là thứ phân biệt hai exception mà thân coroutine nhận được khi unwind,
+   * và nó chính là bài học của milestone này:
+   *   - job FAIL   -> thân nhận lại ĐÚNG exception gốc, nên
+   *                   `coroutineScope { launch { throw RuntimeException } }`
+   *                   ném RuntimeException ra ngoài như Kotlin thật.
+   *   - job bị CANCEL -> thân nhận CancellationException, nên một coroutine vô
+   *                   can bị kéo theo KHÔNG bắt nhầm exception của thằng khác.
+   * Gộp chung vào `cause` thì hai ca này không thể phân biệt: `cause` của anh em
+   * bị kéo theo cũng là RuntimeException("boom") của kẻ gây ra.
+   */
+  failure: FailureCause | null = null
 
   /** Mảng, không phải Set — thứ tự phải ổn định để trace deterministic. */
   private readonly _children: Job[] = []
