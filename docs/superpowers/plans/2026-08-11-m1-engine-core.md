@@ -4265,12 +4265,15 @@ describe('interpreter — coroutine builder', () => {
     expect(created[created.length - 1]!.parentId).not.toBeNull()
   })
 
-  it('finally vẫn chạy khi coroutine bị cancel — kiểm chứng chọn generator là đúng', () => {
+  it('finally chạy khi coroutine kết thúc BÌNH THƯỜNG', () => {
+    // Tên cũ của test này là "finally vẫn chạy khi coroutine bị cancel" nhưng
+    // thân test KHÔNG HỀ gọi .cancel() — nó chỉ chạy hết bình thường. Ca cancel
+    // thật do Task 18 phủ, vì tới Task 16 nó vẫn CHƯA chạy được.
     const o = out(
       'fun main() = runBlocking {\n' +
       '  try { delay(10); println("xong") } finally { println("dontrolai") }\n' +
       '}')
-    expect(o).toContain('dontrolai')
+    expect(o).toEqual(['xong', 'dontrolai'])
   })
 })
 ```
@@ -4774,3 +4777,194 @@ git commit -m "feat(lessons): ba lesson đầu + golden test — hoàn thành M1
 - [ ] Cùng source luôn cho trace y hệt.
 - [ ] `foldTrace` chạy được ở mọi step mà không ném lỗi.
 - [ ] Không file nào trong `src/engine/` import React hay chạm DOM.
+
+---
+
+### Task 18: Cancel làm unwind thân coroutine (finally phải chạy)
+
+**Files:**
+- Modify: `src/engine/runtime/scheduler.ts`
+- Modify: `tests/engine/interpreter-coroutines.test.ts`
+- Test: `tests/engine/runtime-cancel-unwind.test.ts`
+
+**Interfaces:**
+- Consumes: `Scheduler`, `Task`, `CoroutineBody` (Task 14), `KotlinThrow` (Task 15), `cancelJob` (Task 13)
+- Produces: `Scheduler.unwindCancelled()` (riêng tư, gọi từ `runToCompletion`)
+
+**Thực thi TRƯỚC Task 17**, để golden trace chụp ở Task 17 đã bao gồm hành vi này.
+
+Spec §2.3 nói lý do quyết định chọn generator là `try/finally` của JS hoạt động
+xuyên `yield`, nên "finally chạy khi coroutine bị cancel" gần như miễn phí. Cơ
+chế đó có thật — nhưng **chưa bao giờ được nối dây**. `cancelJob` chỉ lật trạng
+thái `Job`; generator bị bỏ lửng và mọi khối `finally` im lặng không chạy.
+
+Đã đo được, đây là hiện trạng trước task này:
+
+```
+val j = launch { try { delay(1000); println("xong") } finally { println("DON-DEP") } }
+j.cancel()
+→ []          ← finally KHÔNG chạy
+```
+
+- [ ] **Step 1: Viết test thất bại**
+
+`tests/engine/runtime-cancel-unwind.test.ts`:
+```ts
+import { describe, expect, it } from 'vitest'
+import { runSource } from '../../src/engine/run'
+
+const out = (src: string) => runSource(src).output
+
+describe('cancel làm unwind thân coroutine', () => {
+  it('finally chạy khi cancel lúc coroutine đang suspend', () => {
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '  val j = launch { try { delay(1000); println("xong") } finally { println("dọn dẹp") } }\n' +
+      '  j.cancel()\n' +
+      '}')).toEqual(['dọn dẹp'])
+  })
+
+  it('phần thân sau điểm suspend KHÔNG chạy khi bị cancel', () => {
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '  val j = launch { delay(1000); println("khong-duoc-in") }\n' +
+      '  j.cancel()\n' +
+      '}')).toEqual([])
+  })
+
+  it('finally lồng nhau chạy từ trong ra ngoài', () => {
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '  val j = launch {\n' +
+      '    try {\n' +
+      '      try { delay(1000) } finally { println("trong") }\n' +
+      '    } finally { println("ngoài") }\n' +
+      '  }\n' +
+      '  j.cancel()\n' +
+      '}')).toEqual(['trong', 'ngoài'])
+  })
+
+  it('cancel cha làm finally của con chạy', () => {
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '  val p = launch {\n' +
+      '    launch { try { delay(1000) } finally { println("con dọn dẹp") } }\n' +
+      '    delay(1000)\n' +
+      '  }\n' +
+      '  p.cancel()\n' +
+      '}')).toEqual(['con dọn dẹp'])
+  })
+
+  it('coroutine chưa từng chạy thì không có gì để unwind', () => {
+    expect(() => out(
+      'fun main() = runBlocking {\n' +
+      '  val j = launch { println("khong-chay") }\n' +
+      '  j.cancel()\n' +
+      '}')).not.toThrow()
+  })
+
+  it('cancel không làm treo chương trình', () => {
+    expect(out(
+      'fun main() = runBlocking {\n' +
+      '  val j = launch { try { delay(1000) } finally { println("xong dọn") } }\n' +
+      '  j.cancel()\n' +
+      '  println("sau cancel")\n' +
+      '}')).toEqual(['xong dọn', 'sau cancel'])
+  })
+})
+```
+
+- [ ] **Step 2: Chạy test, xác nhận fail**
+
+Run: `npx vitest run tests/engine/runtime-cancel-unwind.test.ts`
+Expected: FAIL — mọi test mong đợi có output nhưng nhận `[]`.
+
+- [ ] **Step 3: Thêm cờ `finished` vào `Task`**
+
+Trong `src/engine/runtime/scheduler.ts`, sửa interface `Task`:
+```ts
+interface Task {
+  job: Job
+  ctx: CoroutineContext
+  body: CoroutineBody
+  resumeValue: unknown
+  started: boolean
+  /** Đã chạy xong hoặc đã unwind — không được đụng tới generator nữa. */
+  finished: boolean
+}
+```
+
+Mọi nơi tạo `Task` phải thêm `finished: false`. Trong `step()`, đặt
+`task.finished = true` ở nhánh `result.done` và ở nhánh `catch`.
+
+- [ ] **Step 4: Giữ danh sách task theo thứ tự để duyệt deterministic**
+
+Thêm trường và cập nhật ở mọi chỗ `this.tasks.set(...)`:
+```ts
+  /** Mảng song song với `tasks`, để duyệt theo đúng thứ tự tạo. */
+  private readonly taskOrder: Task[] = []
+```
+
+- [ ] **Step 5: Viết `unwindCancelled`**
+
+```ts
+  /**
+   * Ném CancellationException vào các coroutine đã bị cancel nhưng còn đang
+   * lửng ở một điểm suspend, để `finally` trong code Kotlin thật sự chạy.
+   *
+   * Không có bước này thì cancelJob chỉ lật trạng thái Job: generator không
+   * bao giờ được resume, nên mọi khối finally im lặng không chạy — đúng thứ
+   * mà việc chọn generator đáng ra cho không (xem spec §2.3).
+   *
+   * Trả true nếu có unwind, để runToCompletion lặp lại trước khi nhảy đồng hồ.
+   */
+  private unwindCancelled(): boolean {
+    let did = false
+    for (const task of this.taskOrder) {
+      if (task.finished || !task.started) continue
+      if (!task.job.isCancelled) continue
+
+      task.finished = true
+      did = true
+      this.currentJob = task.job
+      try {
+        // Generator chạy các finally trên đường unwind rồi ném lại.
+        task.body.throw(new KotlinThrow('CancellationException', 'Job was cancelled'))
+      } catch {
+        // Bình thường: ném lại sau khi finally đã chạy xong. Không phải lỗi.
+      } finally {
+        this.currentJob = null
+      }
+    }
+    return did
+  }
+```
+
+Import `KotlinThrow` từ `../interpreter/values`.
+
+- [ ] **Step 6: Gọi từ `runToCompletion`**
+
+```ts
+      if (this.sweepWaiters()) continue
+      // Cho coroutine đã bị cancel chạy nốt finally TRƯỚC khi nhảy đồng hồ.
+      if (this.unwindCancelled()) continue
+      this.emitter.setClock(this.clock.now)
+```
+
+- [ ] **Step 7: Chạy test, xác nhận pass**
+
+Run: `npx vitest run tests/engine/runtime-cancel-unwind.test.ts`
+Expected: PASS — 6 test.
+
+- [ ] **Step 8: Toàn bộ suite + typecheck + lint**
+
+Run: `npm test && npm run typecheck && npm run lint`
+Expected: sạch. Nếu test cũ nào đỏ, **báo lên** — có thể đây là hành vi từng
+sai mà giờ mới đúng, và tôi cần quyết chứ không phải bạn.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add -A
+git commit -m "feat(engine): cancel làm unwind thân coroutine, finally chạy thật"
+```
