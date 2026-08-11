@@ -59,4 +59,19 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    files: ['src/ui/**/*.{ts,tsx}', 'src/state/**/*.ts', 'src/lessons/registry.ts'],
+    rules: {
+      // Code này chạy trong browser. `src/lessons/index.ts` (node:fs) CỐ Ý
+      // không nằm trong danh sách trên — nó là bản dành cho test Node.
+      'no-restricted-imports': ['error', {
+        patterns: [
+          { group: ['node:*', 'fs', 'path', 'url'],
+            message: 'code UI chạy trong browser, không có Node API' },
+          { group: ['**/lessons/index'],
+            message: 'dùng lessons/registry (browser-safe), không dùng lessons/index (node:fs)' },
+        ],
+      }],
+    },
+  },
 )

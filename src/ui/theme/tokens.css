@@ -1,0 +1,10 @@
+:root {
+  --bg: #0d1117; --panel: #161b22; --border: #30363d;
+  --fg: #e6edf3; --fg-dim: #8b949e;
+  /* accent theo kind của node — dùng lại ở Task 13 */
+  --k-runBlocking: #d29922; --k-launch: #58a6ff; --k-async: #bc8cff;
+  --k-coroutineScope: #3fb950; --k-supervisorScope: #2ea043; --k-withContext: #79c0ff;
+  --state-cancelled: #f85149; --state-completed: #3fb950; --state-active: #58a6ff;
+}
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; }
