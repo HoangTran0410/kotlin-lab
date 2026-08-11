@@ -2594,6 +2594,8 @@ export type Suspension =
   | { s: 'delay'; ms: number }
   | { s: 'join'; jobId: JobId }
   | { s: 'await'; jobId: JobId }
+  /** Chờ MỌI child của jobId kết thúc. coroutineScope/supervisorScope dùng cái này. */
+  | { s: 'joinChildren'; jobId: JobId }
   | { s: 'yield' }
 
 /** Thân coroutine: generator yield ra điểm suspend, nhận lại giá trị resume. */
@@ -2687,6 +2689,42 @@ describe('Scheduler', () => {
     s.runToCompletion()
     expect(s.emitter.events.length).toBeGreaterThan(0)
   })
+
+  it('join thật sự chờ job kia xong rồi mới chạy tiếp', () => {
+    const s = new Scheduler()
+    s.spawnRoot(function* (): CoroutineBody {
+      const child = s.spawnChild(function* (): CoroutineBody {
+        yield { s: 'delay', ms: 100 }
+        s.println('child xong')
+      })
+      yield { s: 'join', jobId: child.id }
+      s.println('sau join')
+    })
+    s.runToCompletion()
+    expect(collectPrints(s)).toEqual(['child xong', 'sau join'])
+  })
+
+  it('join KHÔNG chặn đồng hồ ảo tiến lên — chống hồi quy deadlock', () => {
+    const s = new Scheduler()
+    s.spawnRoot(function* (): CoroutineBody {
+      const child = s.spawnChild(function* (): CoroutineBody { yield { s: 'delay', ms: 500 } })
+      yield { s: 'join', jobId: child.id }
+    })
+    s.runToCompletion()
+    expect(s.clock.now).toBe(500)
+  })
+
+  it('joinChildren chờ mọi child, kể cả child chậm nhất', () => {
+    const s = new Scheduler()
+    s.spawnRoot(rootJob => (function* (): CoroutineBody {
+      s.spawnChild(function* (): CoroutineBody { yield { s: 'delay', ms: 100 }; s.println('A') })
+      s.spawnChild(function* (): CoroutineBody { yield { s: 'delay', ms: 300 }; s.println('B') })
+      yield { s: 'joinChildren', jobId: rootJob.id }
+      s.println('scope xong')
+    })())
+    s.runToCompletion()
+    expect(collectPrints(s)).toEqual(['A', 'B', 'scope xong'])
+  })
 })
 ```
 
@@ -2738,28 +2776,43 @@ export class Scheduler {
   private readonly tasks = new Map<JobId, Task>()
   private currentJob: Job | null = null
 
+  /**
+   * Task đang chờ một job khác kết thúc. Mảng, không phải Map lồng, để thứ tự
+   * đánh thức ổn định — đây là điều kiện cho trace deterministic.
+   *
+   * KHÔNG được cài chờ bằng cách tự lên lịch lại ở cùng mốc thời gian: làm vậy
+   * thì `ready` không bao giờ rỗng, đồng hồ ảo không bao giờ nhảy, và mọi thứ
+   * đứng hình. Waiter phải nằm NGOÀI `ready` cho tới khi điều kiện thoả.
+   */
+  private waiters: { task: Task; kind: 'job' | 'children'; targetId: JobId }[] = []
+
   private newJobId(): JobId { return `j${this.nextJobId++}` }
 
   println(text: string, srcLine?: number): void {
     this.emitter.emit({ k: 'PRINTLN', id: this.currentJob?.id ?? 'j0', text }, srcLine)
   }
 
-  spawnRoot(makeBody: () => CoroutineBody): Job {
+  spawnRoot(makeBody: (job: Job) => CoroutineBody): Job {
     return this.spawn(null, false, 'runBlocking', CoroutineContext.empty().withDispatcher('Main'), makeBody)
   }
 
-  spawnChild(makeBody: () => CoroutineBody, builder: 'launch' | 'async' = 'launch'): Job {
+  /** Tiện ích cho unit test của Scheduler; interpreter dùng spawnChildOf. */
+  spawnChild(makeBody: (job: Job) => CoroutineBody, builder: 'launch' | 'async' = 'launch'): Job {
     const parent = this.currentJob
     const ctx = parent ? this.tasks.get(parent.id)!.ctx : CoroutineContext.empty()
     return this.spawn(parent, false, builder, ctx, makeBody)
   }
 
+  /**
+   * `makeBody` nhận chính Job vừa tạo, để thân coroutine biết jobId của mình
+   * mà không cần biến trung gian (Task 16 dùng nó dựng Env con đúng scope).
+   */
   spawn(
     parent: Job | null,
     isSupervisor: boolean,
     builder: 'launch' | 'async' | 'runBlocking' | 'coroutineScope' | 'supervisorScope' | 'withContext',
     ctx: CoroutineContext,
-    makeBody: () => CoroutineBody,
+    makeBody: (job: Job) => CoroutineBody,
   ): Job {
     const id = this.newJobId()
     const job = new Job(id, ctx.name ?? id, parent, isSupervisor)
@@ -2770,23 +2823,48 @@ export class Scheduler {
       k: 'COROUTINE_CREATED', id, parentId: parent?.id ?? null, builder, ctx: jobCtx.summary(),
     })
 
-    const task: Task = { job, ctx: jobCtx, body: makeBody(), resumeValue: undefined, started: false }
+    const task: Task = { job, ctx: jobCtx, body: makeBody(job), resumeValue: undefined, started: false }
     this.tasks.set(id, task)
     this.ready.push(task)
     return job
   }
 
-  /** Chạy cho tới khi không còn task ready và không còn timer. */
+  jobById(id: JobId | null): Job | null {
+    return id ? this.tasks.get(id)?.job ?? null : null
+  }
+
+  /**
+   * Đánh thức waiter có điều kiện đã thoả. Giữ nguyên thứ tự đăng ký.
+   * Trả true nếu có waiter được đưa vào ready.
+   */
+  private sweepWaiters(): boolean {
+    const still: typeof this.waiters = []
+    let woke = false
+    for (const w of this.waiters) {
+      const done = w.kind === 'job'
+        ? (this.tasks.get(w.targetId)?.job.isCompleted ?? true)
+        : (this.tasks.get(w.targetId)?.job.children.every(c => c.isCompleted) ?? true)
+      if (done) { this.ready.push(w.task); woke = true } else { still.push(w) }
+    }
+    this.waiters = still
+    return woke
+  }
+
+  /** Chạy cho tới khi không còn task ready, không còn waiter thoả, không còn timer. */
   runToCompletion(): void {
     let guard = 0
     for (;;) {
       while (this.ready.length > 0) {
         if (++guard > 100_000) throw new Error('Scheduler: nghi ngờ lặp vô hạn')
         this.step(this.ready.shift()!)
+        this.sweepWaiters()
       }
+      // Waiter có thể đã thoả nhờ job vừa kết thúc — xử lý trước khi nhảy đồng hồ.
+      if (this.sweepWaiters()) continue
       this.emitter.setClock(this.clock.now)
       if (!this.clock.advanceToNextTimer()) break
       this.emitter.setClock(this.clock.now)
+      this.sweepWaiters()
     }
   }
 
@@ -2838,7 +2916,9 @@ export class Scheduler {
   }
 
   private suspend(task: Task, s: Suspension): void {
-    this.emitter.emit({ k: 'COROUTINE_SUSPENDED', id: task.job.id, reason: s.s })
+    // 'joinChildren' không có trong schema Event — gom về 'join' khi ghi trace.
+    const reason = s.s === 'joinChildren' ? 'join' : s.s
+    this.emitter.emit({ k: 'COROUTINE_SUSPENDED', id: task.job.id, reason })
 
     switch (s.s) {
       case 'delay':
@@ -2851,8 +2931,13 @@ export class Scheduler {
       case 'await': {
         const target = this.tasks.get(s.jobId)
         if (!target || target.job.isCompleted) { this.ready.push(task); break }
-        // Chờ bằng cách hỏi lại ở tick kế — đủ cho M1, deterministic.
-        this.clock.schedule(this.clock.now, () => { this.suspend(task, s) })
+        this.waiters.push({ task, kind: 'job', targetId: s.jobId })
+        break
+      }
+      case 'joinChildren': {
+        const target = this.tasks.get(s.jobId)
+        if (!target || target.job.children.every(c => c.isCompleted)) { this.ready.push(task); break }
+        this.waiters.push({ task, kind: 'children', targetId: s.jobId })
         break
       }
     }
@@ -2867,7 +2952,7 @@ export class Scheduler {
 - [ ] **Step 5: Chạy test, xác nhận pass**
 
 Run: `npx vitest run tests/engine/runtime-scheduler.test.ts`
-Expected: PASS — 7 test.
+Expected: PASS — 10 test.
 
 Nếu test "hai coroutine xen kẽ" cho thứ tự sai, kiểm tra `advanceToNextTimer` chạy hết timer cùng mốc trước khi trả về, và `ready` là FIFO (`shift`, không `pop`).
 
@@ -2938,13 +3023,30 @@ export function display(v: KValue): string {
 - [ ] **Step 2: Viết `env.ts`**
 
 ```ts
+import type { JobId } from '../trace/events'
 import type { KValue } from './values'
 
 export class Env {
   private readonly vars = new Map<string, KValue>()
-  constructor(private readonly parent: Env | null = null) {}
 
-  child(): Env { return new Env(this) }
+  /**
+   * `ownerJobId` là coroutine scope bao quanh về mặt LEXICAL.
+   * Nó phải sống trong Env chứ không phải trong state tạm của Scheduler:
+   * `Scheduler.currentJob` bị đặt lại mỗi step(), nên sau một lần suspend/resume
+   * thì `launch` bên trong `coroutineScope { }` sẽ gắn nhầm parent.
+   * Env đi theo closure nên đúng cả khi nhiều coroutine xen kẽ nhau.
+   */
+  constructor(
+    private readonly parent: Env | null = null,
+    private readonly ownerJobId: JobId | null = null,
+  ) {}
+
+  /** Truyền jobId khi mở một coroutine scope mới; null nghĩa là kế thừa scope ngoài. */
+  child(ownerJobId: JobId | null = null): Env { return new Env(this, ownerJobId) }
+
+  get enclosingJobId(): JobId | null {
+    return this.ownerJobId ?? this.parent?.enclosingJobId ?? null
+  }
 
   declare(name: string, value: KValue): void { this.vars.set(name, value) }
 
@@ -3235,7 +3337,9 @@ export class Interpreter {
   }
 
   *callFun(fn: FunDecl, args: readonly { name: string | null; value: Expr }[], env: Env): Eval<KValue> {
-    const scope = this.globals.child()
+    // Thân hàm không thấy biến cục bộ của caller, NHƯNG kế thừa coroutine scope
+    // bao quanh — nhờ vậy launch bên trong một suspend fun gắn đúng cha.
+    const scope = this.globals.child(env.enclosingJobId)
     for (let i = 0; i < fn.params.length; i++) {
       const p = fn.params[i]!
       const byName = args.find(a => a.name === p.name)
@@ -3281,9 +3385,11 @@ export function runSource(src: string): RunResult {
   const interp = new Interpreter(scheduler, program)
   const main = interp.lookupFun('main')!
 
-  scheduler.spawnRoot(function* (): CoroutineBody {
-    yield* interp.callFun(main, [], interp.globals)
-  })
+  // Env gốc mang jobId của root, để runBlocking/launch ở tầng ngoài cùng
+  // gắn vào đúng cây thay vì tạo ra một root thứ hai.
+  scheduler.spawnRoot(rootJob => (function* (): CoroutineBody {
+    yield* interp.callFun(main, [], interp.globals.child(rootJob.id))
+  })())
   scheduler.runToCompletion()
 
   const events = scheduler.emitter.events
@@ -3452,10 +3558,15 @@ Chèn vào đầu `evalCall`, **trước** nhánh `println`:
         calleeName === 'runBlocking' ? 'runBlocking'
           : calleeName === 'withContext' ? 'withContext'
           : calleeName === 'coroutineScope' ? 'coroutineScope' : 'supervisorScope',
-        isSupervisor, ctx,
+        env.enclosingJobId, isSupervisor, ctx,
       )
       try {
-        return yield* this.evalBlock(lambda.body, env.child())
+        // Thân scope chạy trong Env mang jobId của scope, nên launch bên trong
+        // gắn đúng cha kể cả sau khi suspend/resume.
+        const result = yield* this.evalBlock(lambda.body, env.child(job.id))
+        // coroutineScope/supervisorScope/runBlocking chỉ trả về khi mọi child xong.
+        yield { s: 'joinChildren', jobId: job.id }
+        return result
       } finally {
         this.scheduler.completeInline(job)
       }
@@ -3466,12 +3577,10 @@ Chèn vào đầu `evalCall`, **trước** nhánh `println`:
       if (!lambda) return UNIT
       const ctx = yield* this.contextFromArgs(e, env)
       const body = lambda.body
-      const capturedEnv = env.child()
       const self = this
-      const job = this.scheduler.spawnChildWithContext(
-        ctx, calleeName,
-        function* () { yield* self.evalBlock(body, capturedEnv) },
-      )
+      // Factory nhận Job vừa tạo, nên Env con mang đúng jobId của chính coroutine này.
+      const job = this.scheduler.spawnChildOf(env.enclosingJobId, ctx, calleeName, created =>
+        (function* (): CoroutineBody { yield* self.evalBlock(body, env.child(created.id)) })())
       return {
         t: 'obj', className: calleeName === 'launch' ? 'Job' : 'Deferred',
         fields: new Map([['__jobId', { t: 'str', v: job.id } as KValue]]),
@@ -3539,13 +3648,17 @@ Cho toán tử `+` trên object context: trong `evalBinary`, thêm ngay trước
 - [ ] **Step 5: Thêm API còn thiếu vào `Scheduler`**
 
 ```ts
-  /** launch/async: tạo child với context riêng, chạy sau. */
-  spawnChildWithContext(
+  /**
+   * launch/async: tạo child dưới `parentJobId` (lấy từ Env, KHÔNG lấy từ
+   * currentJob — xem ghi chú trong Env), chạy sau, xếp cuối hàng ready.
+   */
+  spawnChildOf(
+    parentJobId: JobId | null,
     ctx: CoroutineContext,
     builder: 'launch' | 'async',
-    makeBody: () => CoroutineBody,
+    makeBody: (job: Job) => CoroutineBody,
   ): Job {
-    const parent = this.currentJob
+    const parent = this.jobById(parentJobId)
     const parentCtx = parent ? this.tasks.get(parent.id)!.ctx : CoroutineContext.empty()
     return this.spawn(parent, false, builder, parentCtx.plus(ctx), makeBody)
   }
@@ -3556,10 +3669,11 @@ Cho toán tử `+` trên object context: trong `evalBinary`, thêm ngay trước
    */
   spawnInline(
     builder: 'runBlocking' | 'coroutineScope' | 'supervisorScope' | 'withContext',
+    parentJobId: JobId | null,
     isSupervisor: boolean,
     ctx: CoroutineContext,
   ): Job {
-    const parent = this.currentJob
+    const parent = this.jobById(parentJobId)
     const parentCtx = parent ? this.tasks.get(parent.id)!.ctx : CoroutineContext.empty()
     const merged = parentCtx.plus(ctx)
     const id = this.newJobId()
@@ -3598,9 +3712,11 @@ Cho toán tử `+` trên object context: trong `evalBinary`, thêm ngay trước
 Run: `npx vitest run tests/engine/interpreter-coroutines.test.ts`
 Expected: PASS — 10 test.
 
-Nếu test "launch chạy sau khi thân cha nhường quyền" fail (ra `['B','A']`): `spawnChildWithContext` phải **xếp task vào cuối `ready`**, không chạy ngay.
+Nếu test "launch chạy sau khi thân cha nhường quyền" fail (ra `['B','A']`): `spawnChildOf` phải **xếp task vào cuối `ready`**, không chạy ngay.
 
-Nếu "coroutineScope chờ hết children" fail: `completeInline` phải chạy sau khi mọi child của job đó hoàn tất — nếu chưa, thêm vòng `while (job.children.some(c => !c.isCompleted)) yield { s: 'yield' }` ngay trước `completeInline` trong `evalCall`.
+Nếu "coroutineScope chờ hết children" fail: kiểm tra `yield { s: 'joinChildren', jobId: job.id }` có nằm **sau** `evalBlock` và **trước** `completeInline` không. Tuyệt đối không thay bằng vòng lặp `while (...) yield { s: 'yield' }` — cách đó khiến `ready` không bao giờ rỗng, đồng hồ ảo không nhảy, và toàn bộ chương trình đứng hình cho tới khi guard 100k ném lỗi.
+
+Nếu `launch` bên trong `coroutineScope` gắn nhầm cha (thấy `parentId` trỏ ra ngoài scope): thân scope phải chạy với `env.child(job.id)`, và `spawnChildOf` phải lấy cha từ `env.enclosingJobId` chứ không phải `this.currentJob`.
 
 - [ ] **Step 7: Chạy toàn bộ test**
 
