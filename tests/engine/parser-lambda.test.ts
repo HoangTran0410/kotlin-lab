@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseExprSource } from '../../src/engine/parser/parser'
+import { parseBlockSource, parseExprSource } from '../../src/engine/parser/parser'
 
 describe('parser — lambda', () => {
   it('trailing lambda không có ngoặc đơn: launch { }', () => {
@@ -43,5 +43,20 @@ describe('parser — lambda', () => {
       callee: { k: 'Member', target: { k: 'Ident', name: 'scope' }, name: 'launch' },
       lambda: { params: [] },
     })
+  })
+})
+
+describe('parser — ranh giới trailing lambda', () => {
+  it('khối ở DÒNG SAU không bị nuốt thành trailing lambda', () => {
+    // `f()` kết thúc ở dòng 1. `{ g() }` ở dòng 2 là khối rời.
+    const blk = parseBlockSource('{ f()\n{ g() } }')
+    expect(blk.stmts).toHaveLength(2)
+    expect(blk.stmts[0]).toMatchObject({ k: 'ExprStmt', expr: { k: 'Call', lambda: null } })
+  })
+
+  it('khối cùng dòng thì vẫn là trailing lambda', () => {
+    const blk = parseBlockSource('{ f() { g() } }')
+    expect(blk.stmts).toHaveLength(1)
+    expect(blk.stmts[0]).toMatchObject({ k: 'ExprStmt', expr: { k: 'Call', lambda: {} } })
   })
 })

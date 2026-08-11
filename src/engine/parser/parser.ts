@@ -2,7 +2,7 @@ import { tokenize } from '../lexer/lexer'
 import type { StringPart, Token } from '../lexer/token'
 // Chỉ import kiểu thực sự dùng ở task này. Task 4 thêm Lambda, Task 5 thêm
 // CatchClause/WhenBranch, Task 6 thêm FunDecl/Param — thêm khi cần.
-import type { Arg, Block, Expr, Lambda, Pos, Program, Stmt, StringPartNode } from '../ast/nodes'
+import type { Arg, Block, CatchClause, Expr, Lambda, Pos, Program, Stmt, StringPartNode, WhenBranch } from '../ast/nodes'
 
 /**
  * Độ ưu tiên càng cao càng bám chặt. Thứ tự theo đúng Kotlin.
@@ -171,6 +171,39 @@ export class Parser {
     if (t.kind === 'KEYWORD' && t.text === 'null') { this.next(); return { k: 'NullLit', pos } }
     if (t.kind === 'IDENT') { this.next(); return { k: 'Ident', name: t.text, pos } }
 
+    if (t.kind === 'KEYWORD' && t.text === 'if') {
+      this.next()
+      this.expect('LPAREN')
+      const cond = this.parseExpr()
+      this.expect('RPAREN')
+      const thenBlock = this.parseBlock()
+      const elseBlock = this.accept('KEYWORD', 'else') ? this.parseBlock() : null
+      return { k: 'IfExpr', cond, thenBlock, elseBlock, pos }
+    }
+
+    if (t.kind === 'KEYWORD' && t.text === 'when') {
+      this.next()
+      let subject: Expr | null = null
+      if (this.accept('LPAREN')) { subject = this.parseExpr(); this.expect('RPAREN') }
+      this.expect('LBRACE')
+      this.skipNewlines()
+      const branches: WhenBranch[] = []
+      let elseBlock: Block | null = null
+      while (!this.at('RBRACE') && !this.atEof()) {
+        if (this.accept('KEYWORD', 'else')) {
+          this.expect('ARROW')
+          elseBlock = this.parseBlock()
+        } else {
+          const cond = this.parseExpr()
+          this.expect('ARROW')
+          branches.push({ cond, block: this.parseBlock() })
+        }
+        this.skipNewlines()
+      }
+      this.expect('RBRACE')
+      return { k: 'WhenExpr', subject, branches, elseBlock, pos }
+    }
+
     if (t.kind === 'LBRACE') {
       const lambda = this.parseLambda()
       return { k: 'LambdaExpr', lambda, pos }
@@ -231,10 +264,71 @@ export class Parser {
     return { stmts, pos: this.posOf(lb) }
   }
 
-  /** Task 5 thay thế bằng bản đầy đủ. */
   parseStmt(): Stmt {
     const t = this.peek()
-    return { k: 'ExprStmt', expr: this.parseExpr(), pos: this.posOf(t) }
+    const pos = this.posOf(t)
+
+    if (t.kind === 'KEYWORD' && (t.text === 'val' || t.text === 'var')) {
+      this.next()
+      const name = this.expect('IDENT').text
+      if (this.accept('COLON')) this.expect('IDENT') // kiểu khai báo: bỏ qua
+      this.expect('OP', '=')
+      return { k: 'ValDecl', name, mutable: t.text === 'var', init: this.parseExpr(), pos }
+    }
+
+    if (t.kind === 'KEYWORD' && t.text === 'while') {
+      this.next()
+      this.expect('LPAREN')
+      const cond = this.parseExpr()
+      this.expect('RPAREN')
+      return { k: 'While', cond, body: this.parseBlock(), pos }
+    }
+
+    if (t.kind === 'KEYWORD' && t.text === 'for') {
+      this.next()
+      this.expect('LPAREN')
+      const name = this.expect('IDENT').text
+      this.expect('KEYWORD', 'in')
+      const iterable = this.parseExpr()
+      this.expect('RPAREN')
+      return { k: 'For', name, iterable, body: this.parseBlock(), pos }
+    }
+
+    if (t.kind === 'KEYWORD' && t.text === 'try') {
+      this.next()
+      const body = this.parseBlock()
+      const catches: CatchClause[] = []
+      while (this.at('KEYWORD', 'catch')) {
+        this.next()
+        this.expect('LPAREN')
+        const name = this.expect('IDENT').text
+        this.expect('COLON')
+        const type = this.expect('IDENT').text
+        this.expect('RPAREN')
+        catches.push({ name, type, block: this.parseBlock() })
+      }
+      const finallyBlock = this.accept('KEYWORD', 'finally') ? this.parseBlock() : null
+      return { k: 'Try', body, catches, finallyBlock, pos }
+    }
+
+    if (t.kind === 'KEYWORD' && t.text === 'throw') {
+      this.next()
+      return { k: 'Throw', expr: this.parseExpr(), pos }
+    }
+
+    if (t.kind === 'KEYWORD' && t.text === 'return') {
+      this.next()
+      const endsStmt = this.peekRaw().kind === 'NEWLINE'
+        || this.at('RBRACE') || this.at('SEMI') || this.atEof()
+      return { k: 'Return', expr: endsStmt ? null : this.parseExpr(), pos }
+    }
+
+    const expr = this.parseExpr()
+    if (this.at('OP', '=')) {
+      this.next()
+      return { k: 'Assign', target: expr, value: this.parseExpr(), pos }
+    }
+    return { k: 'ExprStmt', expr, pos }
   }
 
   private parseLambda(): Lambda {
@@ -271,6 +365,10 @@ export class Parser {
 
 export function parseExprSource(src: string): Expr {
   return new Parser(tokenize(src)).parseExpr()
+}
+
+export function parseBlockSource(src: string): Block {
+  return new Parser(tokenize(src)).parseBlock()
 }
 
 export function parseProgram(_src: string): Program {
