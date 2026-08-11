@@ -156,6 +156,32 @@ describe('interpreter — coroutine builder', () => {
       '}')).toEqual(['DUNG: Job was cancelled'])
   })
 
+  it('EXCEPTION_THROWN KHÔNG được phát cho job đã ở trạng thái kết thúc', () => {
+    // failInline canh `if (job.isCompleted) return` đúng vì lý do này, nhưng
+    // khối catch của step() thì không, và run.ts bóc lớp runBlocking gốc nên
+    // job root đi qua đúng đường không được canh ấy. Kết quả: cùng một
+    // exception được ghi hai lần, lần sau cho một job mà trace vừa tuyên bố là
+    // đã chết — UI vẽ theo trace sẽ thấy một job Cancelled còn ném exception.
+    //
+    // Khẳng định theo BẤT BIẾN chứ không đếm sự kiện: đếm "đúng một
+    // EXCEPTION_THROWN" sẽ sai ngay khi ngữ nghĩa scope được sửa, vì lúc đó
+    // exception thoát ra thật sự đi qua hai khung coroutine khác nhau.
+    const r = runSource(
+      'fun main() = runBlocking {\n' +
+      '  coroutineScope {\n' +
+      '    launch { delay(1000); println("orphan") }\n' +
+      '    throw RuntimeException("boom")\n' +
+      '  }\n' +
+      '}')
+    const dead = new Set<string>()
+    const offenders: string[] = []
+    for (const e of r.events) {
+      if (e.k === 'JOB_STATE' && (e.to === 'Completed' || e.to === 'Cancelled')) dead.add(e.id)
+      if (e.k === 'EXCEPTION_THROWN' && dead.has(e.id)) offenders.push(`${e.seq}:${e.id}`)
+    }
+    expect(offenders).toEqual([])
+  })
+
   it('cancel job phát CANCEL_REQUESTED', () => {
     const e = evs(
       'fun main() = runBlocking {\n' +

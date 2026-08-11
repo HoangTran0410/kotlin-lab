@@ -251,10 +251,19 @@ export class Scheduler {
       task.finished = true
       this.pool.release(threadId)
       this.emitter.emit({ k: 'THREAD_STATE', threadId, state: 'FREE' })
+      this.currentJob = null
+      // Cùng lý do (và cùng cách canh) như failInline: job đã kết thúc RỒI thì
+      // đây không phải failure mới, chỉ là cùng một exception đang đi ngược ra
+      // qua khung của nó. Ghi lại lần nữa là nhân đôi sự kiện — và tệ hơn, ghi
+      // EXCEPTION_THROWN cho một job mà trace vừa tuyên bố là đã chết.
+      //
+      // job.isCompleted ở ĐÂY khác với lần kiểm ở đầu step(): nó có thể vừa
+      // chuyển sang kết thúc TRONG lúc body.next() chạy, do chính thân nó làm
+      // failure leo lên qua job này.
+      if (job.isCompleted) return
       const cause = toCause(err)
       this.emitter.emit({ k: 'EXCEPTION_THROWN', id: job.id, exType: cause.exType, message: cause.message })
       reportFailure(job, cause, this.emitter)
-      this.currentJob = null
       return
     }
 
