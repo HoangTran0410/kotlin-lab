@@ -107,6 +107,18 @@ import tseslint from 'typescript-eslint'
 export default tseslint.config(
   ...tseslint.configs.recommended,
   {
+    // Quy ước tiền tố '_' cho tham số/biến cố ý không dùng. Cần thiết vì các
+    // task sau có stub và tham số giữ chỗ cho hợp đồng kiểu; nếu không có nó
+    // thì mỗi task lại phải tự chế một hack kiểu `void x` để né lint.
+    rules: {
+      '@typescript-eslint/no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
+    },
+  },
+  {
     files: ['src/engine/**/*.ts'],
     rules: {
       'no-restricted-imports': ['error', {
@@ -678,9 +690,9 @@ Expected: FAIL — không resolve được `parser`.
 ```ts
 import { tokenize } from '../lexer/lexer'
 import type { StringPart, Token } from '../lexer/token'
-import type {
-  Arg, Block, Expr, Lambda, Pos, Program, StringPartNode, Stmt,
-} from '../ast/nodes'
+// Chỉ import kiểu thực sự dùng ở task này. Task 4 thêm Lambda, Task 5 thêm
+// Stmt/CatchClause/WhenBranch, Task 6 thêm FunDecl/Param — thêm khi cần.
+import type { Arg, Block, Expr, Pos, Program, StringPartNode } from '../ast/nodes'
 
 /** Độ ưu tiên càng cao càng bám chặt. */
 const BINARY_PRECEDENCE: Record<string, number> = {
@@ -967,13 +979,11 @@ Thay thân `parseBlock` trong `Parser` bằng bản dùng được (Task 5 sẽ 
 
   private parseLambda(): Lambda {
     const lb = this.peek()
-    const save = this.i
     this.expect('LBRACE')
     this.skipNewlines()
 
     // Dò tham số: IDENT (, IDENT)* ->
     const params: string[] = []
-    let hasArrow = false
     if (this.peek().kind === 'IDENT') {
       const probe = this.i
       const collected: string[] = []
@@ -983,11 +993,9 @@ Thay thân `parseBlock` trong `Parser` bằng bản dùng được (Task 5 sẽ 
         if (this.accept('COMMA')) continue
         break
       }
-      if (this.at('ARROW')) { this.next(); params.push(...collected); hasArrow = true }
+      if (this.at('ARROW')) { this.next(); params.push(...collected) }
       else { this.i = probe }
     }
-    void hasArrow
-
     const stmts: Stmt[] = []
     this.skipNewlines()
     while (!this.at('RBRACE') && !this.atEof()) {
@@ -997,7 +1005,6 @@ Thay thân `parseBlock` trong `Parser` bằng bản dùng được (Task 5 sẽ 
       this.skipNewlines()
     }
     this.expect('RBRACE')
-    void save
     return { params, body: { stmts, pos: this.posOf(lb) }, pos: this.posOf(lb) }
   }
 ```
@@ -2476,12 +2483,22 @@ describe('propagation — cancel đi xuống', () => {
     expect(g.state).toBe('Cancelled')
   })
 
-  it('phát CANCEL_REQUESTED cho từng child', () => {
+  it('phát CANCEL_REQUESTED cho chính job bị cancel rồi tới từng child', () => {
+    const { p } = tree(false)
+    const em = new TraceEmitter()
+    cancelJob(p, cancelled, em, 'user')
+    const evs = em.events.filter(e => e.k === 'CANCEL_REQUESTED')
+    expect(evs.map(e => [(e as { from: string }).from, (e as { to: string }).to])).toEqual([
+      ['user', 'p'], ['p', 'a'], ['p', 'b'], ['p', 'c'],
+    ])
+  })
+
+  it('không phát CANCEL_REQUESTED trùng cho cùng một job', () => {
     const { p } = tree(false)
     const em = new TraceEmitter()
     cancelJob(p, cancelled, em, 'user')
     const targets = em.events.filter(e => e.k === 'CANCEL_REQUESTED').map(e => (e as { to: string }).to)
-    expect(targets).toEqual(['a', 'b', 'c'])
+    expect(new Set(targets).size).toBe(targets.length)
   })
 
   it('cancel job đã Completed không gây lỗi', () => {
@@ -2590,13 +2607,16 @@ export function cancelJob(
   if (job.isCompleted) return
 
   // Con trước, theo thứ tự khai báo — quyết định tính deterministic của trace.
+  // Ghi lại chính hành động cancel này TRƯỚC khi lan xuống. Nếu bỏ, hành động
+  // khởi đầu (user gọi job.cancel(), hay parent fail kéo theo) không hề xuất
+  // hiện trong trace và UI không có gì để vẽ ở bước đầu tiên.
+  emitter.emit({ k: 'CANCEL_REQUESTED', from, to: job.id, cause: cause.exType })
+
   for (const child of job.children) {
     if (child.isCompleted) continue
-    emitter.emit({ k: 'CANCEL_REQUESTED', from: job.id, to: child.id, cause: cause.exType })
     cancelJob(child, cause, emitter, job.id)
   }
 
-  void from
   const prev = job.state
   if (prev !== 'Cancelling') {
     job.transitionTo('Cancelling')
@@ -2651,7 +2671,7 @@ export function reportFailure(child: Job, cause: FailureCause, emitter: TraceEmi
 - [ ] **Step 4: Chạy test, xác nhận pass**
 
 Run: `npx vitest run tests/engine/runtime-propagation.test.ts`
-Expected: PASS — 13 test.
+Expected: PASS — 14 test.
 
 Nếu test "cancel parent làm mọi child Cancelled" fail vì `cancelJob` được gọi lại trên child đã Cancelled từ vòng lặp `reportFailure` → kiểm tra `isCompleted` ở đầu hàm đã chặn đúng chưa.
 
