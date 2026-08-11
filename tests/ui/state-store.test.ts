@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { useLabStore } from '../../src/state/store'
 import { selectWorld, selectCurrentLine, foldStats } from '../../src/state/selectors'
+import { lessonSource } from '../../src/lessons/registry'
 
 const SRC = 'fun main() = runBlocking {\n  launch { delay(100); println("A") }\n  delay(50)\n}\n'
 const st = () => useLabStore.getState()
@@ -50,6 +51,25 @@ describe('store — trace là nguồn sự thật duy nhất', () => {
     const before = st().source
     st().loadLesson('khong-co')
     expect(st().source).toBe(before)
+  })
+
+  it('đổi sang source NGẮN HƠN khi đang ở cuối thì stepIndex phải bị kẹp lại', () => {
+    // Không test nào khác diễn cảnh này: mọi beforeEach reset stepIndex về 0
+    // ngay trước lần setSource duy nhất. Và foldTrace tự kẹp upTo bên trong nên
+    // chương trình KHÔNG ném lỗi — nó chỉ lặng lẽ hiện trạng thái cuối của
+    // trace mới. Đó đúng là kiểu lỗi hiện ra thành "màn hình trắng" về sau.
+    st().setSource(lessonSource('supervisor')!)
+    const dài = st().compiled.events.length
+    st().setStep(dài)
+    expect(st().stepIndex).toBe(dài)
+
+    st().setSource('fun main() = runBlocking { println("ngắn") }')
+    const ngắn = st().compiled.events.length
+
+    // Ghim rằng fixture THẬT SỰ ngắn hơn — nếu không thì chính test này vô
+    // nghĩa, đúng mẫu đã mắc bốn lần trong dự án.
+    expect(ngắn, 'fixture phải ngắn hơn thì test mới có ý nghĩa').toBeLessThan(dài)
+    expect(st().stepIndex).toBeLessThanOrEqual(ngắn)
   })
 })
 
