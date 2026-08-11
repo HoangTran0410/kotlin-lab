@@ -1,8 +1,8 @@
 import { tokenize } from '../lexer/lexer'
 import type { StringPart, Token } from '../lexer/token'
 // Chỉ import kiểu thực sự dùng ở task này. Task 4 thêm Lambda, Task 5 thêm
-// Stmt/CatchClause/WhenBranch, Task 6 thêm FunDecl/Param — thêm khi cần.
-import type { Arg, Block, Expr, Pos, Program, StringPartNode } from '../ast/nodes'
+// CatchClause/WhenBranch, Task 6 thêm FunDecl/Param — thêm khi cần.
+import type { Arg, Block, Expr, Lambda, Pos, Program, Stmt, StringPartNode } from '../ast/nodes'
 
 /**
  * Độ ưu tiên càng cao càng bám chặt. Thứ tự theo đúng Kotlin.
@@ -75,6 +75,18 @@ export class Parser {
   skipNewlines(): void { while (this.toks[this.i]?.kind === 'NEWLINE') this.i++ }
   atEof(): boolean { return this.peek().kind === 'EOF' }
 
+  /**
+   * Token kế tiếp có đúng loại `kind` VÀ nằm cùng dòng với vị trí hiện tại?
+   * Dùng cho trailing lambda: `foo()` rồi xuống dòng mới `{ ... }` là một khối
+   * riêng, không phải lambda của foo. Nếu bỏ điều kiện cùng dòng thì
+   * `val x = f()` theo sau bởi một block sẽ bị nuốt nhầm.
+   */
+  private atSameLine(kind: Token['kind']): boolean {
+    const next = this.toks[this.i]
+    if (!next || next.kind === 'NEWLINE') return false
+    return next.kind === kind
+  }
+
   // ---- biểu thức ----
   parseExpr(): Expr { return this.parseBinary(0) }
 
@@ -115,6 +127,11 @@ export class Parser {
         expr = { k: 'Member', target: expr, name: name.text, pos: this.posOf(name) }
       } else if (this.at('LPAREN')) {
         expr = this.parseCallTail(expr)
+      } else if (this.atSameLine('LBRACE')) {
+        const lambda = this.parseLambda()
+        expr = expr.k === 'Call' && expr.lambda === null
+          ? { ...expr, lambda }
+          : { k: 'Call', callee: expr, args: [], lambda, pos: lambda.pos }
       } else {
         break
       }
@@ -153,6 +170,11 @@ export class Parser {
     if (t.kind === 'KEYWORD' && t.text === 'false') { this.next(); return { k: 'BoolLit', value: false, pos } }
     if (t.kind === 'KEYWORD' && t.text === 'null') { this.next(); return { k: 'NullLit', pos } }
     if (t.kind === 'IDENT') { this.next(); return { k: 'Ident', name: t.text, pos } }
+
+    if (t.kind === 'LBRACE') {
+      const lambda = this.parseLambda()
+      return { k: 'LambdaExpr', lambda, pos }
+    }
 
     if (t.kind === 'LPAREN') {
       this.next()
@@ -194,8 +216,57 @@ export class Parser {
     })
   }
 
-  // Task 5 cài parseBlock/parseStmt; Task 6 cài parseProgram.
-  parseBlock(): Block { throw new ParseError('parseBlock chưa cài — Task 5', { line: 0, col: 0 }) }
+  // Task 6 cài parseProgram.
+  parseBlock(): Block {
+    const lb = this.expect('LBRACE')
+    const stmts: Stmt[] = []
+    this.skipNewlines()
+    while (!this.at('RBRACE') && !this.atEof()) {
+      stmts.push(this.parseStmt())
+      this.skipNewlines()
+      this.accept('SEMI')
+      this.skipNewlines()
+    }
+    this.expect('RBRACE')
+    return { stmts, pos: this.posOf(lb) }
+  }
+
+  /** Task 5 thay thế bằng bản đầy đủ. */
+  parseStmt(): Stmt {
+    const t = this.peek()
+    return { k: 'ExprStmt', expr: this.parseExpr(), pos: this.posOf(t) }
+  }
+
+  private parseLambda(): Lambda {
+    const lb = this.peek()
+    this.expect('LBRACE')
+    this.skipNewlines()
+
+    // Dò tham số: IDENT (, IDENT)* ->
+    const params: string[] = []
+    if (this.peek().kind === 'IDENT') {
+      const probe = this.i
+      const collected: string[] = []
+      for (;;) {
+        if (this.peek().kind !== 'IDENT') break
+        collected.push(this.next().text)
+        if (this.accept('COMMA')) continue
+        break
+      }
+      if (this.at('ARROW')) { this.next(); params.push(...collected) }
+      else { this.i = probe }
+    }
+    const stmts: Stmt[] = []
+    this.skipNewlines()
+    while (!this.at('RBRACE') && !this.atEof()) {
+      stmts.push(this.parseStmt())
+      this.skipNewlines()
+      this.accept('SEMI')
+      this.skipNewlines()
+    }
+    this.expect('RBRACE')
+    return { params, body: { stmts, pos: this.posOf(lb) }, pos: this.posOf(lb) }
+  }
 }
 
 export function parseExprSource(src: string): Expr {
