@@ -2740,11 +2740,26 @@ describe('DispatcherPool', () => {
     expect(p.acquire('IO', 'j2')).toBe('IO-1')
   })
 
-  it('allThreads liệt kê theo thứ tự ổn định', () => {
+  it('allThreads gom theo dispatcher, thứ tự dispatcher theo lần dùng đầu tiên', () => {
+    // KHÔNG so sánh allThreads() với chính nó — phép đó luôn đúng và không
+    // kiểm được gì. Phải khẳng định thứ tự CỤ THỂ.
     const p = new DispatcherPool()
-    p.acquire('IO', 'a')
+    p.acquire('IO', 'a')     // IO được dùng trước
     p.acquire('Main', 'b')
-    expect(p.allThreads().map(t => t.id)).toEqual(p.allThreads().map(t => t.id))
+    const ids = p.allThreads().map(t => t.id)
+    expect(ids.slice(0, 8)).toEqual([
+      'IO-1', 'IO-2', 'IO-3', 'IO-4', 'IO-5', 'IO-6', 'IO-7', 'IO-8',
+    ])
+    expect(ids[8]).toBe('Main-1')
+  })
+
+  it('đảo thứ tự dùng thì allThreads đảo theo — chứng minh không hard-code', () => {
+    const p = new DispatcherPool()
+    p.acquire('Main', 'b')   // lần này Main trước
+    p.acquire('IO', 'a')
+    const ids = p.allThreads().map(t => t.id)
+    expect(ids[0]).toBe('Main-1')
+    expect(ids[1]).toBe('IO-1')
   })
 
   it('thread ghi lại job đang giữ nó', () => {
@@ -2822,7 +2837,7 @@ export class DispatcherPool {
 - [ ] **Step 4: Chạy test, xác nhận pass**
 
 Run: `npx vitest run tests/engine/runtime-dispatcher.test.ts`
-Expected: PASS — 8 test.
+Expected: PASS — 9 test.
 
 - [ ] **Step 5: Commit**
 
@@ -2908,6 +2923,29 @@ describe('propagation — cancel đi xuống', () => {
     j.transitionTo('Active'); j.transitionTo('Completed')
     expect(() => cancelJob(j, cancelled, new TraceEmitter(), 'user')).not.toThrow()
     expect(j.state).toBe('Completed')
+  })
+
+  it('phát JOB_STATE đủ hai chặng Active->Cancelling->Cancelled', () => {
+    // UI vẽ chặng Cancelling; nếu nhảy thẳng sang Cancelled thì mất một bước
+    // của hoạt cảnh và người học không thấy được giai đoạn "đang huỷ".
+    const j = new Job('j', 'J', null, false)
+    j.transitionTo('Active')
+    const em = new TraceEmitter()
+    cancelJob(j, cancelled, em, 'user')
+    const states = em.events
+      .filter(e => e.k === 'JOB_STATE')
+      .map(e => [(e as { from: string }).from, (e as { to: string }).to])
+    expect(states).toEqual([['Active', 'Cancelling'], ['Cancelling', 'Cancelled']])
+  })
+
+  it('con bị cancel TRƯỚC cha — thứ tự này là thứ tự UI vẽ', () => {
+    const { p } = tree(false)
+    const em = new TraceEmitter()
+    cancelJob(p, cancelled, em, 'user')
+    const order = em.events
+      .filter(e => e.k === 'JOB_STATE' && (e as { to: string }).to === 'Cancelled')
+      .map(e => (e as { id: string }).id)
+    expect(order).toEqual(['a', 'b', 'c', 'p'])
   })
 })
 
@@ -3073,7 +3111,7 @@ export function reportFailure(child: Job, cause: FailureCause, emitter: TraceEmi
 - [ ] **Step 4: Chạy test, xác nhận pass**
 
 Run: `npx vitest run tests/engine/runtime-propagation.test.ts`
-Expected: PASS — 14 test.
+Expected: PASS — 16 test.
 
 Nếu test "cancel parent làm mọi child Cancelled" fail vì `cancelJob` được gọi lại trên child đã Cancelled từ vòng lặp `reportFailure` → kiểm tra `isCompleted` ở đầu hàm đã chặn đúng chưa.
 
