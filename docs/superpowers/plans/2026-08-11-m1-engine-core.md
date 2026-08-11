@@ -3019,6 +3019,53 @@ describe('propagation — supervisor boundary', () => {
     reportFailure(j, boom, new TraceEmitter())
     expect(j.cause?.exType).toBe('RuntimeException')
   })
+
+  it('failure đi lên NHIỀU TẦNG khi mọi parent đều là Job thường', () => {
+    // R -> P -> B, và R còn một con khác là U (chú của B).
+    // Cách cài chỉ-lan-một-tầng sẽ để R sống và U sống — sai hẳn Kotlin.
+    const R = new Job('R', 'R', null, false); R.transitionTo('Active')
+    const P = new Job('P', 'P', R, false); P.transitionTo('Active'); R.addChild(P)
+    const U = new Job('U', 'U', R, false); U.transitionTo('Active'); R.addChild(U)
+    const B = new Job('B', 'B', P, false); B.transitionTo('Active'); P.addChild(B)
+
+    reportFailure(B, boom, new TraceEmitter())
+
+    expect(P.state).toBe('Cancelled')
+    expect(R.state).toBe('Cancelled')  // chỉ-một-tầng sẽ để Active
+    expect(U.state).toBe('Cancelled')  // chú cũng bị kéo theo
+  })
+
+  it('bẫy nested supervisor: failure phải CHẠM tới boundary và được ghi lại', () => {
+    // Nếu chỉ lan một tầng thì sự kiện P -> root không bao giờ được phát,
+    // và UI không có gì để vẽ ranh giới supervisor — mất trọn bài học.
+    const root = new Job('root', 'Root', null, true); root.transitionTo('Active')
+    const P = new Job('P', 'P', root, false); P.transitionTo('Active'); root.addChild(P)
+    const B = new Job('B', 'B', P, false); B.transitionTo('Active'); P.addChild(B)
+
+    const em = new TraceEmitter()
+    reportFailure(B, boom, em)
+
+    const props = em.events
+      .filter(e => e.k === 'FAILURE_PROPAGATED')
+      .map(e => [
+        (e as { from: string }).from,
+        (e as { to: string }).to,
+        (e as { blockedBySupervisor: boolean }).blockedBySupervisor,
+      ])
+    expect(props).toEqual([['B', 'P', false], ['P', 'root', true]])
+    expect(root.state).toBe('Active')
+  })
+
+  it('CancellationException ở tầng sâu cũng không kéo tổ tiên nào chết', () => {
+    const R = new Job('R', 'R', null, false); R.transitionTo('Active')
+    const P = new Job('P', 'P', R, false); P.transitionTo('Active'); R.addChild(P)
+    const B = new Job('B', 'B', P, false); B.transitionTo('Active'); P.addChild(B)
+
+    reportFailure(B, cancelled, new TraceEmitter())
+
+    expect([R.state, P.state]).toEqual(['Active', 'Active'])
+    expect(B.state).toBe('Cancelled')
+  })
 })
 ```
 
@@ -3076,42 +3123,66 @@ export function cancelJob(
  *    sibling không bị đụng tới. (Exception chưa xử lý vẫn đi tiếp tới
  *    handler — việc đó do scheduler làm, không phải ở đây.)
  */
+/** Đưa một job về trạng thái kết thúc bất thường, phát đủ hai chặng JOB_STATE. */
+function terminateAsFailed(job: Job, cause: FailureCause, emitter: TraceEmitter): void {
+  if (job.isCompleted) return
+  const prev = job.state
+  if (prev !== 'Cancelling') {
+    job.transitionTo('Cancelling')
+    emitter.emit({ k: 'JOB_STATE', id: job.id, from: prev, to: 'Cancelling', cause: cause.exType })
+  }
+  job.cause = cause
+  job.transitionTo('Cancelled')
+  emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Cancelling', to: 'Cancelled', cause: cause.exType })
+}
+
 export function reportFailure(child: Job, cause: FailureCause, emitter: TraceEmitter): void {
   child.cause = cause
-
-  if (!child.isCompleted) {
-    const prev = child.state
-    if (prev !== 'Cancelling') {
-      child.transitionTo('Cancelling')
-      emitter.emit({ k: 'JOB_STATE', id: child.id, from: prev, to: 'Cancelling', cause: cause.exType })
-    }
-    child.transitionTo('Cancelled')
-    emitter.emit({ k: 'JOB_STATE', id: child.id, from: 'Cancelling', to: 'Cancelled', cause: cause.exType })
-  }
+  terminateAsFailed(child, cause, emitter)
 
   if (cause.isCancellation) return
 
-  const parent = child.parent
-  if (!parent) return
+  // Failure đi lên QUA NHIỀU TẦNG, không chỉ một bậc. Nếu chỉ báo cho parent
+  // trực tiếp rồi dừng thì với cây R -> P -> {A,B,C} toàn Job thường, B fail
+  // sẽ giết P và A/C nhưng R vẫn sống — sai hẳn so với Kotlin. Nó cũng làm
+  // mất sự kiện FAILURE_PROPAGATED chạm tới ranh giới supervisor, thứ mà UI
+  // cần để vẽ bài học "nested supervisor trap".
+  let node = child
+  for (;;) {
+    const parent = node.parent
+    if (!parent) return
 
-  emitter.emit({
-    k: 'FAILURE_PROPAGATED',
-    from: child.id,
-    to: parent.id,
-    blockedBySupervisor: parent.isSupervisor,
-  })
+    emitter.emit({
+      k: 'FAILURE_PROPAGATED',
+      from: node.id,
+      to: parent.id,
+      blockedBySupervisor: parent.isSupervisor,
+    })
 
-  if (parent.isSupervisor) return
+    // Supervisor chặn LAN TRUYỀN FAILURE. Nó không nuốt exception — việc đưa
+    // exception chưa xử lý tới handler là của scheduler, không phải ở đây.
+    if (parent.isSupervisor) return
+    if (parent.isCompleted) return
 
-  parent.cause = cause
-  cancelJob(parent, cause, emitter, child.id)
+    parent.cause = cause
+
+    // Cancel các con còn lại của parent. cancelJob tự phát CANCEL_REQUESTED
+    // ở đầu, nên không phát thêm ở đây kẻo trùng.
+    for (const sib of parent.children) {
+      if (sib === node || sib.isCompleted) continue
+      cancelJob(sib, cause, emitter, parent.id)
+    }
+
+    terminateAsFailed(parent, cause, emitter)
+    node = parent
+  }
 }
 ```
 
 - [ ] **Step 4: Chạy test, xác nhận pass**
 
 Run: `npx vitest run tests/engine/runtime-propagation.test.ts`
-Expected: PASS — 16 test.
+Expected: PASS — 19 test.
 
 Nếu test "cancel parent làm mọi child Cancelled" fail vì `cancelJob` được gọi lại trên child đã Cancelled từ vòng lặp `reportFailure` → kiểm tra `isCompleted` ở đầu hàm đã chặn đúng chưa.
 
