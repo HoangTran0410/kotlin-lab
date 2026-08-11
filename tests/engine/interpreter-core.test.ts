@@ -24,6 +24,35 @@ describe('interpreter — lõi', () => {
     expect(printsOf('fun main() {\n  for (i in 1..3) { println("$i") }\n}')).toEqual(['1', '2', '3'])
   })
 
+  it('repeat(n) chạy đủ n lần', () => {
+    // repeat(n) nằm trong subset §4.1 và không có trong danh mục hoãn nào, nhưng
+    // chưa được cài: nó rơi xuống nhánh "gọi hàm không biết" và trả Unit im lặng,
+    // nên `repeat(3) { println("x") }` không in gì và cũng không báo gì.
+    expect(printsOf('fun main() {\n  repeat(3) { println("x") }\n}')).toEqual(['x', 'x', 'x'])
+  })
+
+  it('repeat gán chỉ số vào `it`', () => {
+    expect(printsOf('fun main() {\n  repeat(3) { println("$it") }\n}')).toEqual(['0', '1', '2'])
+  })
+
+  it('repeat nhận tên tham số lambda tự đặt', () => {
+    expect(printsOf('fun main() {\n  repeat(2) { i -> println("v$i") }\n}')).toEqual(['v0', 'v1'])
+  })
+
+  it('repeat(0) không chạy lần nào', () => {
+    expect(printsOf('fun main() {\n  repeat(0) { println("x") }\n}')).toEqual([])
+  })
+
+  it('repeat chứa điểm suspend vẫn chạy đúng thứ tự', () => {
+    // repeat phải là generator delegation (yield*), không phải vòng lặp thường:
+    // nếu nuốt điểm suspend thì delay bên trong nó không nhường quyền được.
+    expect(printsOf(
+      'fun main() = runBlocking {\n' +
+      '  launch { repeat(2) { delay(10); println("B$it") } }\n' +
+      '  repeat(2) { delay(10); println("A$it") }\n' +
+      '}')).toEqual(['A0', 'B0', 'A1', 'B1'])
+  })
+
   it('while với var', () => {
     expect(printsOf('fun main() {\n  var i = 0\n  while (i < 3) { println("$i")\n    i = i + 1 }\n}'))
       .toEqual(['0', '1', '2'])

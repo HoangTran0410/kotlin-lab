@@ -333,6 +333,26 @@ export class Interpreter {
       return UNIT
     }
 
+    // repeat(n) { } nằm trong subset §4.1 và không có trong danh mục hoãn nào.
+    // Không cài thì nó rơi xuống nhánh cuối và trả Unit im lặng: không chạy lần
+    // nào, cũng không báo gì.
+    if (name === 'repeat') {
+      const lambda = e.lambda
+      const n = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
+      if (!lambda || n.t !== 'num') return UNIT
+      let guard = 0
+      for (let i = 0; i < n.v; i++) {
+        if (++guard > 100_000) throw new KotlinThrow('IllegalStateException', 'Vòng lặp quá dài')
+        const scope = env.child()
+        // Lambda một tham số: dùng tên tự đặt nếu có, không thì `it` như Kotlin.
+        scope.declare(lambda.params[0] ?? 'it', { t: 'num', v: i })
+        // yield* chứ không phải vòng lặp thường: điểm suspend bên trong repeat
+        // phải nhường quyền được ra ngoài như mọi chỗ khác.
+        yield* this.evalBlock(lambda.body, scope)
+      }
+      return UNIT
+    }
+
     if (name && /^[A-Z]/.test(name)) {
       const arg = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
       return {

@@ -47,6 +47,37 @@ describe('validator', () => {
     expect(d.some(x => x.message.includes('withLock'))).toBe(true)
   })
 
+  it('construct HOÃN tới sau M1 được BÁO, không chạy im lặng sai', () => {
+    // Hoãn phải nghĩa là ĐƯỢC BÁO. Trước đây mọi lời gọi không nhận ra đều rơi
+    // xuống cuối evalCall và trả Unit: `withTimeout(100) { ... }` không chạy gì
+    // và cũng không nói gì, `listOf(1).forEach { }` im lặng, `println(j.isActive)`
+    // in ra chuỗi "Job.isActive". Sai lặng lẽ tệ hơn hẳn một lỗi khai báo rõ.
+    for (const src of [
+      'fun main() = runBlocking {\n  withTimeout(100) { delay(1) }\n}',
+      'fun main() = runBlocking {\n  listOf(1).forEach { }\n}',
+      'fun main() = runBlocking {\n  println(j.isActive)\n}',
+      'fun main() = runBlocking {\n  ensureActive()\n}',
+      'fun main() = runBlocking {\n  NonCancellable\n}',
+    ]) {
+      const d = check(src)
+      expect(d.length, src).toBeGreaterThanOrEqual(1)
+      expect(d[0]!.hint, src).toBeTruthy()
+      expect(d[0]!.line, src).toBe(2)
+    }
+  })
+
+  it('repeat KHÔNG bị báo — nó nằm trong subset và đã cài', () => {
+    expect(check('fun main() {\n  repeat(3) { println("x") }\n}')).toEqual([])
+  })
+
+  it('GlobalScope / cancelAndJoin KHÔNG bị báo — đã cài', () => {
+    expect(check(
+      'fun main() = runBlocking {\n' +
+      '  val j = GlobalScope.launch { delay(1) }\n' +
+      '  j.cancelAndJoin()\n' +
+      '}')).toEqual([])
+  })
+
   it('gom lỗi trên NHIỀU hàm khác nhau, không chỉ trong một hàm', () => {
     const d = check('fun a() {\n  select { }\n}\nfun main() {\n  Channel<Int>()\n}')
     expect(d.map(x => x.line)).toEqual([2, 5])
