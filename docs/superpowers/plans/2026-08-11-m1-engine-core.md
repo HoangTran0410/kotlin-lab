@@ -4085,10 +4085,24 @@ export function runSource(src: string): RunResult {
   const interp = new Interpreter(scheduler, program)
   const main = interp.lookupFun('main')!
 
-  // Env gốc mang jobId của root, để runBlocking/launch ở tầng ngoài cùng
-  // gắn vào đúng cây thay vì tạo ra một root thứ hai.
+  // `fun main() = runBlocking { ... }` — chính runBlocking ĐÓ là root coroutine,
+  // đúng như Kotlin thật. Nếu vừa spawnRoot vừa để runBlocking tạo tiếp một job
+  // nữa thì trace có HAI node root và UI vẽ ra một coroutine không hề tồn tại.
+  // Nên với dạng này, chạy thẳng thân lambda trong root task.
+  const wrapped = main.exprBody
+  const unwrapped =
+    wrapped?.k === 'Call' &&
+    wrapped.callee.k === 'Ident' &&
+    wrapped.callee.name === 'runBlocking' &&
+    wrapped.lambda
+      ? wrapped.lambda.body
+      : null
+
   scheduler.spawnRoot(rootJob => (function* (): CoroutineBody {
-    yield* interp.callFun(main, [], interp.globals.child(rootJob.id))
+    // Env gốc mang jobId của root, để launch ở tầng ngoài cùng gắn đúng cây.
+    const env = interp.globals.child(rootJob.id)
+    if (unwrapped) yield* interp.evalBlock(unwrapped, env)
+    else yield* interp.callFun(main, [], env)
   })())
   scheduler.runToCompletion()
 
@@ -4195,6 +4209,25 @@ describe('interpreter — coroutine builder', () => {
       '  j.cancel()\n' +
       '}')
     expect(e.some(x => x.k === 'CANCEL_REQUESTED')).toBe(true)
+  })
+
+  it('launch sau điểm suspend TRONG coroutineScope gắn đúng scope, không phải root', () => {
+    // Test phân biệt env.enclosingJobId với Scheduler.currentJob. Phải có
+    // delay TRƯỚC launch: currentJob bị đặt lại mỗi step(), nên sau khi resume
+    // nó trỏ về job của task đang chạy (root), trong khi scope từ vựng vẫn là
+    // coroutineScope. Không có điểm suspend thì hai giá trị trùng nhau và test
+    // không phân biệt được gì.
+    const e = evs(
+      'fun main() = runBlocking {\n' +
+      '  coroutineScope {\n' +
+      '    delay(10)\n' +
+      '    launch { delay(1) }\n' +
+      '  }\n' +
+      '}')
+    const created = e.filter(x => x.k === 'COROUTINE_CREATED')
+    const scope = created.find(x => (x as { builder: string }).builder === 'coroutineScope')!
+    const launched = created.find(x => (x as { builder: string }).builder === 'launch')!
+    expect((launched as { parentId: string }).parentId).toBe((scope as { id: string }).id)
   })
 
   it('launch bên trong suspend fun gắn đúng coroutine scope của caller', () => {
@@ -4425,7 +4458,7 @@ Cho toán tử `+` trên object context: trong `evalBinary`, thêm ngay trước
 - [ ] **Step 6: Chạy test, xác nhận pass**
 
 Run: `npx vitest run tests/engine/interpreter-coroutines.test.ts`
-Expected: PASS — 11 test.
+Expected: PASS — 12 test.
 
 Nếu test "launch chạy sau khi thân cha nhường quyền" fail (ra `['B','A']`): `spawnChildOf` phải **xếp task vào cuối `ready`**, không chạy ngay.
 

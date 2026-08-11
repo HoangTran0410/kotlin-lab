@@ -1,6 +1,7 @@
 import type { Block, Expr, FunDecl, Program, Stmt } from '../ast/nodes'
+import { CoroutineContext } from '../runtime/context'
 import type { Scheduler } from '../runtime/scheduler'
-import type { Suspension } from '../runtime/suspension'
+import type { CoroutineBody, Suspension } from '../runtime/suspension'
 import { Env } from './env'
 import { KotlinThrow, UNIT, display, truthy, type KValue } from './values'
 
@@ -163,6 +164,11 @@ export class Interpreter {
     if (e.op === '+' && (l.t === 'str' || r.t === 'str')) {
       return { t: 'str', v: display(l) + display(r) }
     }
+    if (e.op === '+' && l.t === 'obj' && r.t === 'obj') {
+      const merged = new Map(l.fields)
+      r.fields.forEach((val, key) => merged.set(key, val))
+      return { t: 'obj', className: `${l.className}+${r.className}`, fields: merged }
+    }
     if (l.t === 'num' && r.t === 'num') {
       switch (e.op) {
         case '+': return { t: 'num', v: l.v + r.v }
@@ -181,8 +187,94 @@ export class Interpreter {
     return UNIT
   }
 
-  /** Task 16 thay thế bằng bản có coroutine builder. */
   protected *evalCall(e: Expr & { k: 'Call' }, env: Env): Eval<KValue> {
+    const calleeName = e.callee.k === 'Ident'
+      ? e.callee.name
+      : e.callee.k === 'Member' ? e.callee.name : null
+
+    // ---- điểm suspend ----
+    if (calleeName === 'delay') {
+      const ms = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : { t: 'num' as const, v: 0 }
+      yield { s: 'delay', ms: ms.t === 'num' ? ms.v : 0 }
+      return UNIT
+    }
+    if (calleeName === 'yield') { yield { s: 'yield' }; return UNIT }
+
+    if (calleeName === 'join' || calleeName === 'await') {
+      const target = e.callee.k === 'Member' ? yield* this.evalExpr(e.callee.target, env) : UNIT
+      const jobId = target.t === 'obj' ? target.fields.get('__jobId') : undefined
+      if (jobId && jobId.t === 'str') yield { s: calleeName === 'join' ? 'join' : 'await', jobId: jobId.v }
+      return UNIT
+    }
+
+    if (calleeName === 'cancel' || calleeName === 'cancelAndJoin') {
+      const target = e.callee.k === 'Member' ? yield* this.evalExpr(e.callee.target, env) : UNIT
+      const jobId = target.t === 'obj' ? target.fields.get('__jobId') : undefined
+      if (jobId && jobId.t === 'str') {
+        this.scheduler.cancelById(jobId.v, {
+          exType: 'CancellationException', message: 'Job was cancelled', isCancellation: true,
+        })
+      }
+      return UNIT
+    }
+
+    // ---- coroutine builder ----
+    if (calleeName === 'runBlocking' || calleeName === 'coroutineScope'
+        || calleeName === 'supervisorScope' || calleeName === 'withContext') {
+      const lambda = e.lambda
+      if (!lambda) return UNIT
+      const isSupervisor = calleeName === 'supervisorScope'
+      const ctx = yield* this.contextFromArgs(e, env)
+      const job = this.scheduler.spawnInline(
+        calleeName === 'runBlocking' ? 'runBlocking'
+          : calleeName === 'withContext' ? 'withContext'
+          : calleeName === 'coroutineScope' ? 'coroutineScope' : 'supervisorScope',
+        env.enclosingJobId, isSupervisor, ctx,
+      )
+      try {
+        // Thân scope chạy trong Env mang jobId của scope, nên launch bên trong
+        // gắn đúng cha kể cả sau khi suspend/resume.
+        const result = yield* this.evalBlock(lambda.body, env.child(job.id))
+        // coroutineScope/supervisorScope/runBlocking chỉ trả về khi mọi child xong.
+        yield { s: 'joinChildren', jobId: job.id }
+        return result
+      } finally {
+        this.scheduler.completeInline(job)
+      }
+    }
+
+    if (calleeName === 'launch' || calleeName === 'async') {
+      const lambda = e.lambda
+      if (!lambda) return UNIT
+      const ctx = yield* this.contextFromArgs(e, env)
+      const body = lambda.body
+      // Không alias `this` (vi phạm no-this-alias) — bind evalBlock thay vào đó.
+      const evalBlock = this.evalBlock.bind(this)
+      // Factory nhận Job vừa tạo, nên Env con mang đúng jobId của chính coroutine này.
+      const job = this.scheduler.spawnChildOf(env.enclosingJobId, ctx, calleeName, created =>
+        (function* (): CoroutineBody { yield* evalBlock(body, env.child(created.id)) })())
+      return {
+        t: 'obj', className: calleeName === 'launch' ? 'Job' : 'Deferred',
+        fields: new Map([['__jobId', { t: 'str', v: job.id } as KValue]]),
+      }
+    }
+
+    // ---- factory context ----
+    if (calleeName === 'SupervisorJob' || calleeName === 'Job') {
+      return {
+        t: 'obj', className: calleeName,
+        fields: new Map([['__supervisor', { t: 'bool', v: calleeName === 'SupervisorJob' } as KValue]]),
+      }
+    }
+    if (calleeName === 'CoroutineScope' || calleeName === 'MainScope') {
+      const arg = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
+      return { t: 'obj', className: 'CoroutineScope', fields: new Map([['__ctx', arg]]) }
+    }
+    if (calleeName === 'CoroutineName') {
+      const arg = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
+      return { t: 'obj', className: 'CoroutineName', fields: new Map([['name', arg]]) }
+    }
+
     const name = e.callee.k === 'Ident' ? e.callee.name : null
 
     if (name === 'println') {
@@ -226,5 +318,31 @@ export class Interpreter {
       if (err instanceof ReturnSignal) return err.value
       throw err
     }
+  }
+
+  /**
+   * Dựng CoroutineContext từ đối số của builder.
+   * Nhận Dispatchers.X, CoroutineName(...), SupervisorJob(), và chuỗi cộng bằng '+'.
+   */
+  protected *contextFromArgs(e: Expr & { k: 'Call' }, env: Env): Eval<CoroutineContext> {
+    let ctx = CoroutineContext.empty()
+    for (const a of e.args) {
+      const v = yield* this.evalExpr(a.value, env)
+      ctx = this.applyCtxValue(ctx, v)
+    }
+    return ctx
+  }
+
+  protected applyCtxValue(ctx: CoroutineContext, v: KValue): CoroutineContext {
+    if (v.t !== 'obj') return ctx
+    if (v.className.startsWith('Dispatchers.')) {
+      return ctx.withDispatcher(v.className.slice('Dispatchers.'.length))
+    }
+    if (v.className === 'CoroutineName') {
+      const n = v.fields.get('name')
+      return n && n.t === 'str' ? ctx.withName(n.v) : ctx
+    }
+    if (v.className === 'CoroutineExceptionHandler') return ctx.withHandler('CEH')
+    return ctx
   }
 }

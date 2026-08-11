@@ -222,4 +222,60 @@ export class Scheduler {
   cancel(job: Job, cause: FailureCause): void {
     cancelJob(job, cause, this.emitter, 'user')
   }
+
+  /**
+   * launch/async: tạo child dưới `parentJobId` (lấy từ Env, KHÔNG lấy từ
+   * currentJob — xem ghi chú trong Env), chạy sau, xếp cuối hàng ready.
+   */
+  spawnChildOf(
+    parentJobId: JobId | null,
+    ctx: CoroutineContext,
+    builder: 'launch' | 'async',
+    makeBody: (job: Job) => CoroutineBody,
+  ): Job {
+    const parent = this.jobById(parentJobId)
+    const parentCtx = parent ? this.tasks.get(parent.id)!.ctx : CoroutineContext.empty()
+    return this.spawn(parent, false, builder, parentCtx.plus(ctx), makeBody)
+  }
+
+  /**
+   * coroutineScope/supervisorScope/runBlocking/withContext: tạo Job trong cây
+   * nhưng thân chạy ngay tại chỗ, không xếp hàng riêng.
+   */
+  spawnInline(
+    builder: 'runBlocking' | 'coroutineScope' | 'supervisorScope' | 'withContext',
+    parentJobId: JobId | null,
+    isSupervisor: boolean,
+    ctx: CoroutineContext,
+  ): Job {
+    const parent = this.jobById(parentJobId)
+    const parentCtx = parent ? this.tasks.get(parent.id)!.ctx : CoroutineContext.empty()
+    const merged = parentCtx.plus(ctx)
+    const id = this.newJobId()
+    const job = new Job(id, merged.name ?? id, parent, isSupervisor)
+    parent?.addChild(job)
+    const jobCtx = merged.withJob(job)
+    this.emitter.emit({
+      k: 'COROUTINE_CREATED', id, parentId: parent?.id ?? null, builder, ctx: jobCtx.summary(),
+    })
+    job.transitionTo('Active')
+    this.emitter.emit({ k: 'JOB_STATE', id, from: 'New', to: 'Active' })
+    this.tasks.set(id, {
+      job, ctx: jobCtx, body: (function* (): CoroutineBody { })(), resumeValue: undefined, started: true,
+    })
+    return job
+  }
+
+  completeInline(job: Job): void {
+    if (job.isCompleted) return
+    job.transitionTo('Completing')
+    this.emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Active', to: 'Completing' })
+    job.transitionTo('Completed')
+    this.emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Completing', to: 'Completed' })
+  }
+
+  cancelById(jobId: JobId, cause: FailureCause): void {
+    const task = this.tasks.get(jobId)
+    if (task) cancelJob(task.job, cause, this.emitter, 'user')
+  }
 }
