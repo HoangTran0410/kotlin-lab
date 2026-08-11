@@ -8,3 +8,11 @@
 }
 body { margin: 0; background: var(--bg); color: var(--fg);
   font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; }
+
+/* Task 9: dòng đang chạy trong trace. Viền trái + nền mờ để phân biệt với
+   nền của highlightActiveLine() (CodeMirror, theo vị trí con trỏ) — hai thứ
+   độc lập và có thể trùng dòng. */
+.cm-current-line {
+  background: rgba(88, 166, 255, 0.15);
+  border-left: 3px solid var(--k-launch);
+}

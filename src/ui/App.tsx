@@ -3,6 +3,7 @@ import { Panel } from './layout/Panel'
 import { Shell } from './layout/Shell'
 import { CodeEditor } from './editor/CodeEditor'
 import { useLabStore } from '../state/store'
+import { selectCurrentLine } from '../state/selectors'
 
 /**
  * runSourceSafe biên dịch lại TOÀN BỘ trace (parse + interpret + buildGraphSpec)
@@ -29,6 +30,7 @@ function useDebouncedSetSource(): (src: string) => void {
 
 export function App() {
   const source = useLabStore(s => s.source)
+  const currentLine = useLabStore(selectCurrentLine)
   const handleChange = useDebouncedSetSource()
 
   return (
@@ -36,7 +38,7 @@ export function App() {
       nav={<nav>Bài học</nav>}
       editor={
         <Panel title="Mã Kotlin" grow>
-          <CodeEditor value={source} onChange={handleChange} />
+          <CodeEditor value={source} onChange={handleChange} currentLine={currentLine} />
         </Panel>
       }
       graph={
