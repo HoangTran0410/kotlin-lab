@@ -33,8 +33,23 @@ describe('runSourceSafe — không bao giờ ném', () => {
   })
 
   it('lỗi parser mang vị trí từ ParseError.pos', () => {
-    const d = runSourceSafe('fun main() = runBlocking {\n\n\n  !!!\n}').diagnostics[0]!
+    // Dùng ca mà token gây lỗi nằm CÙNG DÒNG với chỗ sai, để test hỏi đúng
+    // thứ nó cần hỏi: ParseError.pos có chảy vào Diagnostic không.
+    // KHÔNG dùng '!!!' — ba toán tử một ngôi khiến parsePrimary đi tìm biểu
+    // thức và báo chỗ NÓ TÌM ('}' ở dòng sau), không phải chỗ user gõ sai.
+    // Đó là hành vi có sẵn của parser, hợp lý, và không thuộc phạm vi task này.
+    const d = runSourceSafe('fun main() {\n\n\n  val = 1\n}').diagnostics[0]!
     expect(d.line).toBe(4)
+    expect(d.col).toBeGreaterThan(1)
+  })
+
+  it('vị trí lỗi parser khi thiếu toán hạng trỏ vào chỗ PARSER TÌM, không phải chỗ gõ sai', () => {
+    // Ghim hành vi hiện tại cho trung thực, thay vì giả vờ nó đã tốt hơn.
+    // peek() bỏ qua NEWLINE nên parsePrimary báo token thật kế tiếp.
+    // Cải thiện chỗ này là việc của một task riêng về chất lượng diagnostic
+    // (xem "Việc còn lại sau M2"), không phải sửa lén ở đây.
+    const d = runSourceSafe('fun main() = runBlocking {\n\n\n  !!!\n}').diagnostics[0]!
+    expect(d.line).toBe(5)
   })
 
   it('source hợp lệ đi qua y hệt runSource — không bọc làm hỏng đường thuận', () => {
