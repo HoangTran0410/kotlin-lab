@@ -13,9 +13,6 @@ describe('interpreter — coroutine builder', () => {
     const e = evs('fun main() = runBlocking {\n  launch { println("child") }\n}')
     const created = e.filter(x => x.k === 'COROUTINE_CREATED')
     expect(created).toHaveLength(2)
-    // Event là union theo discriminant `k`; .filter() không tự thu hẹp kiểu phần
-    // tử (không phải type predicate), nên phải ép kiểu như các test khác trong
-    // repo (vd. runtime-propagation.test.ts) để qua strict typecheck.
     expect(created[1]).toMatchObject({ builder: 'launch', parentId: (created[0] as { id: string }).id })
   })
 
@@ -62,6 +59,25 @@ describe('interpreter — coroutine builder', () => {
       '  j.cancel()\n' +
       '}')
     expect(e.some(x => x.k === 'CANCEL_REQUESTED')).toBe(true)
+  })
+
+  it('launch sau điểm suspend TRONG coroutineScope gắn đúng scope, không phải root', () => {
+    // Test phân biệt env.enclosingJobId với Scheduler.currentJob. Phải có
+    // delay TRƯỚC launch: currentJob bị đặt lại mỗi step(), nên sau khi resume
+    // nó trỏ về job của task đang chạy (root), trong khi scope từ vựng vẫn là
+    // coroutineScope. Không có điểm suspend thì hai giá trị trùng nhau và test
+    // không phân biệt được gì.
+    const e = evs(
+      'fun main() = runBlocking {\n' +
+      '  coroutineScope {\n' +
+      '    delay(10)\n' +
+      '    launch { delay(1) }\n' +
+      '  }\n' +
+      '}')
+    const created = e.filter(x => x.k === 'COROUTINE_CREATED')
+    const scope = created.find(x => (x as { builder: string }).builder === 'coroutineScope')!
+    const launched = created.find(x => (x as { builder: string }).builder === 'launch')!
+    expect((launched as { parentId: string }).parentId).toBe((scope as { id: string }).id)
   })
 
   it('launch bên trong suspend fun gắn đúng coroutine scope của caller', () => {
