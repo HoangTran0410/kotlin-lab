@@ -2149,7 +2149,7 @@ git commit -m "feat(engine): Event, TraceEmitter, foldTrace"
 
 **Interfaces:**
 - Consumes: `JobId`, `JobState` (Task 8)
-- Produces: `FailureCause`, `Job` class với `id`, `name`, `parent`, `children: Job[]`, `isSupervisor`, `state`, `cause`, `addChild`, `transitionTo`, `isActive`, `isCompleted`, `isCancelled`, `descendants()`
+- Produces: `FailureCause`, `Job` class với `id`, `name`, `parent`, `children: readonly Job[]` (chỉ đọc), `isSupervisor`, `state`, `cause`, `addChild`, `transitionTo`, `isActive`, `isCompleted`, `isCancelled`, `descendants()`
 
 - [ ] **Step 1: Viết test thất bại**
 
@@ -2212,6 +2212,46 @@ describe('Job state machine', () => {
     expect(j.isCancelled).toBe(true)
     expect(j.isCompleted).toBe(true)
   })
+
+  it('state không có setter — chỉ đổi được qua transitionTo', () => {
+    // Nếu state là field public thì mọi module hạ nguồn đều gán thẳng được
+    // và bảng ALLOWED trở thành vô dụng.
+    const desc = Object.getOwnPropertyDescriptor(Job.prototype, 'state')
+    expect(desc?.get).toBeTypeOf('function')
+    expect(desc?.set).toBeUndefined()
+  })
+
+  it('addChild ném lỗi khi child.parent không trỏ về job này', () => {
+    const p = new Job('p', 'P', null, false)
+    const other = new Job('o', 'O', null, false)
+    const orphan = new Job('c', 'C', other, false)
+    expect(() => p.addChild(orphan)).toThrow(/khớp hai chiều/)
+  })
+
+  it('addChild ném lỗi khi child không có parent', () => {
+    const p = new Job('p', 'P', null, false)
+    const rootless = new Job('c', 'C', null, false)
+    expect(() => p.addChild(rootless)).toThrow(/khớp hai chiều/)
+  })
+
+  it('liên kết khớp hai chiều thì addChild chạy bình thường', () => {
+    const p = new Job('p', 'P', null, false)
+    const c = new Job('c', 'C', p, false)
+    expect(() => p.addChild(c)).not.toThrow()
+    expect(p.children).toEqual([c])
+  })
+
+  it('transitionTo về CHÍNH trạng thái hiện tại bị từ chối', () => {
+    const j = new Job('j', 'J', null, false)
+    j.transitionTo('Active')
+    expect(() => j.transitionTo('Active')).toThrow(/không hợp lệ/)
+  })
+
+  it('New -> Cancelled đi thẳng được (job chưa chạy thì huỷ ngay)', () => {
+    const j = new Job('j', 'J', null, false)
+    expect(() => j.transitionTo('Cancelled')).not.toThrow()
+    expect(j.isCancelled).toBe(true)
+  })
 })
 ```
 
@@ -2241,10 +2281,16 @@ const ALLOWED: Record<JobState, readonly JobState[]> = {
 }
 
 export class Job {
-  state: JobState = 'New'
+  /**
+   * Riêng tư, chỉ đổi được qua transitionTo. Nếu để public thì mọi module
+   * hạ nguồn đều có thể gán thẳng `job.state = 'Cancelled'`, bỏ qua đúng
+   * bảng ALLOWED mà class này sinh ra để canh.
+   */
+  private _state: JobState = 'New'
   cause: FailureCause | null = null
+
   /** Mảng, không phải Set — thứ tự phải ổn định để trace deterministic. */
-  readonly children: Job[] = []
+  private readonly _children: Job[] = []
 
   constructor(
     readonly id: JobId,
@@ -2253,17 +2299,35 @@ export class Job {
     readonly isSupervisor: boolean,
   ) {}
 
-  get isActive(): boolean { return this.state === 'Active' }
-  get isCompleted(): boolean { return this.state === 'Completed' || this.state === 'Cancelled' }
-  get isCancelled(): boolean { return this.state === 'Cancelled' }
+  get state(): JobState { return this._state }
 
-  addChild(child: Job): void { this.children.push(child) }
+  /** readonly: thêm con bắt buộc qua addChild để liên kết luôn khớp hai chiều. */
+  get children(): readonly Job[] { return this._children }
+
+  get isActive(): boolean { return this._state === 'Active' }
+  get isCompleted(): boolean { return this._state === 'Completed' || this._state === 'Cancelled' }
+  get isCancelled(): boolean { return this._state === 'Cancelled' }
+
+  /**
+   * Liên kết cha-con phải khớp hai chiều. Nếu lệch, job con sẽ nằm ngoài
+   * `children` của cha và bị BỎ SÓT khi lan cancel — sai lặng lẽ, không có
+   * tín hiệu lỗi nào. Thà chết sớm ở đây còn hơn sai âm thầm ở Task 13.
+   */
+  addChild(child: Job): void {
+    if (child.parent !== this) {
+      throw new Error(
+        `Job ${this.id}: addChild(${child.id}) nhưng child.parent không trỏ về job này. ` +
+        'Liên kết cha-con phải khớp hai chiều.',
+      )
+    }
+    this._children.push(child)
+  }
 
   transitionTo(next: JobState): void {
-    if (!ALLOWED[this.state].includes(next)) {
-      throw new Error(`Job ${this.id}: chuyển trạng thái không hợp lệ ${this.state} -> ${next}`)
+    if (!ALLOWED[this._state].includes(next)) {
+      throw new Error(`Job ${this.id}: chuyển trạng thái không hợp lệ ${this._state} -> ${next}`)
     }
-    this.state = next
+    this._state = next
   }
 
   /** Duyệt sâu, thứ tự ổn định. */
@@ -2279,7 +2343,7 @@ export class Job {
 - [ ] **Step 4: Chạy test, xác nhận pass**
 
 Run: `npx vitest run tests/engine/runtime-job.test.ts`
-Expected: PASS — 8 test.
+Expected: PASS — 14 test.
 
 - [ ] **Step 5: Commit**
 
