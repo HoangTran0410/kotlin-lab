@@ -109,10 +109,22 @@ describe('parser — đối số kiểu', () => {
 
   it('a < b vẫn là so sánh, KHÔNG phải đối số kiểu', () => {
     expect(parseExprSource('a < b')).toMatchObject({ k: 'Binary', op: '<' })
+    expect(parseExprSource('x < y + 1')).toMatchObject({ k: 'Binary', op: '<' })
   })
 
-  it('a < b > c không bị nuốt nhầm khi không có ( theo sau', () => {
-    expect(parseExprSource('a < b')).toMatchObject({ k: 'Binary', op: '<' })
-    expect(parseExprSource('x < y + 1')).toMatchObject({ k: 'Binary', op: '<' })
+  it('x < y > (z) là so sánh chứ KHÔNG phải lời gọi generic', () => {
+    // Ca nguy hiểm nhất: khớp đúng mẫu '<' ... '>' rồi '(' nhưng lại là
+    // so sánh. Nếu nuốt nhầm sẽ ra Call(x,[z]) và KHÔNG báo lỗi gì.
+    expect(parseExprSource('x < y > (z)')).toMatchObject({
+      k: 'Binary', op: '>',
+      left: { k: 'Binary', op: '<', left: { k: 'Ident', name: 'x' } },
+    })
+  })
+
+  it('dấu phẩy giữa hai so sánh trong đối số không bị gộp thành đối số kiểu', () => {
+    // f(a < b, c > (d)) — dấu phẩy nằm trong whitelist nên đây là ca dễ lọt.
+    const ast = parseExprSource('f(a < b, c > (d))')
+    expect(ast).toMatchObject({ k: 'Call', callee: { k: 'Ident', name: 'f' } })
+    expect((ast as { args: unknown[] }).args).toHaveLength(2)
   })
 })

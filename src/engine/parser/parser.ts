@@ -150,6 +150,16 @@ export class Parser {
    */
   private trySkipTypeArgs(): boolean {
     if (!this.at('OP', '<')) return false
+
+    // Chỉ '>' theo sau bởi '(' là KHÔNG đủ: `x < y > (z)` cũng khớp mẫu đó và
+    // sẽ bị nuốt thành Call(x, [z]) một cách im lặng — tệ hơn cả lỗi parse.
+    // Chốt thêm bằng quy ước Kotlin: tên kiểu viết hoa chữ đầu.
+    // Giới hạn đã biết: `x < Y > (z)` với Y là biến viết hoa vẫn nhầm. Chấp
+    // nhận ở M1 — trình biên dịch thật phân giải chỗ này bằng thông tin kiểu
+    // mà engine này không có, và subset M1 không cho user tự định nghĩa generic.
+    const first = this.peek(1)
+    if (first.kind !== 'IDENT' || !/^[A-Z]/.test(first.text)) return false
+
     const save = this.i
     this.next()
     let depth = 1

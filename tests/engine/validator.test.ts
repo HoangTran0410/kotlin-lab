@@ -32,8 +32,23 @@ describe('validator', () => {
     expect(d.length).toBeGreaterThanOrEqual(2)
   })
 
-  it('nhận diện construct chưa hỗ trợ ở dạng gọi thành viên', () => {
-    const d = check('fun main() {\n  val m = Mutex()\n  m.withLock { }\n}')
-    expect(d.some(x => x.message.includes('Mutex'))).toBe(true)
+  it('nhận diện toán tử Flow chưa hỗ trợ gọi kiểu thành viên', () => {
+    // Đường Member là đường DUY NHẤT bắt được buffer/conflate/debounce/
+    // combine/zip — 5/13 mục trong danh mục. Phải test bằng một tên THẬT SỰ
+    // có trong UNSUPPORTED, và assert đúng mục đó, không phải mục khác lọt vào.
+    const d = check('fun main() {\n  flowOf(1).buffer()\n}')
+    expect(d).toHaveLength(1)
+    expect(d[0]!.message).toContain('buffer')
+    expect(d[0]!.line).toBe(2)
+  })
+
+  it('nhận diện withLock ở dạng gọi thành viên, tách khỏi Mutex', () => {
+    const d = check('fun main() {\n  m.withLock { }\n}')
+    expect(d.some(x => x.message.includes('withLock'))).toBe(true)
+  })
+
+  it('gom lỗi trên NHIỀU hàm khác nhau, không chỉ trong một hàm', () => {
+    const d = check('fun a() {\n  select { }\n}\nfun main() {\n  Channel<Int>()\n}')
+    expect(d.map(x => x.line)).toEqual([2, 5])
   })
 })

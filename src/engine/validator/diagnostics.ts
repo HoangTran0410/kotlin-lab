@@ -13,6 +13,7 @@ export const UNSUPPORTED: Record<string, string> = {
   actor: 'actor chưa có ở v1.',
   select: 'select chưa có ở v1. Tách thành các nhánh await() riêng.',
   Mutex: 'Mutex chưa có ở v1. Ở M1 chưa mô phỏng tranh chấp tài nguyên.',
+  withLock: 'withLock chưa có ở v1 (đi kèm Mutex).',
   Semaphore: 'Semaphore chưa có ở v1.',
   buffer: 'Toán tử buffer chưa có ở v1.',
   conflate: 'Toán tử conflate chưa có ở v1.',
