@@ -1,6 +1,9 @@
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
+  // Bỏ qua tường minh. eslint 9 flat config KHÔNG tự bỏ qua dist/, và
+  // 'vite build' ghi file vào đó trong lúc lint chạy đã gây đỏ chập chờn.
+  { ignores: ['dist/**', 'coverage/**', 'node_modules/**', '*.timestamp-*'] },
   ...tseslint.configs.recommended,
   {
     files: ['src/engine/**/*.ts'],
