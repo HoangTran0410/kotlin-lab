@@ -153,4 +153,51 @@ describe('propagation — supervisor boundary', () => {
     reportFailure(j, boom, new TraceEmitter())
     expect(j.cause?.exType).toBe('RuntimeException')
   })
+
+  it('failure đi lên NHIỀU TẦNG khi mọi parent đều là Job thường', () => {
+    // R -> P -> B, và R còn một con khác là U (chú của B).
+    // Cách cài chỉ-lan-một-tầng sẽ để R sống và U sống — sai hẳn Kotlin.
+    const R = new Job('R', 'R', null, false); R.transitionTo('Active')
+    const P = new Job('P', 'P', R, false); P.transitionTo('Active'); R.addChild(P)
+    const U = new Job('U', 'U', R, false); U.transitionTo('Active'); R.addChild(U)
+    const B = new Job('B', 'B', P, false); B.transitionTo('Active'); P.addChild(B)
+
+    reportFailure(B, boom, new TraceEmitter())
+
+    expect(P.state).toBe('Cancelled')
+    expect(R.state).toBe('Cancelled')  // chỉ-một-tầng sẽ để Active
+    expect(U.state).toBe('Cancelled')  // chú cũng bị kéo theo
+  })
+
+  it('bẫy nested supervisor: failure phải CHẠM tới boundary và được ghi lại', () => {
+    // Nếu chỉ lan một tầng thì sự kiện P -> root không bao giờ được phát,
+    // và UI không có gì để vẽ ranh giới supervisor — mất trọn bài học.
+    const root = new Job('root', 'Root', null, true); root.transitionTo('Active')
+    const P = new Job('P', 'P', root, false); P.transitionTo('Active'); root.addChild(P)
+    const B = new Job('B', 'B', P, false); B.transitionTo('Active'); P.addChild(B)
+
+    const em = new TraceEmitter()
+    reportFailure(B, boom, em)
+
+    const props = em.events
+      .filter(e => e.k === 'FAILURE_PROPAGATED')
+      .map(e => [
+        (e as { from: string }).from,
+        (e as { to: string }).to,
+        (e as { blockedBySupervisor: boolean }).blockedBySupervisor,
+      ])
+    expect(props).toEqual([['B', 'P', false], ['P', 'root', true]])
+    expect(root.state).toBe('Active')
+  })
+
+  it('CancellationException ở tầng sâu cũng không kéo tổ tiên nào chết', () => {
+    const R = new Job('R', 'R', null, false); R.transitionTo('Active')
+    const P = new Job('P', 'P', R, false); P.transitionTo('Active'); R.addChild(P)
+    const B = new Job('B', 'B', P, false); B.transitionTo('Active'); P.addChild(B)
+
+    reportFailure(B, cancelled, new TraceEmitter())
+
+    expect([R.state, P.state]).toEqual(['Active', 'Active'])
+    expect(B.state).toBe('Cancelled')
+  })
 })

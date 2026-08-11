@@ -44,33 +44,57 @@ export function cancelJob(
  *    sibling không bị đụng tới. (Exception chưa xử lý vẫn đi tiếp tới
  *    handler — việc đó do scheduler làm, không phải ở đây.)
  */
+/** Đưa một job về trạng thái kết thúc bất thường, phát đủ hai chặng JOB_STATE. */
+function terminateAsFailed(job: Job, cause: FailureCause, emitter: TraceEmitter): void {
+  if (job.isCompleted) return
+  const prev = job.state
+  if (prev !== 'Cancelling') {
+    job.transitionTo('Cancelling')
+    emitter.emit({ k: 'JOB_STATE', id: job.id, from: prev, to: 'Cancelling', cause: cause.exType })
+  }
+  job.cause = cause
+  job.transitionTo('Cancelled')
+  emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Cancelling', to: 'Cancelled', cause: cause.exType })
+}
+
 export function reportFailure(child: Job, cause: FailureCause, emitter: TraceEmitter): void {
   child.cause = cause
-
-  if (!child.isCompleted) {
-    const prev = child.state
-    if (prev !== 'Cancelling') {
-      child.transitionTo('Cancelling')
-      emitter.emit({ k: 'JOB_STATE', id: child.id, from: prev, to: 'Cancelling', cause: cause.exType })
-    }
-    child.transitionTo('Cancelled')
-    emitter.emit({ k: 'JOB_STATE', id: child.id, from: 'Cancelling', to: 'Cancelled', cause: cause.exType })
-  }
+  terminateAsFailed(child, cause, emitter)
 
   if (cause.isCancellation) return
 
-  const parent = child.parent
-  if (!parent) return
+  // Failure đi lên QUA NHIỀU TẦNG, không chỉ một bậc. Nếu chỉ báo cho parent
+  // trực tiếp rồi dừng thì với cây R -> P -> {A,B,C} toàn Job thường, B fail
+  // sẽ giết P và A/C nhưng R vẫn sống — sai hẳn so với Kotlin. Nó cũng làm
+  // mất sự kiện FAILURE_PROPAGATED chạm tới ranh giới supervisor, thứ mà UI
+  // cần để vẽ bài học "nested supervisor trap".
+  let node = child
+  for (;;) {
+    const parent = node.parent
+    if (!parent) return
 
-  emitter.emit({
-    k: 'FAILURE_PROPAGATED',
-    from: child.id,
-    to: parent.id,
-    blockedBySupervisor: parent.isSupervisor,
-  })
+    emitter.emit({
+      k: 'FAILURE_PROPAGATED',
+      from: node.id,
+      to: parent.id,
+      blockedBySupervisor: parent.isSupervisor,
+    })
 
-  if (parent.isSupervisor) return
+    // Supervisor chặn LAN TRUYỀN FAILURE. Nó không nuốt exception — việc đưa
+    // exception chưa xử lý tới handler là của scheduler, không phải ở đây.
+    if (parent.isSupervisor) return
+    if (parent.isCompleted) return
 
-  parent.cause = cause
-  cancelJob(parent, cause, emitter, child.id)
+    parent.cause = cause
+
+    // Cancel các con còn lại của parent. cancelJob tự phát CANCEL_REQUESTED
+    // ở đầu, nên không phát thêm ở đây kẻo trùng.
+    for (const sib of parent.children) {
+      if (sib === node || sib.isCompleted) continue
+      cancelJob(sib, cause, emitter, parent.id)
+    }
+
+    terminateAsFailed(parent, cause, emitter)
+    node = parent
+  }
 }
