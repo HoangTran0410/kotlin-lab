@@ -1086,10 +1086,16 @@ Trong `parsePostfix`, thêm nhánh **trước** `break`:
 
 Thêm tiện ích vào `Parser` — trailing lambda phải nằm **cùng dòng** với lời gọi, nếu không `{` ở dòng sau sẽ bị nuốt nhầm:
 ```ts
+  /**
+   * Token kế tiếp có đúng loại `kind` VÀ nằm cùng dòng với vị trí hiện tại?
+   * Dùng cho trailing lambda: `foo()` rồi xuống dòng mới `{ ... }` là một khối
+   * riêng, không phải lambda của foo. Nếu bỏ điều kiện cùng dòng thì
+   * `val x = f()` theo sau bởi một block sẽ bị nuốt nhầm.
+   */
   private atSameLine(kind: Token['kind']): boolean {
-    let j = this.i
-    while (j < this.toks.length && this.toks[j]!.kind === 'NEWLINE') return false
-    return this.toks[j]?.kind === kind
+    const next = this.toks[this.i]
+    if (!next || next.kind === 'NEWLINE') return false
+    return next.kind === kind
   }
 ```
 
