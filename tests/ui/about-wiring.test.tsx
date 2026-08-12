@@ -7,7 +7,8 @@ import { UNSUPPORTED } from '../../src/engine/validator/diagnostics'
 import { KOTLIN_VERSION } from '../../src/engine/kotlinVersion'
 
 const mo = (): HTMLElement => {
-  fireEvent.click(screen.getByRole('button', { name: 'Chạy được gì?' }))
+  const nav = screen.getByRole('navigation', { name: 'Lộ trình bài học' })
+  fireEvent.click(within(nav).getByRole('button', { name: 'Chạy được gì?' }))
   return screen.getByRole('dialog')
 }
 
@@ -62,10 +63,14 @@ describe('trang giới thiệu — nối vào app', () => {
     expect(st.compiled.events.length).toBeGreaterThan(0)
   })
 
-  it('mở ví dụ thì bỏ đánh dấu bài đang học — nav không sáng nhầm', () => {
+  it('mở ví dụ thì bỏ đánh dấu bài đang học — header không nói nhầm', () => {
     render(<App />)
-    fireEvent.click(screen.getAllByRole('button', { name: /suspend/ })[0]!)
-    expect(useLabStore.getState().lessonId).toBe('suspend')
+    // Chọn một bài qua ĐÚNG đường người dùng đi: mở hộp, tab Lộ trình, bấm thẻ.
+    const nav = screen.getByRole('navigation', { name: 'Lộ trình bài học' })
+    fireEvent.click(within(nav).getAllByRole('button')[0]!)
+    const loTrinh = screen.getByRole('dialog')
+    fireEvent.click(loTrinh.querySelectorAll<HTMLButtonElement>('.les__card')[0]!)
+    expect(useLabStore.getState().lessonId).not.toBeNull()
 
     const hop = mo()
     fireEvent.click(within(hop).getAllByRole('button', { name: 'Mở ví dụ' })[0]!)

@@ -21,6 +21,7 @@ export interface FlowNodeData extends Record<string, unknown> {
   /** Dòng println gần nhất do CHÍNH node này in, và tổng số dòng đã in. */
   lastPrint: string | null
   printCount: number
+  loi: { exType: string; message: string } | null
   /** Node mà bước đang xem NÓI VỀ — vẽ vòng nhấn mạnh. */
   isCurrent: boolean
 }
@@ -109,6 +110,7 @@ export function toReactFlow(spec: GraphSpec, layout: LayoutResult, world: WorldS
         suspendReason: job?.suspendReason ?? null,
         lastPrint: job?.lastPrint ?? null,
         printCount: job?.printCount ?? 0,
+        loi: job?.loi ?? null,
         isCurrent: world.activeJobId === n.id,
       },
     }

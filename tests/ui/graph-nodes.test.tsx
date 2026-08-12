@@ -21,7 +21,7 @@ const renderInFlow = (ui: React.ReactElement) => render(<ReactFlowProvider>{ui}<
 
 const BASE_DATA: FlowNodeData = {
   name: null, builder: 'launch', isSupervisor: false, phase: 'live',
-  state: 'Active', cause: null, varName: null, suspendReason: null, lastPrint: null, printCount: 0, isCurrent: false,
+  state: 'Active', cause: null, varName: null, suspendReason: null, lastPrint: null, printCount: 0, loi: null, isCurrent: false,
 }
 
 /** Phần còn lại của NodeProps mà React Flow tự điền lúc mount thật — ở đây điền tay vì test gọi component trực tiếp. */

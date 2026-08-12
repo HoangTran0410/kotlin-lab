@@ -8,7 +8,9 @@ import { DiagnosticsPanel } from './diagnostics/DiagnosticsPanel'
 import { clampDiagnosticLine } from './diagnostics/clampLine'
 import { ConsolePanel } from './console/ConsolePanel'
 import { LessonNav } from './lessons/LessonNav'
-import { AboutPanel } from './about/AboutPanel'
+import { AboutContent } from './about/AboutContent'
+import { LessonList } from './lessons/LessonList'
+import { Modal } from './common/Modal'
 import { MentalModel } from './mentalmodel/MentalModel'
 import { GraphStage } from './graph/GraphStage'
 import { toReactFlow } from './graph/toReactFlow'
@@ -18,6 +20,7 @@ import { narrateTrace } from '../engine/narrate/narrateTrace'
 import { Timeline } from './timeline/Timeline'
 import { PlaybackControls } from './timeline/PlaybackControls'
 import { useLabStore } from '../state/store'
+import { LESSON_LIST } from '../lessons/registry'
 import { selectCurrentLine, selectWorld } from '../state/selectors'
 
 /**
@@ -68,7 +71,8 @@ export function App() {
   const loadLesson = useLabStore(s => s.loadLesson)
   const loadSource = useLabStore(s => s.loadSource)
   const handleChange = useDebouncedSetSource()
-  const [aboutOpen, setAboutOpen] = useState(false)
+  // Hộp chung cho lộ trình + trang giới thiệu. `null` = đang đóng.
+  const [tab, setTab] = useState<string | null>(null)
   // Bảng gỡ lỗi (console + chẩn đoán + diễn giải đầy đủ + timeline từng event)
   // mặc định ĐÓNG: đồ thị đã tự kể được chuyện gì đang xảy ra.
   const [debugOpen, setDebugOpen] = useState(false)
@@ -116,8 +120,14 @@ export function App() {
     <>
     <Shell
       debugOpen={debugOpen}
-      onMoGioiThieu={() => setAboutOpen(true)}
-      nav={<LessonNav currentLessonId={lessonId} loadLesson={loadLesson} setSource={loadSource} />}
+      nav={
+        <LessonNav
+          currentLessonId={lessonId}
+          onMoLoTrinh={() => setTab('lo-trinh')}
+          onMoGioiThieu={() => setTab('chay-duoc')}
+          setSource={loadSource}
+        />
+      }
       editor={
         <div className="editor-col">
           {/* Trên editor, không phải ở cột bên: đọc mô hình xong thì mắt đi
@@ -183,7 +193,30 @@ export function App() {
         </>
       }
     />
-    {aboutOpen && <AboutPanel onClose={() => setAboutOpen(false)} onMoViDu={loadSource} />}
+    {tab !== null && (
+      <Modal
+        tabDangMo={tab}
+        setTab={setTab}
+        onClose={() => setTab(null)}
+        tabs={[
+          {
+            id: 'lo-trinh',
+            nhan: `Lộ trình · ${LESSON_LIST.length} bài`,
+            noi: (
+              <LessonList
+                currentLessonId={lessonId}
+                onChon={id => { loadLesson(id); setTab(null) }}
+              />
+            ),
+          },
+          {
+            id: 'chay-duoc',
+            nhan: 'Chạy được gì?',
+            noi: <AboutContent onMoViDu={src => { loadSource(src); setTab(null) }} />,
+          },
+        ]}
+      />
+    )}
     </>
   )
 }

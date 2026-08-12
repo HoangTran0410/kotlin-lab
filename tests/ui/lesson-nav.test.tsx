@@ -1,86 +1,104 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { LessonNav } from '../../src/ui/lessons/LessonNav'
-import { LESSON_LIST } from '../../src/lessons/registry'
+import { LessonList } from '../../src/ui/lessons/LessonList'
+import { LESSON_IDS_DOI_CHIEU_JVM, LESSON_LIST, lessonSource } from '../../src/lessons/registry'
 import { runSourceSafe } from '../../src/engine/run'
-import { useLabStore } from '../../src/state/store'
-import { lessonSource } from '../../src/lessons/registry'
 
-describe('LessonNav', () => {
-  it('hiện đủ mọi bài, đúng thứ tự order, số thứ tự và tooltip đầy đủ', () => {
-    const { container } = render(
-      <LessonNav currentLessonId={null} loadLesson={() => {}} setSource={() => {}} />,
-    )
-    const items = container.querySelectorAll<HTMLButtonElement>('.lesson-nav__item')
-    expect(items).toHaveLength(LESSON_LIST.length)
-    expect(LESSON_LIST.length, 'nav không liệt kê bài nào').toBeGreaterThan(0)
-    // Chip chỉ hiện SỐ + nhãn ngắn (cả lộ trình không xếp vừa một hàng nếu hiện cả
-    // summary), nhưng title/summary đầy đủ vẫn phải tới được người dùng — qua
-    // tooltip. Canh cả hai: số thứ tự đúng, và không bài nào mất chữ.
-    expect([...items].map(b => b.querySelector('.lesson-nav__num')?.textContent))
-      .toEqual(LESSON_LIST.map(l => String(l.order)))
-    for (const [i, b] of [...items].entries()) {
+const navProps = {
+  currentLessonId: null, onMoLoTrinh: () => {}, onMoGioiThieu: () => {}, setSource: () => {},
+}
+
+describe('LessonNav — ba lối vào trong header', () => {
+  it('chưa mở bài nào thì mời chọn, và nói rõ có bao nhiêu bài', () => {
+    render(<LessonNav {...navProps} />)
+    const mo = screen.getByRole('button', { name: new RegExp(`Chọn bài.*${LESSON_LIST.length} bài`) })
+    expect(mo).toBeInTheDocument()
+  })
+
+  it('đang mở một bài thì hiện SỐ và TIÊU ĐỀ của đúng bài đó', () => {
+    // Dải chip cũ chỉ nói được "bài nào đang mở" bằng màu nền của một chip nhỏ
+    // — mà chip đó có thể đang nằm ngoài vùng cuộn.
+    const bai = LESSON_LIST[4]!
+    render(<LessonNav {...navProps} currentLessonId={bai.id} />)
+    const mo = screen.getByRole('button', { name: new RegExp(bai.title) })
+    expect(mo).toHaveTextContent(String(bai.order))
+  })
+
+  it('hai nút mở hai tab khác nhau của cùng một hộp', () => {
+    const onMoLoTrinh = vi.fn()
+    const onMoGioiThieu = vi.fn()
+    render(<LessonNav {...navProps} onMoLoTrinh={onMoLoTrinh} onMoGioiThieu={onMoGioiThieu} />)
+    fireEvent.click(screen.getByRole('button', { name: /Chọn bài/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Chạy được gì?' }))
+    expect(onMoLoTrinh).toHaveBeenCalledTimes(1)
+    expect(onMoGioiThieu).toHaveBeenCalledTimes(1)
+  })
+
+  it('"Bắt đầu từ trang trắng" đặt source compile sạch', () => {
+    const setSource = vi.fn()
+    render(<LessonNav {...navProps} setSource={setSource} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Bắt đầu từ trang trắng' }))
+    expect(setSource).toHaveBeenCalledTimes(1)
+    const src = setSource.mock.calls[0]![0] as string
+    expect(runSourceSafe(src).diagnostics).toEqual([])
+  })
+})
+
+describe('LessonList — cả lộ trình, không giấu bài nào', () => {
+  it('hiện ĐỦ mọi bài, không cắt bớt', () => {
+    // Chính là lỗi của bản trước: dải chip `max-width: 60vw; overflow-x: auto`
+    // nên chỉ khoảng 8/13 bài lọt vào tầm nhìn, phần còn lại không dấu vết.
+    const { container } = render(<LessonList currentLessonId={null} onChon={() => {}} />)
+    expect(container.querySelectorAll('.les__card')).toHaveLength(LESSON_LIST.length)
+  })
+
+  it('mỗi thẻ mang đủ số, tiêu đề, tóm tắt và khái niệm — không giấu vào tooltip', () => {
+    const { container } = render(<LessonList currentLessonId={null} onChon={() => {}} />)
+    const cards = [...container.querySelectorAll<HTMLElement>('.les__card')]
+    for (const [i, card] of cards.entries()) {
       const l = LESSON_LIST[i]!
-      expect(b.getAttribute('title'), `${l.id} mất title/summary trong tooltip`)
-        .toBe(`${l.title}\n${l.summary}`)
+      expect(card).toHaveTextContent(String(l.order))
+      expect(card).toHaveTextContent(l.title)
+      expect(card, `${l.id} mất tóm tắt`).toHaveTextContent(l.summary)
+      for (const c of l.concepts) {
+        expect(within(card).getByText(c), `${l.id} thiếu khái niệm ${c}`).toBeInTheDocument()
+      }
     }
   })
 
-  it('bấm vào một bài gọi loadLesson với đúng id', () => {
-    const loadLesson = vi.fn()
-    const { container } = render(
-      <LessonNav currentLessonId={null} loadLesson={loadLesson} setSource={() => {}} />,
-    )
-    const items = container.querySelectorAll<HTMLButtonElement>('.lesson-nav__item')
-    fireEvent.click(items[1]!)
-    expect(loadLesson).toHaveBeenCalledTimes(1)
-    expect(loadLesson).toHaveBeenCalledWith(LESSON_LIST[1]!.id)
+  it('đánh dấu bài đang mở, đúng MỘT bài', () => {
+    const id = LESSON_LIST[2]!.id
+    const { container } = render(<LessonList currentLessonId={id} onChon={() => {}} />)
+    const on = container.querySelectorAll('.les__card--on')
+    expect(on).toHaveLength(1)
+    expect(on[0]!.getAttribute('aria-current')).toBe('true')
+    expect(on[0]!).toHaveTextContent(LESSON_LIST[2]!.title)
   })
 
-  it('đánh dấu đúng bài đang mở, không đánh dấu các bài còn lại', () => {
-    const openId = LESSON_LIST[2]!.id
-    const { container } = render(
-      <LessonNav currentLessonId={openId} loadLesson={() => {}} setSource={() => {}} />,
-    )
-    const items = [...container.querySelectorAll<HTMLButtonElement>('.lesson-nav__item')]
-    const active = items.filter(b => b.classList.contains('lesson-nav__item--active'))
-    expect(active).toHaveLength(1)
-    expect(active[0]!.getAttribute('aria-current')).toBe('true')
-    expect(active[0]!.getAttribute('title')).toContain(LESSON_LIST[2]!.title)
+  it('bấm một thẻ gọi onChon với đúng id', () => {
+    const onChon = vi.fn()
+    const { container } = render(<LessonList currentLessonId={null} onChon={onChon} />)
+    const cards = container.querySelectorAll<HTMLButtonElement>('.les__card')
+    const idx = LESSON_LIST.findIndex(l => l.id === 'supervisor')
+    fireEvent.click(cards[idx]!)
+    expect(onChon).toHaveBeenCalledWith('supervisor')
   })
 
-  it('bấm vào một bài (qua store thật) đưa stepIndex về 0', () => {
-    useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
-    useLabStore.getState().setSource(lessonSource('jobtree')!)
-    useLabStore.getState().setStep(3)
-    expect(useLabStore.getState().stepIndex, 'fixture phải cho phép stepIndex khác 0 trước khi bấm').toBe(3)
-
-    const { container } = render(
-      <LessonNav
-        currentLessonId={useLabStore.getState().lessonId}
-        loadLesson={useLabStore.getState().loadLesson}
-        setSource={useLabStore.getState().setSource}
-      />,
-    )
-    const supervisorIdx = LESSON_LIST.findIndex(l => l.id === 'supervisor')
-    const items = container.querySelectorAll<HTMLButtonElement>('.lesson-nav__item')
-    fireEvent.click(items[supervisorIdx]!)
-
-    expect(useLabStore.getState().stepIndex).toBe(0)
-    expect(useLabStore.getState().lessonId).toBe('supervisor')
+  it('dấu JVM chỉ nằm trên bài THẬT SỰ có fixture', () => {
+    // Dấu này nói về độ tin cậy của bài. Gắn bừa cho cả 13 bài thì nó thành
+    // trang trí, và người học tin nhầm vào 4 bài chưa được so.
+    const { container } = render(<LessonList currentLessonId={null} onChon={() => {}} />)
+    const cards = [...container.querySelectorAll<HTMLElement>('.les__card')]
+    const coDau = cards.filter(c => c.querySelector('.les__jvm') !== null).length
+    expect(coDau).toBe(LESSON_LIST.filter(l => LESSON_IDS_DOI_CHIEU_JVM.has(l.id)).length)
+    expect(coDau, 'không bài nào có dấu — fixture không được nhận ra').toBeGreaterThan(0)
+    expect(coDau, 'mọi bài đều có dấu — dấu thành vô nghĩa').toBeLessThan(LESSON_LIST.length)
   })
 
-  it('nút "Bắt đầu từ trang trắng" đặt source compile sạch, không diagnostic', () => {
-    const setSource = vi.fn()
-    const { container } = render(
-      <LessonNav currentLessonId="jobtree" loadLesson={() => {}} setSource={setSource} />,
-    )
-    const blankBtn = container.querySelector<HTMLButtonElement>('.lesson-nav__blank')
-    if (!blankBtn) throw new Error('không tìm thấy nút trang trắng')
-    fireEvent.click(blankBtn)
-
-    expect(setSource).toHaveBeenCalledTimes(1)
-    const blankSrc = setSource.mock.calls[0]![0] as string
-    expect(runSourceSafe(blankSrc).diagnostics).toEqual([])
+  it('mọi bài trong danh sách đều nạp được source thật', () => {
+    for (const l of LESSON_LIST) {
+      expect(lessonSource(l.id), `${l.id} không có source`).not.toBeNull()
+    }
   })
 })

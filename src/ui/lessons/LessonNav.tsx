@@ -9,51 +9,40 @@ import './lesson-nav.css'
  */
 const BLANK_SOURCE = 'import kotlinx.coroutines.*\n\nfun main() = runBlocking {\n}\n'
 
-/** Phần trước dấu gạch ngang của title — nhãn ngắn để xếp vừa một dải ngang. */
-function shortLabel(title: string): string {
-  const i = title.indexOf(' — ')
-  return i === -1 ? title : title.slice(0, i)
-}
-
 /**
- * Lộ trình 9 bài, xếp theo `order`, đánh số rõ vì đây là thứ tự DẠY chứ không
- * phải một danh sách để chọn bừa.
+ * Ba nút trong header. Danh sách bài KHÔNG còn nằm ở đây.
  *
- * Bản đầu hiện cả title lẫn summary trên mỗi thẻ rộng 200px. Với ba bài thì
- * vừa; với chín bài thì thành 1800px cuộn ngang trong thanh header — không ai
- * nhìn ra được lộ trình nữa. Giờ mỗi bài là một chip số + nhãn ngắn, còn
- * title/summary đầy đủ nằm ở tooltip (`title`), vẫn đọc được bằng chuột và
- * bằng trình đọc màn hình.
+ * Bản trước là một dải 13 chip với `max-width: 60vw` + `overflow-x: auto`:
+ * khoảng 8 chip lọt vào tầm nhìn, 5 chip còn lại nằm ngoài mép mà không dấu
+ * hiệu nào cho biết chúng tồn tại. Chip cũng chỉ chứa nổi số + nhãn cụt, nên
+ * tóm tắt và khái niệm của bài phải giấu vào tooltip. Và nó chẳng giống gì
+ * danh sách ví dụ trong hộp "Chạy được gì?", dù hai thứ trả lời hai nửa của
+ * cùng một câu hỏi.
  *
- * Component không tự giữ state nào: `currentLessonId` và hai hàm gọi ngược đều
- * là props từ App.
+ * Nay cả hai danh sách nằm trong CÙNG một hộp, hai tab. Header chỉ giữ lối
+ * vào, và nói rõ đang ở bài nào — thông tin mà dải chip cũ phải dùng màu nền
+ * của một chip nhỏ để nói.
  */
-export function LessonNav({ currentLessonId, loadLesson, setSource }: {
+export function LessonNav({ currentLessonId, onMoLoTrinh, onMoGioiThieu, setSource }: {
   currentLessonId: string | null
-  loadLesson: (id: string) => void
+  onMoLoTrinh: () => void
+  onMoGioiThieu: () => void
   setSource: (src: string) => void
 }) {
+  const bai = LESSON_LIST.find(l => l.id === currentLessonId)
+
   return (
     <nav className="lesson-nav" aria-label="Lộ trình bài học">
-      <ol className="lesson-nav__list">
-        {LESSON_LIST.map(l => {
-          const active = l.id === currentLessonId
-          return (
-            <li key={l.id}>
-              <button
-                type="button"
-                className={active ? 'lesson-nav__item lesson-nav__item--active' : 'lesson-nav__item'}
-                aria-current={active ? 'true' : undefined}
-                title={`${l.title}\n${l.summary}`}
-                onClick={() => loadLesson(l.id)}
-              >
-                <span className="lesson-nav__num">{l.order}</span>
-                <span className="lesson-nav__label">{shortLabel(l.title)}</span>
-              </button>
-            </li>
-          )
-        })}
-      </ol>
+      <button type="button" className="lesson-nav__open" onClick={onMoLoTrinh}>
+        <span className="lesson-nav__num">{bai ? bai.order : '—'}</span>
+        <span className="lesson-nav__label">
+          {bai ? bai.title : `Chọn bài — ${LESSON_LIST.length} bài`}
+        </span>
+        <span className="lesson-nav__of">{bai ? `/${LESSON_LIST.length}` : ''}</span>
+      </button>
+      <button type="button" className="lesson-nav__about" onClick={onMoGioiThieu}>
+        Chạy được gì?
+      </button>
       <button type="button" className="lesson-nav__blank" onClick={() => setSource(BLANK_SOURCE)}>
         Bắt đầu từ trang trắng
       </button>

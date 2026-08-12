@@ -24,6 +24,16 @@ export interface JobView {
    */
   lastPrint: string | null
   printCount: number
+  /**
+   * Exception đã LÀM JOB NÀY HỎNG, kèm message.
+   *
+   * `cause` chỉ mang KIỂU (`"RuntimeException"`) vì nó đọc từ `JOB_STATE.cause`,
+   * và nó có mặt trên cả những job bị huỷ lây — chúng không có message nào của
+   * riêng mình. Message thật chỉ nằm trong `EXCEPTION_THROWN`, và trước đây nó
+   * chết ở đó: đồ thị hiện đúng chữ "RuntimeException" và người học phải tua
+   * trúng một event duy nhất mới đọc được "Child 1 failed".
+   */
+  loi: { exType: string; message: string } | null
 }
 
 export interface ThreadView { id: ThreadId; state: 'RUNNING' | 'FREE' }
@@ -86,7 +96,7 @@ export function applyEvent(w: WorldState, e: Event): void {
         dispatcher: e.ctx.dispatcher, name: e.ctx.name, varName: e.varName ?? null,
         isSupervisor: e.ctx.isSupervisor,
         suspendReason: null, threadId: null, cause: null,
-        lastPrint: null, printCount: 0,
+        lastPrint: null, printCount: 0, loi: null,
       })
       break
     case 'JOB_STATE': {
@@ -113,6 +123,11 @@ export function applyEvent(w: WorldState, e: Event): void {
     case 'THREAD_STATE':
       w.threads.set(e.threadId, { id: e.threadId, state: e.state })
       break
+    case 'EXCEPTION_THROWN': {
+      const j = w.jobs.get(e.id)
+      if (j) j.loi = { exType: e.exType, message: e.message }
+      break
+    }
     case 'PRINTLN': {
       w.output.push(e.text)
       const j = w.jobs.get(e.id)

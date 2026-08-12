@@ -97,6 +97,14 @@
   text-overflow: ellipsis;
 }
 
+/* Message nhạt hơn kiểu exception: kiểu là thứ phân loại, message là thứ đọc
+   khi đã biết node nào hỏng. Node hẹp thì message bị cắt trước — `title` trên
+   thẻ cha vẫn giữ đủ cả hai. */
+.k-job-node__msg {
+  color: var(--fg-dim);
+  font-style: italic;
+}
+
 .k-scope-node {
   background: transparent;
   border: 1px solid var(--fg-dim);

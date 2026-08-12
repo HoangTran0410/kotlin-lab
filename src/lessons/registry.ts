@@ -1,4 +1,8 @@
-export interface LessonMeta { id: string; order: number; title: string; summary: string }
+export interface LessonMeta {
+  id: string; order: number; title: string; summary: string
+  /** Khái niệm bài này dạy — hiện thành chip trên thẻ bài. */
+  concepts: string[]
+}
 
 /**
  * Bản song song của `lessons/index.ts` dành cho browser.

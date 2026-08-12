@@ -1,10 +1,8 @@
-import { useEffect, useRef } from 'react'
 import { CHAY_DUOC } from './capabilities'
 import { UNSUPPORTED } from '../../engine/validator/diagnostics'
 import { KOTLIN_VERSION } from '../../engine/kotlinVersion'
 import { DISPATCHER_POOL_SIZE } from '../../engine/runtime/dispatcher'
 import { LESSON_IDS_DOI_CHIEU_JVM, LESSON_LIST } from '../../lessons/registry'
-import './about.css'
 
 /**
  * "Công cụ này chạy được gì" — câu hỏi đầu tiên của mọi người mở app lần đầu,
@@ -18,47 +16,16 @@ import './about.css'
  *     Hai danh sách không thể lệch nhau vì chúng là MỘT.
  *   - pool thread: từ DISPATCHER_POOL_SIZE của engine.
  */
-export function AboutPanel({ onClose, onMoViDu }: {
-  onClose: () => void
-  onMoViDu: (src: string) => void
-}) {
-  const hop = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    // Esc đóng: hộp phủ kín màn hình, không có phím thoát thì người dùng phải
-    // đi tìm nút X bằng mắt.
-    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    hop.current?.focus()
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
+export function AboutContent({ onMoViDu }: { onMoViDu: (src: string) => void }) {
   const soBaiJvm = LESSON_LIST.filter(l => LESSON_IDS_DOI_CHIEU_JVM.has(l.id)).length
 
   return (
-    <div className="about" role="presentation" onClick={onClose}>
-      <div
-        className="about__box"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Công cụ này chạy được gì"
-        tabIndex={-1}
-        ref={hop}
-        onClick={e => e.stopPropagation()}
-      >
-        <header className="about__head">
-          <div>
-            <h2>Công cụ này chạy được gì</h2>
-            <p className="about__sub">
-              Đây là một <strong>mô phỏng</strong>, không phải trình biên dịch Kotlin. Nó đọc một
-              tập con của Kotlin và diễn ra từng bước của coroutine để nhìn thấy được.
-            </p>
-          </div>
-          <button type="button" className="about__close" onClick={onClose} aria-label="Đóng">×</button>
-        </header>
-
-        <div className="about__body">
-          <section className="about__sec">
+    <>
+      <p className="about__sub">
+        Đây là một <strong>mô phỏng</strong>, không phải trình biên dịch Kotlin. Nó đọc một tập con
+        của Kotlin và diễn ra từng bước của coroutine để nhìn thấy được.
+      </p>
+      <section className="about__sec">
             <h3>Neo vào Kotlin nào</h3>
             <ul className="about__facts">
               <li>
@@ -84,15 +51,15 @@ export function AboutPanel({ onClose, onMoViDu }: {
             {CHAY_DUOC.map(nhom => (
               <div key={nhom.tieuDe} className="about__group">
                 <h4>{nhom.tieuDe}</h4>
-                <ul className="about__cards">
+                <ul className="mdl__cards">
                   {nhom.items.map(k => (
-                    <li key={k.ten} className="about__card">
-                      <div className="about__cardHead">
+                    <li key={k.ten} className="mdl__card">
+                      <div className="mdl__cardHead">
                         <code className="about__ten">{k.ten}</code>
                         <button
                           type="button"
                           className="about__try"
-                          onClick={() => { onMoViDu(k.kotlin); onClose() }}
+                          onClick={() => onMoViDu(k.kotlin)}
                         >
                           Mở ví dụ
                         </button>
@@ -145,9 +112,7 @@ export function AboutPanel({ onClose, onMoViDu }: {
                 nằm ngoài phạm vi công cụ này.
               </li>
             </ul>
-          </section>
-        </div>
-      </div>
-    </div>
+      </section>
+    </>
   )
 }

@@ -1,7 +1,7 @@
 /* Hộp phủ toàn màn hình: đây là thứ người ta đọc MỘT LẦN, đọc kỹ, rồi đóng —
    không phải một panel sống chung với đồ thị. Nhét nó vào cột bên sẽ vừa chật
    vừa cạnh tranh chú ý với thứ đang chạy. */
-.about {
+.mdl {
   position: fixed;
   inset: 0;
   z-index: 50;
@@ -13,7 +13,7 @@
   overflow-y: auto;
 }
 
-.about__box {
+.mdl__box {
   width: min(980px, 100%);
   background: var(--panel);
   border: 1px solid var(--border);
@@ -24,26 +24,45 @@
   max-height: 92vh;
 }
 
-.about__head {
+.mdl__head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 16px;
-  padding: 18px 20px 14px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border);
 }
 
-.about__head h2 {
-  margin: 0 0 6px;
-  font-size: 18px;
+/* Tab thay cho tiêu đề: hai danh sách là hai nửa của cùng một câu hỏi, nên
+   chuyển qua lại phải rẻ hơn là đóng hộp rồi mở hộp khác. */
+.mdl__tabs { display: flex; gap: 6px; }
+
+.mdl__tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 5px 14px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.mdl__tab:hover { color: var(--fg); }
+
+.mdl__tab--on {
+  border-color: var(--k-launch);
+  background: rgba(88, 166, 255, 0.14);
+  color: var(--fg);
+  font-weight: 600;
 }
 
 .about__sub {
-  margin: 0;
+  margin: 0 0 4px;
   color: var(--fg-dim);
-  max-width: 70ch;
+  max-width: 78ch;
 }
 
-.about__close {
+.mdl__close {
   margin-left: auto;
   background: transparent;
   border: 1px solid var(--border);
@@ -55,9 +74,9 @@
   cursor: pointer;
 }
 
-.about__close:hover { color: var(--fg); border-color: var(--fg-dim); }
+.mdl__close:hover { color: var(--fg); border-color: var(--fg-dim); }
 
-.about__body {
+.mdl__body {
   padding: 4px 20px 20px;
   overflow-y: auto;
 }
@@ -87,7 +106,7 @@
   max-width: 88ch;
 }
 
-.about__cards {
+.mdl__cards {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -98,14 +117,14 @@
   gap: 10px;
 }
 
-.about__card {
+.mdl__card {
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px 12px 12px;
 }
 
-.about__cardHead {
+.mdl__cardHead {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -185,4 +204,81 @@
 
 .about__facts code, .about__unsup code, .about__ten {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ---- Thẻ bài học (tab Lộ trình) ---- */
+
+/* Dùng lại .mdl__cards/.mdl__card của tab kia — đó là cả điểm của việc gộp
+   hai danh sách vào một hộp: cùng lưới, cùng nền, cùng bo góc. */
+.les__card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.les__card--on {
+  border-color: var(--k-launch);
+  background: rgba(88, 166, 255, 0.1);
+}
+
+.les__top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.les__num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--border);
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.les__card--on .les__num { background: var(--k-launch); color: var(--bg); }
+
+.les__title { font-weight: 600; font-size: 13px; }
+
+/* Bài đã so từng dòng với JVM thật — thông tin về ĐỘ TIN CẬY của bài đó, nên
+   nó thuộc về thẻ chứ không phải một dòng thống kê ở đâu khác. */
+.les__jvm {
+  margin-left: auto;
+  flex: none;
+  border: 1px solid var(--state-completed);
+  border-radius: 999px;
+  padding: 1px 7px;
+  color: var(--state-completed);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.les__sum { margin: 0; color: var(--fg-dim); font-size: 12.5px; }
+
+.les__concepts {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 2px 0 0;
+  padding: 0;
+}
+
+.les__concepts li {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 6px;
+  color: var(--fg-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
 }

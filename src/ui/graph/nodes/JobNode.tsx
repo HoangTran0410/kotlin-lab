@@ -62,7 +62,19 @@ export function JobNode({ id, data }: NodeProps<FlowNode>) {
             <span className="k-job-node__id">{id}</span>
           </span>
           {data.suspendReason !== null && <span className="k-job-node__badge">{data.suspendReason}</span>}
-          {showCause && <span className="k-job-node__cause">{data.cause}</span>}
+          {/* Message của exception, không chỉ kiểu của nó. `RuntimeException`
+              trần không debug được gì — hai chỗ ném khác nhau trông y hệt nhau.
+              Message chỉ có trong EXCEPTION_THROWN, nên trước đây muốn đọc nó
+              phải tua trúng đúng MỘT event. Job bị huỷ LÂY không có `loi` của
+              riêng nó nên vẫn chỉ hiện kiểu — đúng, nó không ném gì cả. */}
+          {showCause && (
+            <span className="k-job-node__cause" title={data.loi ? `${data.loi.exType}: ${data.loi.message}` : data.cause ?? ''}>
+              {data.cause}
+              {data.loi && data.loi.message !== '' && (
+                <span className="k-job-node__msg">: {data.loi.message}</span>
+              )}
+            </span>
+          )}
           {/* println hiện NGAY TRÊN node đã in nó. Trước đây chữ chỉ chạy ra
               panel console bên cạnh, nên nhìn đồ thị không biết node nào in —
               phải liếc sang chỗ khác rồi tự ghép lại. */}
