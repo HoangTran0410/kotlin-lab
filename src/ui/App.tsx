@@ -10,6 +10,7 @@ import { GraphCanvas } from './graph/GraphCanvas'
 import { toReactFlow } from './graph/toReactFlow'
 import { useLayout } from './graph/useLayout'
 import { Timeline } from './timeline/Timeline'
+import { PlaybackControls } from './timeline/PlaybackControls'
 import { useLabStore } from '../state/store'
 import { selectCurrentLine, selectWorld } from '../state/selectors'
 
@@ -114,6 +115,7 @@ export function App() {
       timeline={
         <Panel title="Dòng thời gian">
           <Timeline events={compiled.events} stepIndex={stepIndex} setStep={setStep} />
+          <PlaybackControls stepIndex={stepIndex} setStep={setStep} max={compiled.events.length} />
         </Panel>
       }
       side={

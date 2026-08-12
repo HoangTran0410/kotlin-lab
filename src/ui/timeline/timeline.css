@@ -48,3 +48,38 @@
   color: var(--fg-dim);
   font-family: ui-monospace, monospace;
 }
+
+/* Task 17. */
+.playback {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px 8px;
+}
+
+.playback button {
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.playback button:disabled {
+  color: var(--fg-dim);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.playback__speed {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.playback__speed-btn[aria-pressed="true"] {
+  border-color: var(--k-launch);
+  color: var(--k-launch);
+}
