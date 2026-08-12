@@ -6,6 +6,7 @@ import { CodeEditor } from './editor/CodeEditor'
 import { diagnosticMarks, setDiagnosticLines } from './editor/diagnosticMarks'
 import { DiagnosticsPanel } from './diagnostics/DiagnosticsPanel'
 import { clampDiagnosticLine } from './diagnostics/clampLine'
+import { ConsolePanel } from './console/ConsolePanel'
 import { GraphCanvas } from './graph/GraphCanvas'
 import { toReactFlow } from './graph/toReactFlow'
 import { useLayout } from './graph/useLayout'
@@ -125,7 +126,7 @@ export function App() {
             docLines={source.split('\n').length}
             onJumpToLine={handleJumpToLine}
           />
-          <p>Console sẽ vào đây ở task sau.</p>
+          <ConsolePanel events={compiled.events} stepIndex={stepIndex} />
         </Panel>
       }
     />

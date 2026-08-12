@@ -1,0 +1,30 @@
+.console-empty {
+  color: var(--fg-dim);
+}
+
+.console-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+}
+
+.console-line {
+  display: flex;
+  gap: 8px;
+}
+
+.console-line__t {
+  color: var(--fg-dim);
+  flex-shrink: 0;
+}
+
+.console-line__text {
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
