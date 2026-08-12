@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Scheduler } from '../../src/engine/runtime/scheduler'
-import type { CoroutineBody } from '../../src/engine/runtime/suspension'
+import type { VoidCoroutineBody } from '../../src/engine/runtime/suspension'
 
 const collectPrints = (s: Scheduler) =>
   s.emitter.events.filter(e => e.k === 'PRINTLN').map(e => (e as { text: string }).text)
@@ -8,7 +8,7 @@ const collectPrints = (s: Scheduler) =>
 describe('Scheduler', () => {
   it('chạy một coroutine không suspend', () => {
     const s = new Scheduler()
-    const root = s.spawnRoot(function* (): CoroutineBody { s.println('hi') })
+    const root = s.spawnRoot(function* (): VoidCoroutineBody { s.println('hi') })
     s.runToCompletion()
     expect(collectPrints(s)).toEqual(['hi'])
     expect(root.state).toBe('Completed')
@@ -16,7 +16,7 @@ describe('Scheduler', () => {
 
   it('delay đẩy thời gian ảo, không ngủ thật', () => {
     const s = new Scheduler()
-    s.spawnRoot(function* (): CoroutineBody {
+    s.spawnRoot(function* (): VoidCoroutineBody {
       yield { s: 'delay', ms: 1000 }
       s.println('sau delay')
     })
@@ -29,11 +29,11 @@ describe('Scheduler', () => {
 
   it('hai coroutine xen kẽ theo thời gian delay', () => {
     const s = new Scheduler()
-    s.spawnRoot(function* (): CoroutineBody {
-      s.spawnChild(function* (): CoroutineBody {
+    s.spawnRoot(function* (): VoidCoroutineBody {
+      s.spawnChild(function* (): VoidCoroutineBody {
         yield { s: 'delay', ms: 200 }; s.println('B')
       })
-      s.spawnChild(function* (): CoroutineBody {
+      s.spawnChild(function* (): VoidCoroutineBody {
         yield { s: 'delay', ms: 100 }; s.println('A')
       })
       yield { s: 'delay', ms: 300 }
@@ -44,7 +44,7 @@ describe('Scheduler', () => {
 
   it('phát COROUTINE_SUSPENDED rồi COROUTINE_RESUMED', () => {
     const s = new Scheduler()
-    s.spawnRoot(function* (): CoroutineBody { yield { s: 'delay', ms: 10 } })
+    s.spawnRoot(function* (): VoidCoroutineBody { yield { s: 'delay', ms: 10 } })
     s.runToCompletion()
     const kinds = s.emitter.events.map(e => e.k)
     expect(kinds).toContain('COROUTINE_SUSPENDED')
@@ -53,7 +53,7 @@ describe('Scheduler', () => {
 
   it('exception trong thân coroutine thành failure của Job', () => {
     const s = new Scheduler()
-    const root = s.spawnRoot(function* (): CoroutineBody {
+    const root = s.spawnRoot(function* (): VoidCoroutineBody {
       throw Object.assign(new Error('boom'), { kotlinType: 'RuntimeException' })
     })
     s.runToCompletion()
@@ -64,9 +64,9 @@ describe('Scheduler', () => {
   it('chạy lại cùng chương trình cho trace y hệt — deterministic', () => {
     const build = () => {
       const s = new Scheduler()
-      s.spawnRoot(function* (): CoroutineBody {
-        s.spawnChild(function* (): CoroutineBody { yield { s: 'delay', ms: 50 }; s.println('x') })
-        s.spawnChild(function* (): CoroutineBody { yield { s: 'delay', ms: 50 }; s.println('y') })
+      s.spawnRoot(function* (): VoidCoroutineBody {
+        s.spawnChild(function* (): VoidCoroutineBody { yield { s: 'delay', ms: 50 }; s.println('x') })
+        s.spawnChild(function* (): VoidCoroutineBody { yield { s: 'delay', ms: 50 }; s.println('y') })
         yield { s: 'delay', ms: 100 }
       })
       s.runToCompletion()
@@ -77,15 +77,15 @@ describe('Scheduler', () => {
 
   it('runToCompletion dừng, không lặp vô hạn khi hết việc', () => {
     const s = new Scheduler()
-    s.spawnRoot(function* (): CoroutineBody { yield { s: 'yield' } })
+    s.spawnRoot(function* (): VoidCoroutineBody { yield { s: 'yield' } })
     s.runToCompletion()
     expect(s.emitter.events.length).toBeGreaterThan(0)
   })
 
   it('join thật sự chờ job kia xong rồi mới chạy tiếp', () => {
     const s = new Scheduler()
-    s.spawnRoot(function* (): CoroutineBody {
-      const child = s.spawnChild(function* (): CoroutineBody {
+    s.spawnRoot(function* (): VoidCoroutineBody {
+      const child = s.spawnChild(function* (): VoidCoroutineBody {
         yield { s: 'delay', ms: 100 }
         s.println('child xong')
       })
@@ -98,8 +98,8 @@ describe('Scheduler', () => {
 
   it('join KHÔNG chặn đồng hồ ảo tiến lên — chống hồi quy deadlock', () => {
     const s = new Scheduler()
-    s.spawnRoot(function* (): CoroutineBody {
-      const child = s.spawnChild(function* (): CoroutineBody { yield { s: 'delay', ms: 500 } })
+    s.spawnRoot(function* (): VoidCoroutineBody {
+      const child = s.spawnChild(function* (): VoidCoroutineBody { yield { s: 'delay', ms: 500 } })
       yield { s: 'join', jobId: child.id }
     })
     s.runToCompletion()
@@ -111,7 +111,7 @@ describe('Scheduler', () => {
     // bao giờ in và job kẹt ở Active mãi. Không test nào khác bắt được điều
     // đó, vì chúng chỉ khẳng định các tác dụng phụ xảy ra TRƯỚC điểm yield.
     const s = new Scheduler()
-    const root = s.spawnRoot(function* (): CoroutineBody {
+    const root = s.spawnRoot(function* (): VoidCoroutineBody {
       s.println('trước')
       yield { s: 'yield' }
       s.println('sau')
@@ -127,10 +127,10 @@ describe('Scheduler', () => {
     // nên thứ tự in ra lộ thẳng thứ tự lấy khỏi hàng đợi: shift -> A,B,C;
     // pop -> C,B,A.
     const s = new Scheduler()
-    s.spawnRoot(function* (): CoroutineBody {
-      s.spawnChild(function* (): CoroutineBody { s.println('A') })
-      s.spawnChild(function* (): CoroutineBody { s.println('B') })
-      s.spawnChild(function* (): CoroutineBody { s.println('C') })
+    s.spawnRoot(function* (): VoidCoroutineBody {
+      s.spawnChild(function* (): VoidCoroutineBody { s.println('A') })
+      s.spawnChild(function* (): VoidCoroutineBody { s.println('B') })
+      s.spawnChild(function* (): VoidCoroutineBody { s.println('C') })
       yield { s: 'yield' }
     })
     s.runToCompletion()
@@ -144,10 +144,10 @@ describe('Scheduler', () => {
   // Test không-delay ở trên mới là cái canh FIFO.
   it('cùng mốc delay thì vẫn resume theo thứ tự tạo', () => {
     const s = new Scheduler()
-    s.spawnRoot(function* (): CoroutineBody {
-      s.spawnChild(function* (): CoroutineBody { yield { s: 'delay', ms: 100 }; s.println('A') })
-      s.spawnChild(function* (): CoroutineBody { yield { s: 'delay', ms: 100 }; s.println('B') })
-      s.spawnChild(function* (): CoroutineBody { yield { s: 'delay', ms: 100 }; s.println('C') })
+    s.spawnRoot(function* (): VoidCoroutineBody {
+      s.spawnChild(function* (): VoidCoroutineBody { yield { s: 'delay', ms: 100 }; s.println('A') })
+      s.spawnChild(function* (): VoidCoroutineBody { yield { s: 'delay', ms: 100 }; s.println('B') })
+      s.spawnChild(function* (): VoidCoroutineBody { yield { s: 'delay', ms: 100 }; s.println('C') })
       yield { s: 'delay', ms: 200 }
     })
     s.runToCompletion()
@@ -156,9 +156,9 @@ describe('Scheduler', () => {
 
   it('joinChildren chờ mọi child, kể cả child chậm nhất', () => {
     const s = new Scheduler()
-    s.spawnRoot(rootJob => (function* (): CoroutineBody {
-      s.spawnChild(function* (): CoroutineBody { yield { s: 'delay', ms: 100 }; s.println('A') })
-      s.spawnChild(function* (): CoroutineBody { yield { s: 'delay', ms: 300 }; s.println('B') })
+    s.spawnRoot(rootJob => (function* (): VoidCoroutineBody {
+      s.spawnChild(function* (): VoidCoroutineBody { yield { s: 'delay', ms: 100 }; s.println('A') })
+      s.spawnChild(function* (): VoidCoroutineBody { yield { s: 'delay', ms: 300 }; s.println('B') })
       yield { s: 'joinChildren', jobId: rootJob.id }
       s.println('scope xong')
     })())

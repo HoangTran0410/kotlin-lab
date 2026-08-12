@@ -5,7 +5,7 @@ import { CoroutineContext } from './context'
 import { DispatcherPool } from './dispatcher'
 import { Job, type FailureCause } from './job'
 import { cancelJob, reportFailure } from './propagation'
-import type { CoroutineBody, Suspension } from './suspension'
+import type { CoroutineBody, Suspension, VoidCoroutineBody } from './suspension'
 import { KotlinThrow } from '../interpreter/values'
 
 interface Task {
@@ -14,6 +14,13 @@ interface Task {
   body: CoroutineBody
   /** Giá trị trả vào .next() ở lần resume tới. */
   resumeValue: unknown
+  /**
+   * Khi khác undefined: lần resume tới phải NÉM vào generator thay vì next().
+   * Đường thứ hai này tồn tại cho `await` trên một Deferred đã fail — exception
+   * phải xuất hiện tại chính điểm await, kể cả khi supervisor đã chặn không cho
+   * failure ấy ảnh hưởng tới scope.
+   */
+  resumeThrow: unknown
   started: boolean
   /** Đã chạy xong hoặc đã unwind — không được đụng tới generator nữa. */
   finished: boolean
@@ -64,7 +71,7 @@ export class Scheduler {
    * thì `ready` không bao giờ rỗng, đồng hồ ảo không bao giờ nhảy, và mọi thứ
    * đứng hình. Waiter phải nằm NGOÀI `ready` cho tới khi điều kiện thoả.
    */
-  private waiters: { task: Task; kind: 'job' | 'children'; targetId: JobId }[] = []
+  private waiters: { task: Task; kind: 'join' | 'await' | 'children'; targetId: JobId }[] = []
 
   private newJobId(): JobId { return `j${this.nextJobId++}` }
 
@@ -108,7 +115,8 @@ export class Scheduler {
     }, srcLine)
 
     const task: Task = {
-      job, ctx: jobCtx, body: makeBody(job), resumeValue: undefined, started: false, finished: false,
+      job, ctx: jobCtx, body: makeBody(job), resumeValue: undefined, resumeThrow: undefined,
+      started: false, finished: false,
     }
     this.tasks.set(id, task)
     this.taskOrder.push(task)
@@ -150,13 +158,54 @@ export class Scheduler {
     const still: typeof this.waiters = []
     let woke = false
     for (const w of this.waiters) {
-      const done = w.kind === 'job'
-        ? this.isJobSettled(w.targetId)
-        : (this.tasks.get(w.targetId)?.job.children.every(c => this.isJobSettled(c.id)) ?? true)
-      if (done) { this.ready.push(w.task); woke = true } else { still.push(w) }
+      const done = w.kind === 'children'
+        ? (this.tasks.get(w.targetId)?.job.children.every(c => this.isJobSettled(c.id)) ?? true)
+        : this.isJobSettled(w.targetId)
+      if (!done) { still.push(w); continue }
+      // Dùng CHUNG wakeAwaiter với nhánh isJobSettled trong suspend(). Nếu hai
+      // chỗ lệch nhau thì "await có ném không" sẽ phụ thuộc vào việc Deferred
+      // settled trước hay sau lúc gọi await — sai theo kiểu ngẫu nhiên.
+      if (w.kind === 'await') this.wakeAwaiter(w.task, w.targetId)
+      else this.ready.push(w.task)
+      woke = true
     }
     this.waiters = still
     return woke
+  }
+
+  /**
+   * Đánh thức một task đang chờ `await` trên `targetId`.
+   *
+   * `join` và `await` khác nhau đúng ở đây: join chỉ chờ, await ĐỌC kết quả —
+   * nên await phải ném lại failure của Deferred tại chính điểm await, kể cả khi
+   * supervisor đã chặn failure đó không cho ảnh hưởng tới scope. Đó là lý do
+   * `join()` trên một Deferred đã fail im lặng chạy tiếp, còn `await()` thì ném.
+   *
+   * Hai đường ném, đúng như kotlinx:
+   *   - Deferred FAIL  -> ném lại ĐÚNG exception gốc (`failure`).
+   *   - Deferred bị CANCEL từ ngoài -> `failure` là null nhưng await vẫn phải
+   *     ném CancellationException. Đã đối chiếu Kotlin thật: `d.cancel()` rồi
+   *     `d.await()` in "DeferredCoroutine was cancelled", KHÔNG trả Unit. Thiếu
+   *     nhánh này thì `println(d.await())` trên Deferred đã huỷ in "kotlin.Unit"
+   *     và chương trình chạy tiếp — sai âm thầm, đúng loại lỗi task này sửa.
+   * Chỉ khi Deferred kết thúc BÌNH THƯỜNG mới trả giá trị.
+   */
+  private wakeAwaiter(task: Task, targetId: JobId): void {
+    const target = this.tasks.get(targetId)?.job ?? null
+    // `cause` chỉ được đọc khi job đã bị huỷ: job chạy xong bình thường không
+    // có cause, còn job bị kéo theo vì anh em fail thì cause là exception của
+    // kẻ khác — nhưng nó ĐÃ bị cancel, nên vẫn phải ném, không trả giá trị.
+    const thrown = target?.failure ?? (target?.isCancelled ? target.cause : null)
+    if (thrown) {
+      task.resumeThrow = new KotlinThrow(thrown.exType, thrown.message)
+    } else if (target?.isCancelled) {
+      // Bị huỷ nhưng không ai ghi cause (huỷ trước khi kịp chạy chẳng hạn).
+      // Cùng exception tổng hợp mà unwindCancelled dùng, để hai đường thống nhất.
+      task.resumeThrow = new KotlinThrow('CancellationException', 'Job was cancelled')
+    } else {
+      task.resumeValue = target?.result
+    }
+    this.ready.push(task)
   }
 
   /** Chạy cho tới khi không còn task ready, không còn waiter thoả, không còn timer. */
@@ -277,7 +326,15 @@ export class Scheduler {
 
     let result: IteratorResult<Suspension, unknown>
     try {
-      result = task.body.next(task.resumeValue)
+      // Hai đường resume. Đường `throw` là của `await` trên Deferred đã fail:
+      // exception phải nảy ra TỪ TRONG generator, tại đúng dòng gọi await, để
+      // try/catch của code Kotlin quanh chỗ đó bắt được. Dọn cả hai trường
+      // TRƯỚC khi gọi, kẻo một lần resume sau lại dùng lại giá trị cũ.
+      const thrown = task.resumeThrow
+      const resumed = task.resumeValue
+      task.resumeThrow = undefined
+      task.resumeValue = undefined
+      result = thrown !== undefined ? task.body.throw(thrown) : task.body.next(resumed)
     } catch (err) {
       task.finished = true
       this.pool.release(threadId)
@@ -305,6 +362,9 @@ export class Scheduler {
 
     if (result.done) {
       task.finished = true
+      // Lưu TRƯỚC khi chuyển trạng thái: người chờ được đánh thức theo trạng
+      // thái, nên nếu ghi sau thì await có thể đọc phải result còn rỗng.
+      job.result = result.value
       if (!job.isCompleted) {
         job.transitionTo('Completing')
         this.emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Active', to: 'Completing' })
@@ -329,12 +389,20 @@ export class Scheduler {
       case 'yield':
         this.ready.push(task)
         break
-      case 'join':
-      case 'await': {
+      case 'join': {
         // Cùng điều kiện với sweepWaiters — nếu hai chỗ lệch nhau thì join()
         // trả về ngay hay phải chờ sẽ phụ thuộc vào thời điểm ngẫu nhiên.
         if (this.isJobSettled(s.jobId)) { this.ready.push(task); break }
-        this.waiters.push({ task, kind: 'job', targetId: s.jobId })
+        this.waiters.push({ task, kind: 'join', targetId: s.jobId })
+        break
+      }
+      case 'await': {
+        // KHÁC 'join' đúng một chỗ: await đọc kết quả, nên đi qua wakeAwaiter.
+        // Deferred đã settled từ trước cũng phải đi đường đó — nếu ở đây dùng
+        // ready.push như join thì `await` trên Deferred fail sớm sẽ im lặng
+        // trả Unit, còn cùng đoạn code với Deferred fail muộn lại ném.
+        if (this.isJobSettled(s.jobId)) { this.wakeAwaiter(task, s.jobId); break }
+        this.waiters.push({ task, kind: 'await', targetId: s.jobId })
         break
       }
       case 'joinChildren': {
@@ -393,8 +461,8 @@ export class Scheduler {
     job.transitionTo('Active')
     this.emitter.emit({ k: 'JOB_STATE', id, from: 'New', to: 'Active' })
     const task: Task = {
-      job, ctx: jobCtx, body: (function* (): CoroutineBody { })(), resumeValue: undefined, started: true,
-      finished: false,
+      job, ctx: jobCtx, body: (function* (): VoidCoroutineBody { })(), resumeValue: undefined,
+      resumeThrow: undefined, started: true, finished: false,
     }
     this.tasks.set(id, task)
     this.taskOrder.push(task)

@@ -45,6 +45,13 @@ export class Job {
    */
   failure: FailureCause | null = null
 
+  /**
+   * Giá trị thân coroutine trả về. Chỉ có nghĩa với async/Deferred: `await()`
+   * đọc trường này. Với launch/scope thì nó vẫn được ghi nhưng không ai đọc —
+   * `join()` chỉ chờ, không lấy kết quả.
+   */
+  result: unknown = undefined
+
   /** Mảng, không phải Set — thứ tự phải ổn định để trace deterministic. */
   private readonly _children: Job[] = []
 

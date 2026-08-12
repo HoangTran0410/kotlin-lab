@@ -58,14 +58,16 @@ export function runSource(src: string): RunResult {
       // Root job đã mang builder 'runBlocking' (xem Scheduler.spawnRoot) — nó
       // CHÍNH LÀ coroutine này, nên chạy thẳng thân lambda, không gọi callFun/
       // evalCall để tránh spawnInline tạo thêm job con trùng vai trò.
-      yield* interp.evalBlock(lambda.body, rootEnv)
+      const value = yield* interp.evalBlock(lambda.body, rootEnv)
       // Giống nhánh runBlocking trong evalCall: chỉ coi là xong khi mọi child
       // đã xong — nếu bỏ bước này, root có thể Completed trước launch bên
       // trong nó, sai trace dù output có thể vẫn đúng.
       yield { s: 'joinChildren', jobId: rootJob.id }
-    } else {
-      yield* interp.callFun(main, [], rootEnv)
+      // Giá trị của `runBlocking { }` gốc. Chưa ai đọc (không await được root),
+      // nhưng trả đúng thứ thân nó cho ra thì rẻ hơn là bịa ra undefined.
+      return value
     }
+    return yield* interp.callFun(main, [], rootEnv)
   })())
   scheduler.runToCompletion()
 

@@ -4,7 +4,7 @@ import type { JobId } from '../trace/events'
 import { toCause, type Scheduler } from '../runtime/scheduler'
 import type { CoroutineBody, Suspension } from '../runtime/suspension'
 import { Env } from './env'
-import { KotlinThrow, UNIT, display, truthy, type KValue } from './values'
+import { KotlinThrow, UNIT, display, isKValue, truthy, type KValue } from './values'
 
 export type Eval<T> = Generator<Suspension, T, unknown>
 
@@ -316,7 +316,11 @@ export class Interpreter {
       const target = e.callee.k === 'Member' ? yield* this.evalExpr(e.callee.target, env) : UNIT
       const jobId = target.t === 'obj' ? target.fields.get('__jobId') : undefined
       if (jobId && jobId.t === 'str') {
-        yield { s: calleeName === 'join' ? 'join' : 'await', jobId: jobId.v, line: e.pos.line }
+        const resumed = yield { s: calleeName === 'join' ? 'join' : 'await', jobId: jobId.v, line: e.pos.line }
+        // Chỉ await mới ĐỌC kết quả — đó là toàn bộ khác biệt giữa hai lời gọi,
+        // và là nội dung bài học launchasync. Scheduler ném thẳng vào generator
+        // này nếu Deferred đã fail, nên tới được dòng dưới nghĩa là nó thành công.
+        if (calleeName === 'await') return isKValue(resumed) ? resumed : UNIT
       }
       return UNIT
     }
@@ -421,13 +425,17 @@ export class Interpreter {
       // Factory nhận Job vừa tạo, nên Env con mang đúng jobId của chính coroutine này.
       const job = this.scheduler.spawnChildOf(parentJobId, ctx, calleeName, created =>
         (function* (): CoroutineBody {
-          yield* evalBlock(body, env.child(created.id))
+          const v = yield* evalBlock(body, env.child(created.id))
           // Job của launch/async KHÔNG được Completed ngay khi thân nó chạy xong —
           // structured concurrency đòi mọi child (vd. launch lồng bên trong launch)
           // cũng phải xong trước. Thiếu bước này, Job cha coi như Completed trong
           // khi cháu vẫn Active, nên parent.cancel() gọi sau đó thấy job.isCompleted
           // và no-op — cancel không bao giờ lan tới cháu (lesson jobtree).
           yield { s: 'joinChildren', jobId: created.id }
+          // Trả về SAU joinChildren: giá trị đã có từ trước, nhưng Deferred chỉ
+          // được coi là xong khi mọi con của nó cũng xong (structured concurrency).
+          // Với launch thì không ai đọc — join() chỉ chờ.
+          return v
         })(), e.pos.line)
       return {
         t: 'obj', className: calleeName === 'launch' ? 'Job' : 'Deferred',

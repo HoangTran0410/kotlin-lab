@@ -25,6 +25,15 @@ export class KotlinThrow extends Error {
   }
 }
 
+/**
+ * Giá trị scheduler trả vào generator lúc resume có kiểu `unknown` — nó không
+ * biết gì về KValue. Chỗ duy nhất cần thu hẹp lại là `await`, nơi kết quả của
+ * Deferred quay về interpreter.
+ */
+export function isKValue(v: unknown): v is KValue {
+  return typeof v === 'object' && v !== null && 't' in v
+}
+
 export function truthy(v: KValue): boolean {
   return v.t === 'bool' ? v.v : v.t !== 'null' && v.t !== 'unit'
 }

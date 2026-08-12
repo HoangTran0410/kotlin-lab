@@ -14,5 +14,23 @@ export type Suspension =
   | { s: 'joinChildren'; jobId: JobId; line?: number }
   | { s: 'yield'; line?: number }
 
-/** Thân coroutine: generator yield ra điểm suspend, nhận lại giá trị resume. */
-export type CoroutineBody = Generator<Suspension, void, unknown>
+/**
+ * Thân coroutine: generator yield ra điểm suspend, nhận lại giá trị resume.
+ *
+ * Giá trị TRẢ VỀ là `unknown`, không phải `void`: thân của `async` phải mang
+ * được kết quả ra ngoài để `Deferred.await()` đọc. Với `void` thì scheduler
+ * không có gì để lưu, và await chỉ còn cách trả Unit — đúng cái sai âm thầm
+ * mà Task 3 sửa.
+ */
+export type CoroutineBody = Generator<Suspension, unknown, unknown>
+
+/**
+ * Thân coroutine KHÔNG mang giá trị ra ngoài — mọi builder trừ `async`, và các
+ * thân dựng tay trong test.
+ *
+ * Tồn tại chỉ vì TypeScript bắt hàm khai báo kiểu trả về `unknown` phải có
+ * `return` tường minh; viết `return undefined` ở cuối vài chục generator vốn
+ * không trả gì là nhiễu chứ không phải thông tin. Về mặt gán thì nó vẫn là một
+ * `CoroutineBody` hợp lệ, nên scheduler không cần biết tới nó.
+ */
+export type VoidCoroutineBody = Generator<Suspension, void, unknown>
