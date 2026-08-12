@@ -58,8 +58,17 @@ describe('parser — câu lệnh', () => {
   })
 
   it('when có else', () => {
+    // Task 5 (task-1): else giờ là một WhenBranch với cond: null trong
+    // branches, không còn field elseBlock riêng trên WhenExpr.
     expect(first('when { a -> { f() } else -> { g() } }')).toMatchObject({
-      k: 'ExprStmt', expr: { k: 'WhenExpr', branches: [{}], elseBlock: {} },
+      k: 'ExprStmt',
+      expr: {
+        k: 'WhenExpr',
+        branches: [
+          { cond: { k: 'Ident', name: 'a' }, block: {} },
+          { cond: null, block: {} },
+        ],
+      },
     })
   })
 })

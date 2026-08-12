@@ -131,10 +131,23 @@ export class Interpreter {
         return e.elseBlock ? yield* this.evalBlock(e.elseBlock, env.child()) : UNIT
       }
       case 'WhenExpr': {
+        // Có subject: so BẰNG với giá trị từng nhánh, cùng quy ước display()
+        // mà evalBinary dùng cho '=='. Không subject: mỗi nhánh là một điều
+        // kiện boolean (ngữ nghĩa cũ). Trước đây chỉ có đường thứ hai, nên
+        // `when (x) { 1 -> ... }` luôn chọn nhánh đầu — mọi số đều truthy.
+        const subject = e.subject ? yield* this.evalExpr(e.subject, env) : null
         for (const b of e.branches) {
-          if (truthy(yield* this.evalExpr(b.cond, env))) return yield* this.evalBlock(b.block, env.child())
+          let matched: boolean
+          if (b.cond === null) matched = true // else
+          else if (subject === null) matched = truthy(yield* this.evalExpr(b.cond, env))
+          else matched = display(yield* this.evalExpr(b.cond, env)) === display(subject)
+          if (!matched) continue
+          const scope = env.child()
+          if (b.block) return yield* this.evalBlock(b.block, scope)
+          if (b.expr) return yield* this.evalExpr(b.expr, scope)
+          return UNIT
         }
-        return e.elseBlock ? yield* this.evalBlock(e.elseBlock, env.child()) : UNIT
+        return UNIT
       }
       case 'Member': {
         const target = yield* this.evalExpr(e.target, env)

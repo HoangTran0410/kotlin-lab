@@ -77,8 +77,11 @@ function rebaseExpr(e: Expr, base: Pos, seen: Set<Pos>): void {
       break
     case 'WhenExpr':
       if (e.subject) rebaseExpr(e.subject, base, seen)
-      e.branches.forEach(b => { rebaseExpr(b.cond, base, seen); rebaseBlock(b.block, base, seen) })
-      if (e.elseBlock) rebaseBlock(e.elseBlock, base, seen)
+      e.branches.forEach(b => {
+        if (b.cond) rebaseExpr(b.cond, base, seen)
+        if (b.block) rebaseBlock(b.block, base, seen)
+        if (b.expr) rebaseExpr(b.expr, base, seen)
+      })
       break
     default: break
   }
@@ -316,20 +319,18 @@ export class Parser {
       this.expect('LBRACE')
       this.skipNewlines()
       const branches: WhenBranch[] = []
-      let elseBlock: Block | null = null
       while (!this.at('RBRACE') && !this.atEof()) {
-        if (this.accept('KEYWORD', 'else')) {
-          this.expect('ARROW')
-          elseBlock = this.parseBlock()
-        } else {
-          const cond = this.parseExpr()
-          this.expect('ARROW')
-          branches.push({ cond, block: this.parseBlock() })
-        }
+        const cond = this.accept('KEYWORD', 'else') ? null : this.parseExpr()
+        this.expect('ARROW')
+        // Vế phải chấp nhận cả hai dạng: `{ ... }` (block) hoặc một biểu thức
+        // đơn (`1 -> println("one")` — dạng phổ biến nhất trong Kotlin thật).
+        // Bắt buộc LBRACE trước đây khiến dạng biểu thức lỗi parse.
+        if (this.at('LBRACE')) branches.push({ cond, block: this.parseBlock(), expr: null })
+        else branches.push({ cond, block: null, expr: this.parseExpr() })
         this.skipNewlines()
       }
       this.expect('RBRACE')
-      return { k: 'WhenExpr', subject, branches, elseBlock, pos }
+      return { k: 'WhenExpr', subject, branches, pos }
     }
 
     if (t.kind === 'LBRACE') {

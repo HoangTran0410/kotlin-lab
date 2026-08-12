@@ -49,8 +49,11 @@ export function validate(program: Program): Diagnostic[] {
         break
       case 'WhenExpr':
         if (e.subject) visitExpr(e.subject)
-        e.branches.forEach(b => { visitExpr(b.cond); visitBlock(b.block) })
-        if (e.elseBlock) visitBlock(e.elseBlock)
+        e.branches.forEach(b => {
+          if (b.cond) visitExpr(b.cond)
+          if (b.block) visitBlock(b.block)
+          if (b.expr) visitExpr(b.expr)
+        })
         break
       case 'StringLit':
         e.parts.forEach(p => { if (p.type === 'expr') visitExpr(p.expr) })
