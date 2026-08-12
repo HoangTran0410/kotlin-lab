@@ -27,16 +27,12 @@ export const UNSUPPORTED: Record<string, string> = {
   // Khác nhóm trên: những tên này sẽ có, chỉ là chưa. Chúng phải nằm ở đây vì
   // parser đọc được chúng, nên nếu không khai báo thì chúng rơi xuống nhánh
   // cuối của evalCall và trả Unit IM LẶNG: withTimeout(100) { } không chạy gì
-  // và cũng không báo gì, listOf(1).forEach { } không in gì, println(j.isActive)
-  // in ra đúng chuỗi "Job.isActive". Hoãn phải nghĩa là ĐƯỢC BÁO.
+  // và cũng không báo gì, listOf(1).forEach { } không in gì, println(j.getCompleted())
+  // in ra đúng chuỗi "kotlin.Unit". Hoãn phải nghĩa là ĐƯỢC BÁO.
   withTimeout: 'withTimeout chưa có ở M1. Dùng launch + delay + cancel() để dựng tay ca timeout.',
   withTimeoutOrNull: 'withTimeoutOrNull chưa có ở M1 (đi kèm withTimeout).',
-  ensureActive: 'ensureActive() chưa có ở M1. M1 chỉ huỷ ở điểm suspend (delay/yield).',
   invokeOnCompletion: 'invokeOnCompletion chưa có ở M1. Xem trạng thái job trên trace thay vì gắn callback.',
   getCompleted: 'getCompleted() chưa có ở M1. Dùng await().',
-  isActive: 'job.isActive chưa có ở M1. Trạng thái Job đọc được trên trace.',
-  isCancelled: 'job.isCancelled chưa có ở M1. Trạng thái Job đọc được trên trace.',
-  isCompleted: 'job.isCompleted chưa có ở M1. Trạng thái Job đọc được trên trace.',
   NonCancellable: 'NonCancellable chưa có ở M1.',
   coroutineContext: 'coroutineContext chưa có ở M1. Context hiện ra trên trace của từng coroutine.',
   listOf: 'Collection chưa có ở M1. Dùng for (i in 1..n) thay cho danh sách.',

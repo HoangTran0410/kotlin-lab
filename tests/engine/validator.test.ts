@@ -50,13 +50,17 @@ describe('validator', () => {
   it('construct HOÃN tới sau M1 được BÁO, không chạy im lặng sai', () => {
     // Hoãn phải nghĩa là ĐƯỢC BÁO. Trước đây mọi lời gọi không nhận ra đều rơi
     // xuống cuối evalCall và trả Unit: `withTimeout(100) { ... }` không chạy gì
-    // và cũng không nói gì, `listOf(1).forEach { }` im lặng, `println(j.isActive)`
-    // in ra chuỗi "Job.isActive". Sai lặng lẽ tệ hơn hẳn một lỗi khai báo rõ.
+    // và cũng không nói gì, `listOf(1).forEach { }` im lặng, `println(j.getCompleted())`
+    // in ra chuỗi "kotlin.Unit". Sai lặng lẽ tệ hơn hẳn một lỗi khai báo rõ.
+    //
+    // isActive/isCancelled/isCompleted/ensureActive KHÔNG còn ở đây — Task 4
+    // (M3) đã gỡ chúng khỏi UNSUPPORTED và cài đọc Job thật; test riêng ở
+    // tests/engine/job-state.test.ts.
     for (const src of [
       'fun main() = runBlocking {\n  withTimeout(100) { delay(1) }\n}',
       'fun main() = runBlocking {\n  listOf(1).forEach { }\n}',
-      'fun main() = runBlocking {\n  println(j.isActive)\n}',
-      'fun main() = runBlocking {\n  ensureActive()\n}',
+      'fun main() = runBlocking {\n  println(j.getCompleted())\n}',
+      'fun main() = runBlocking {\n  invokeOnCompletion { }\n}',
       'fun main() = runBlocking {\n  NonCancellable\n}',
     ]) {
       const d = check(src)
@@ -86,16 +90,18 @@ describe('validator', () => {
     const d = check(
       'fun main() = runBlocking {\n' +
       '  val j = launch { delay(10) }\n' +
-      '  println("${j.isActive}")\n' +
+      '  println("${j.getCompleted()}")\n' +
       '}')
     expect(d).toHaveLength(1)
-    expect(d[0]!.message).toContain('isActive')
+    expect(d[0]!.message).toContain('getCompleted')
     expect(d[0]!.line).toBe(3)
     expect(d[0]!.col).toBe(16)
   })
 
   it('dạng $ident (không ngoặc) trong template cũng báo đúng dòng', () => {
-    const d = check('fun main() {\n  val x = 1\n  println("a $isActive b")\n}')
+    // NonCancellable (bare ident, không phải Member) thay cho isActive cũ —
+    // Task 4 (M3) gỡ isActive khỏi UNSUPPORTED.
+    const d = check('fun main() {\n  val x = 1\n  println("a $NonCancellable b")\n}')
     expect(d).toHaveLength(1)
     expect(d[0]!.line).toBe(3)
   })

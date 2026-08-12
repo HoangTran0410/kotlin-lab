@@ -29,6 +29,11 @@ export class Env {
     return this.vars.get(name) ?? this.parent?.get(name)
   }
 
+  /** Biến `name` đã được khai báo (ở scope này hoặc một scope cha) chưa. */
+  has(name: string): boolean {
+    return this.vars.has(name) || (this.parent?.has(name) ?? false)
+  }
+
   set(name: string, value: KValue): boolean {
     if (this.vars.has(name)) { this.vars.set(name, value); return true }
     return this.parent?.set(name, value) ?? false

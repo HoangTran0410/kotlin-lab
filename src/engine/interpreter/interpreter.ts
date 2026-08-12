@@ -1,5 +1,6 @@
 import type { Block, Expr, FunDecl, Program, Stmt } from '../ast/nodes'
 import { CoroutineContext } from '../runtime/context'
+import type { Job } from '../runtime/job'
 import type { JobId } from '../trace/events'
 import { toCause, type Scheduler } from '../runtime/scheduler'
 import type { CoroutineBody, Suspension } from '../runtime/suspension'
@@ -110,6 +111,15 @@ export class Interpreter {
       case 'Ident': {
         const v = env.get(e.name)
         if (v) return v
+        // `isActive` trần (không receiver) trong thân coroutine đọc job của
+        // scope BAO QUANH THEO TỪ VỰNG — env.enclosingJobId, KHÔNG phải
+        // scheduler.currentJob. currentJob bị reset về null mỗi khi step()
+        // kết thúc lượt chạy đồng bộ của nó (xem ghi chú trong env.ts), nên
+        // dùng nó ở đây sẽ trỏ nhầm job ngay khi có coroutine khác xen vào.
+        if (e.name === 'isActive' && !env.has('isActive')) {
+          const j = env.enclosingJobId === null ? null : this.scheduler.jobById(env.enclosingJobId)
+          return { t: 'bool', v: j ? j.isActive : true }
+        }
         return { t: 'obj', className: e.name, fields: new Map() }
       }
       case 'Range': {
@@ -154,12 +164,29 @@ export class Interpreter {
         if (target.t === 'obj') {
           const f = target.fields.get(e.name)
           if (f) return f
+          // Job THẬT đứng sau __jobId, đọc TRƯỚC khi rơi xuống fallback dựng
+          // object rác — `job.isActive`/`isCancelled`/`isCompleted` là lõi của
+          // lesson suspend: cách duy nhất thấy coroutine SUSPENDED nhưng Job
+          // vẫn ACTIVE bằng code.
+          const job = this.jobOf(target)
+          if (job) {
+            if (e.name === 'isActive') return { t: 'bool', v: job.isActive }
+            if (e.name === 'isCancelled') return { t: 'bool', v: job.isCancelled }
+            if (e.name === 'isCompleted') return { t: 'bool', v: job.isCompleted }
+          }
           return { t: 'obj', className: `${target.className}.${e.name}`, fields: new Map() }
         }
         return UNIT
       }
       case 'Call': return yield* this.evalCall(e, env)
     }
+  }
+
+  /** Job thật đằng sau một KValue object mang `__jobId`, hoặc null. */
+  private jobOf(v: KValue): Job | null {
+    if (v.t !== 'obj') return null
+    const id = v.fields.get('__jobId')
+    return id && id.t === 'str' ? this.scheduler.jobById(id.v) : null
   }
 
   private *evalBinary(e: Expr & { k: 'Binary' }, env: Env): Eval<KValue> {
@@ -252,6 +279,17 @@ export class Interpreter {
     if (name === 'error') {
       const arg = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
       throw new KotlinThrow('IllegalStateException', display(arg), e.pos.line)
+    }
+
+    // ensureActive() là idiom chuẩn của vòng lặp huỷ được (cooperative
+    // cancellation): ném ngay tại chỗ gọi nếu job của scope bao quanh không
+    // còn Active, thay vì phải chờ tới điểm suspend (delay/yield) tiếp theo.
+    if (name === 'ensureActive') {
+      const j = env.enclosingJobId === null ? null : this.scheduler.jobById(env.enclosingJobId)
+      if (j && !j.isActive) {
+        throw new KotlinThrow('CancellationException', 'Job was cancelled', e.pos.line)
+      }
+      return UNIT
     }
 
     if (name === 'println') {
