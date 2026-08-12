@@ -7,6 +7,7 @@ import { diagnosticMarks, setDiagnosticLines } from './editor/diagnosticMarks'
 import { DiagnosticsPanel } from './diagnostics/DiagnosticsPanel'
 import { clampDiagnosticLine } from './diagnostics/clampLine'
 import { ConsolePanel } from './console/ConsolePanel'
+import { LessonNav } from './lessons/LessonNav'
 import { GraphCanvas } from './graph/GraphCanvas'
 import { toReactFlow } from './graph/toReactFlow'
 import { useLayout } from './graph/useLayout'
@@ -59,6 +60,9 @@ export function App() {
   const world = useLabStore(selectWorld)
   const stepIndex = useLabStore(s => s.stepIndex)
   const setStep = useLabStore(s => s.setStep)
+  const lessonId = useLabStore(s => s.lessonId)
+  const loadLesson = useLabStore(s => s.loadLesson)
+  const setSource = useLabStore(s => s.setSource)
   const handleChange = useDebouncedSetSource()
   const editorHost = useRef<HTMLDivElement>(null)
 
@@ -95,7 +99,7 @@ export function App() {
 
   return (
     <Shell
-      nav={<nav>Bài học</nav>}
+      nav={<LessonNav currentLessonId={lessonId} loadLesson={loadLesson} setSource={setSource} />}
       editor={
         <Panel title="Mã Kotlin" grow>
           <div ref={editorHost}>
