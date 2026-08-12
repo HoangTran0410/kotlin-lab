@@ -110,4 +110,72 @@ describe('validator', () => {
     const d = check('fun a() {\n  select { }\n}\nfun main() {\n  Channel<Int>()\n}')
     expect(d.map(x => x.line)).toEqual([2, 5])
   })
+
+  describe('isActive trần / ensureActive() ngoài coroutine — Kotlin thật báo unresolved reference', () => {
+    // Vòng review Task 4: gỡ isActive/isCancelled/isCompleted/ensureActive
+    // khỏi UNSUPPORTED (để chúng đọc Job thật) đã vô tình mở một đường sai âm
+    // thầm MỚI — `fun main() { println(isActive) }` không có builder nào bao
+    // quanh, Kotlin thật báo lỗi biên dịch ("Unresolved reference"), nhưng
+    // trước khi có test này thì validator im lặng và interpreter in "true"
+    // (đọc job gốc của runtime, không phải lỗi của người học). Đối chiếu
+    // Kotlin thật (api.kotlinlang.org) cho cả `isActive` lẫn `ensureActive()`
+    // ngoài mọi builder: cả hai đều "Unresolved reference".
+    it('isActive trần ngoài mọi coroutine builder bị báo', () => {
+      const d = check('fun main() {\n  println(isActive)\n}')
+      expect(d.length).toBeGreaterThanOrEqual(1)
+      expect(d[0]!.message).toContain('isActive')
+      expect(d[0]!.line).toBe(2)
+    })
+
+    it('ensureActive() ngoài mọi coroutine builder bị báo', () => {
+      const d = check('fun main() {\n  ensureActive()\n  println("x")\n}')
+      expect(d.length).toBeGreaterThanOrEqual(1)
+      expect(d[0]!.message).toContain('ensureActive')
+      expect(d[0]!.line).toBe(2)
+    })
+
+    it('isActive trần BÊN TRONG launch/async/runBlocking/coroutineScope/supervisorScope/withContext KHÔNG bị báo', () => {
+      for (const src of [
+        'fun main() = runBlocking {\n  println(isActive)\n}',
+        'fun main() = runBlocking {\n  launch {\n    println(isActive)\n  }\n}',
+        'fun main() = runBlocking {\n  val d = async {\n    isActive\n  }\n}',
+        'fun main() = runBlocking {\n  coroutineScope {\n    println(isActive)\n  }\n}',
+        'fun main() = runBlocking {\n  supervisorScope {\n    println(isActive)\n  }\n}',
+        'fun main() = runBlocking {\n  withContext(Dispatchers.IO) {\n    println(isActive)\n  }\n}',
+      ]) {
+        expect(check(src), src).toEqual([])
+      }
+    })
+
+    it('cờ inCoroutine XUYÊN QUA khối lồng KHÔNG PHẢI builder (while/try/repeat) bên trong launch', () => {
+      // Xác nhận cờ không bị "tắt" oan khi gặp một khối trung gian không phải
+      // launch/async/... — while/try/repeat vẫn nằm bên trong coroutine.
+      const d = check(
+        'fun main() = runBlocking {\n' +
+        '  launch {\n' +
+        '    repeat(3) {\n' +
+        '      while (isActive) {\n' +
+        '        try {\n' +
+        '          ensureActive()\n' +
+        '        } catch (e: Exception) {\n' +
+        '        }\n' +
+        '      }\n' +
+        '    }\n' +
+        '  }\n' +
+        '}')
+      expect(d).toEqual([])
+    })
+
+    it('job.isActive dạng THÀNH VIÊN (có receiver) KHÔNG bị đường kiểm coroutine đụng tới', () => {
+      // Chỉ isActive TRẦN (không receiver) mới cần CoroutineScope bao quanh.
+      // job.isActive đọc trạng thái của MỘT Job cụ thể, hợp lệ ở bất cứ đâu có
+      // biến Job — validator không nên báo lỗi ở đây dù đứng ngoài builder.
+      const d = check(
+        'fun main() = runBlocking {\n' +
+        '  val job = launch { delay(1) }\n' +
+        '  println(job.isActive)\n' +
+        '}')
+      expect(d).toEqual([])
+    })
+  })
 })

@@ -45,6 +45,33 @@ describe('job.isActive / isCancelled / isCompleted đọc trạng thái THẬT',
 }`)
     expect(r.output).toEqual(['false', 'true'])
   })
+
+  it('isCompleted false ngay sau launch, trước khi job kịp chạy — phân biệt được với !isActive', () => {
+    // Vòng review đầu tiên (Task 4) kết luận sai rằng KHÔNG có ca nào bằng
+    // Kotlin nguồn phân biệt được `isCompleted` với `!isActive`, vì lý luận
+    // mã Kotlin chỉ quan sát job ở Active/Completed/Cancelled — bỏ sót state
+    // `New`: `Scheduler.spawn` (scheduler.ts) đẩy job vào `ready` mà KHÔNG
+    // chuyển state; `New -> Active` chỉ xảy ra ở lần step() ĐẦU TIÊN của job
+    // đó. `launch` trả về đồng bộ, nên ngay sau `val job = launch { ... }`,
+    // TRƯỚC điểm suspend kế tiếp, job vẫn ở `New`.
+    //
+    // Đối chiếu Kotlin thật (api.kotlinlang.org, cùng chương trình): in
+    // "false" rồi "true" — khớp đúng assertion dưới đây. (Engine lệch Kotlin
+    // thật ở `isActive` ngay tại điểm này — Kotlin cho true vì
+    // CoroutineStart.DEFAULT coi job là Active từ lúc tạo, engine cho false vì
+    // chưa step() lần nào — nhưng đó là chuyện của `isActive`, KHÔNG phải của
+    // `isCompleted`; ca này cố tình không assert `isActive` để không đóng
+    // băng chỗ lệch đó.)
+    const r = runSource(`fun main() = runBlocking {
+    val job = launch { delay(10) }
+    println(job.isCompleted)
+    job.join()
+    println(job.isCompleted)
+}`)
+    // Đột biến "isCompleted = !isActive" cho ['true', 'true'] (New: isActive
+    // false -> !isActive true; SAI dòng đầu).
+    expect(r.output).toEqual(['false', 'true'])
+  })
 })
 
 describe('isActive trần và ensureActive() trong thân coroutine', () => {
@@ -85,6 +112,35 @@ describe('isActive trần và ensureActive() trong thân coroutine', () => {
     ngoai.join()
 }`)
     expect(r.output).toEqual(['trong launch ngoài: true'])
+  })
+
+  it('isActive trần đọc false sau khi job bị huỷ — không phải true cứng', () => {
+    // Vòng review đầu tiên (Task 4) chỉ ra: hai ca isActive-trần ở trên KHÔNG
+    // phân biệt được cài đặt thật với `return { t: 'bool', v: true }` cứng —
+    // ca "vòng lặp" thoát bằng CancellationException ném thẳng vào generator
+    // tại delay() (while (isActive) chưa từng được ĐÁNH GIÁ ra false), còn ca
+    // "BAO QUANH THEO TỪ VỰNG" chỉ assert đúng giá trị `true`, cũng là thứ mà
+    // nhánh "không tìm thấy job" (env.enclosingJobId === null) trả về.
+    //
+    // Ca này đọc isActive trần bên trong catch (e: CancellationException) của
+    // MỘT job đã bị huỷ — job.isActive lúc đó THẬT SỰ là false. Cùng hình
+    // dạng với ca ensureActive() ngay dưới. Đối chiếu Kotlin thật
+    // (api.kotlinlang.org): in "caught", "isActive after cancel = false",
+    // "done" — khớp đúng assertion dưới đây.
+    const r = runSource(`fun main() = runBlocking {
+    val job = launch {
+        try {
+            delay(1000)
+        } catch (e: CancellationException) {
+            println("bắt được huỷ")
+            println("isActive sau huỷ = " + isActive)
+        }
+    }
+    delay(10)
+    job.cancelAndJoin()
+    println("xong")
+}`)
+    expect(r.output).toEqual(['bắt được huỷ', 'isActive sau huỷ = false', 'xong'])
   })
 
   it('ensureActive() ném CancellationException khi job đã bị huỷ', () => {
