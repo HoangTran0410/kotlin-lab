@@ -38,16 +38,31 @@ export interface PlaybackApi {
  * screen frozen most of the time, and viewers would think the tool had
  * hung. There's still only ONE copy of the time loop, right here.
  */
+/**
+ * `stopAt` is asked, after each step is chosen, whether playback should stop
+ * THERE.
+ *
+ * Deliberately inside the loop rather than an effect watching `stepIndex` from
+ * outside. An outside watcher only sees the steps React actually renders, and
+ * React batches: measured with fake timers advancing 30s in one go, the loop
+ * ran through the stop step and the watcher never observed it, so playback
+ * sailed past a breakpoint to the end of the trace. Real frames are spread out
+ * enough that a watcher usually works — which is exactly what makes that bug
+ * the kind that only shows up sometimes.
+ */
 export function usePlayback(
   stepIndex: number,
   setStep: (n: number) => void,
   max: number,
   advance?: (cur: number) => number,
+  stopAt?: (step: number) => boolean,
 ): PlaybackApi {
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeedState] = useState<Speed>(1)
   const advanceRef = useRef(advance)
   useEffect(() => { advanceRef.current = advance }, [advance])
+  const stopAtRef = useRef(stopAt)
+  useEffect(() => { stopAtRef.current = stopAt }, [stopAt])
 
   const stepIndexRef = useRef(stepIndex)
   const setStepRef = useRef(setStep)
@@ -108,6 +123,10 @@ export function usePlayback(
         if (next >= maxRef.current) {
           setPlaying(false)
           return // reached the end: auto-stop, don't request another frame
+        }
+        if (stopAtRef.current?.(next) === true) {
+          setPlaying(false)
+          return // landed on a stop (a breakpoint): hold here
         }
       }
       rafRef.current = requestAnimationFrame(tick)

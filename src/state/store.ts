@@ -7,12 +7,22 @@ interface LabState {
   compiled: Compiled
   stepIndex: number
   lessonId: string | null
+  /**
+   * 1-based lines carrying a breakpoint. Sorted, no duplicates.
+   *
+   * Lives in the store rather than inside the editor so that the gutter and
+   * the "run to breakpoint" button read the SAME list — two copies would
+   * eventually disagree about where the tool is going to stop.
+   */
+  breakpoints: number[]
 
   setSource: (src: string) => void
   setStep: (n: number) => void
   loadLesson: (id: string) => void
   /** Loads a piece of code that belongs to NO lesson (blank page, an example from the about page). */
   loadSource: (src: string) => void
+  toggleBreakpoint: (line: number) => void
+  clearBreakpoints: () => void
 }
 
 const clampStep = (n: number, len: number): number => Math.max(0, Math.min(n, len))
@@ -33,6 +43,7 @@ export const useLabStore = create<LabState>((set, get) => ({
   compiled: EMPTY_COMPILED,
   stepIndex: 0,
   lessonId: null,
+  breakpoints: [],
 
   setSource: src => {
     const compiled = compile(src)
@@ -47,7 +58,12 @@ export const useLabStore = create<LabState>((set, get) => ({
   loadLesson: id => {
     const src = lessonSource(id)
     if (src === null) return
-    set({ source: src, compiled: compile(src), stepIndex: 0, lessonId: id })
+    // Breakpoints are cleared on a NEW program, not on every edit: line 7 of
+    // the previous lesson has nothing to do with line 7 of this one, so
+    // keeping them would leave stops in places nobody chose. While editing
+    // (`setSource`) they are kept — the lines the user is working on are
+    // exactly the ones they still care about.
+    set({ source: src, compiled: compile(src), stepIndex: 0, lessonId: id, breakpoints: [] })
   },
 
   // Differs from `setSource` in two places, and both are needed: CLEARS
@@ -56,7 +72,18 @@ export const useLabStore = create<LabState>((set, get) => ({
   // completely different code), and RESETS the cursor to 0 (clamping the old
   // cursor like setSource does is right while mid-edit, but jumping into the
   // middle of a program that was just opened makes no sense).
-  loadSource: src => set({ source: src, compiled: compile(src), stepIndex: 0, lessonId: null }),
+  loadSource: src => set({
+    source: src, compiled: compile(src), stepIndex: 0, lessonId: null, breakpoints: [],
+  }),
+
+  toggleBreakpoint: line => set(st => ({
+    breakpoints: st.breakpoints.includes(line)
+      ? st.breakpoints.filter(l => l !== line)
+      // Kept sorted so the list reads in source order everywhere it's shown.
+      : [...st.breakpoints, line].sort((a, b) => a - b),
+  })),
+
+  clearBreakpoints: () => set({ breakpoints: [] }),
 }))
 
 export { LESSON_LIST }

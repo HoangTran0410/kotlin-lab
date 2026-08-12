@@ -4,6 +4,7 @@ import { Panel } from './layout/Panel'
 import { Shell } from './layout/Shell'
 import { CodeEditor } from './editor/CodeEditor'
 import { diagnosticMarks, setDiagnosticLines } from './editor/diagnosticMarks'
+import { breakpointGutter, setBreakpointLines, setReachableLines } from './editor/breakpointGutter'
 import { DiagnosticsPanel } from './diagnostics/DiagnosticsPanel'
 import { clampDiagnosticLine } from './diagnostics/clampLine'
 import { ConsolePanel } from './console/ConsolePanel'
@@ -17,6 +18,7 @@ import { toReactFlow } from './graph/toReactFlow'
 import { useLayout } from './graph/useLayout'
 import { NarrationPanel } from './narration/NarrationPanel'
 import { narrateTrace } from '../engine/narrate/narrateTrace'
+import { linesInTrace } from '../engine/trace/breakpoints'
 import { Timeline } from './timeline/Timeline'
 import { PlaybackControls } from './timeline/PlaybackControls'
 import { useLabStore } from '../state/store'
@@ -72,6 +74,10 @@ export function App() {
   const lessonId = useLabStore(s => s.lessonId)
   const loadLesson = useLabStore(s => s.loadLesson)
   const loadSource = useLabStore(s => s.loadSource)
+  const breakpoints = useLabStore(s => s.breakpoints)
+  // Zustand actions are stable across renders, which is what lets the gutter
+  // extension — built once at editor mount — hold on to this one.
+  const toggleBreakpoint = useLabStore(s => s.toggleBreakpoint)
   const handleChange = useDebouncedSetSource()
   // Shared modal for the lesson path + about page. `null` = closed.
   const [tab, setTab] = useState<string | null>(null)
@@ -91,6 +97,14 @@ export function App() {
   // because narrateTrace is slow: it does a single pass.
   const narration = useMemo(() => narrateTrace(compiled.events), [compiled.events])
 
+  // Built ONCE: CodeEditor reads extraExtensions at mount only (see its empty
+  // deps array), so rebuilding this array later would be silently ignored.
+  // Safe precisely because `toggleBreakpoint` is stable.
+  const editorExtensions = useMemo(
+    () => [...diagnosticMarks, ...breakpointGutter(toggleBreakpoint)], [toggleBreakpoint])
+
+  const reachable = useMemo(() => [...linesInTrace(compiled.events)], [compiled.events])
+
   // Push diagnostics into diagnosticMarks (red gutter dot + underline)
   // whenever the list changes. The field/gutter are plugged in via
   // `extraExtensions` (already set up since Task 8) at mount time; here we
@@ -103,6 +117,20 @@ export function App() {
     if (!view) return
     view.dispatch({ effects: setDiagnosticLines.of(diagnostics.map(d => d.line)) })
   }, [diagnostics])
+
+  // Store -> editor, one way. The gutter's click reports a line and nothing
+  // else, so this dispatch is the only thing that ever changes what it draws.
+  useEffect(() => {
+    const view = findEditorView(editorHost.current)
+    if (!view) return
+    view.dispatch({ effects: setBreakpointLines.of(breakpoints) })
+  }, [breakpoints])
+
+  useEffect(() => {
+    const view = findEditorView(editorHost.current)
+    if (!view) return
+    view.dispatch({ effects: setReachableLines.of(reachable) })
+  }, [reachable])
 
   // Click a diagnostic in the panel -> scroll CodeEditor to that line. Clamp
   // AGAIN using the view's real doc at the moment of the click (don't just
@@ -139,7 +167,7 @@ export function App() {
                 value={source}
                 onChange={handleChange}
                 currentLine={currentLine}
-                extraExtensions={diagnosticMarks}
+                extraExtensions={editorExtensions}
               />
             </div>
           </Panel>
@@ -171,6 +199,7 @@ export function App() {
             events={compiled.events}
             source={source}
             world={world}
+            breakpoints={breakpoints}
           />
         </Panel>
       }

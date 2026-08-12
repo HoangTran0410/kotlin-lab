@@ -127,3 +127,13 @@
   border-radius: 3px;
   padding: 0 4px;
 }
+
+/* Breakpoint jumps. Same shape language as the gutter diamond, so the control
+   and the mark it obeys read as one feature. */
+.k-stage__bp {
+  color: var(--edge-cancel);
+  font-size: 10px;
+  letter-spacing: -1px;
+}
+
+.k-stage__bp:disabled { opacity: 0.35; }

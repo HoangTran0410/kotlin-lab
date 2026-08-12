@@ -48,3 +48,28 @@ body { margin: 0; background: var(--bg); color: var(--fg);
   border-radius: 50%;
   background: var(--state-cancelled);
 }
+
+/* Breakpoint dot in the editor gutter. Diamond, not a circle: the diagnostic
+   gutter right next to it already owns "red round dot", and two red circles
+   side by side would read as the same kind of thing. */
+.cm-bp-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin: 5px 2px;
+  background: var(--edge-cancel);
+  transform: rotate(45deg);
+  border-radius: 2px;
+}
+
+/* A breakpoint on a line this program never reaches. Hollow, so "set but
+   never hit" is visible at a glance instead of looking like a broken tool
+   when Run does nothing. */
+.cm-bp-dot--unreachable {
+  background: transparent;
+  border: 1.5px solid var(--fg-dim);
+}
+
+/* Hover affordance on the whole gutter: without it there is nothing telling
+   anyone the gutter is clickable at all. */
+.cm-bp-gutter:hover { background: rgba(240, 136, 62, 0.14); }
