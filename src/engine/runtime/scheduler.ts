@@ -423,6 +423,24 @@ export class Scheduler {
   /**
    * launch/async: tạo child dưới `parentJobId` (lấy từ Env, KHÔNG lấy từ
    * currentJob — xem ghi chú trong Env), chạy sau, xếp cuối hàng ready.
+   *
+   * Cha ĐÃ KẾT THÚC là ca riêng: con vẫn được TẠO RA (nó là một Job có thật,
+   * đọc được `isCancelled`) nhưng bị huỷ ngay và KHÔNG vào hàng ready, nên thân
+   * nó không bao giờ chạy. Đã đối chiếu Kotlin thật (2.1.20):
+   *
+   *   val scope = CoroutineScope(Job()); scope.cancel()
+   *   val j = scope.launch { println("BODY"); ... finally { println("FINALLY") } }
+   *   -> isCancelled=true, isActive=false, và KHÔNG in gì cả — cả BODY lẫn
+   *      FINALLY. Thân chưa từng bắt đầu thì cũng không có gì để unwind. (Đây
+   *      chính là lý do Kotlin phải có withContext(NonCancellable) cho dọn dẹp.)
+   *
+   * Thiếu guard này thì trace sinh ra một hình dạng BẤT KHẢ THI: node cha
+   * 'Cancelled' chứa node con 'Completed'. Ngưỡng đó chỉ mở ra từ khi có
+   * spawnScopeRoot — trước đó không job nào có thể chết trong khi code còn sinh
+   * được con dưới nó, vì `scope.cancel()` chưa huỷ được gì.
+   *
+   * Cũng đúng cho `finally { launch { } }` bên trong một coroutine đang bị huỷ:
+   * cha ở Cancelled nên con mới không chạy — y như Kotlin.
    */
   spawnChildOf(
     parentJobId: JobId | null,
@@ -433,7 +451,23 @@ export class Scheduler {
   ): Job {
     const parent = this.jobById(parentJobId)
     const parentCtx = parent ? this.tasks.get(parent.id)!.ctx : CoroutineContext.empty()
-    return this.spawn(parent, false, builder, parentCtx.plus(ctx), makeBody, srcLine)
+    const job = this.spawn(parent, false, builder, parentCtx.plus(ctx), makeBody, srcLine)
+    if (parent?.isCompleted) {
+      // Rút khỏi ready SAU KHI spawn, không phải thêm cờ vào spawn: COROUTINE_CREATED
+      // phải được phát bình thường (con có tồn tại — Kotlin trả về một Job đọc
+      // được), chỉ có việc CHẠY là không xảy ra. Tìm theo danh tính chứ không
+      // giả định nó là phần tử cuối.
+      const i = this.ready.findIndex(t => t.job === job)
+      if (i >= 0) this.ready.splice(i, 1)
+      // CancellationException tổng hợp, KHÔNG phải `parent.cause`. Đã đo:
+      // `scope.async { }.await()` trên scope đã huỷ ném JobCancellationException,
+      // không ném lại lý do gốc đã giết scope. Dùng parent.cause ở đây sẽ khiến
+      // wakeAwaiter ném ra exception của kẻ khác tại điểm await — sai kiểu tinh vi.
+      cancelJob(job, {
+        exType: 'CancellationException', message: 'Job was cancelled', isCancellation: true,
+      }, this.emitter, parent.id)
+    }
+    return job
   }
 
   /**
