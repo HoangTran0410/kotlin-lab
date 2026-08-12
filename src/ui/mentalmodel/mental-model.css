@@ -1,0 +1,95 @@
+.mm {
+  flex: none;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  /* Cao nhất một nửa cột: phần chữ dài không được đẩy editor ra khỏi màn hình.
+     Đọc tới đâu cuộn tới đó, code vẫn luôn nhìn thấy được ở dưới. */
+  display: flex;
+  flex-direction: column;
+  max-height: 46vh;
+  min-height: 0;
+}
+
+.mm__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 10px;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mm__head:hover { background: var(--panel-2); }
+
+.mm__caret { color: var(--fg-dim); font-size: 11px; }
+
+.mm__title {
+  font-weight: 600;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mm__hint {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.mm__body {
+  overflow-y: auto;
+  padding: 2px 12px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.mm__body h4 {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--k-launch);
+}
+
+.mm__body h4:first-child { margin-top: 10px; }
+
+.mm__body p { margin: 0 0 8px; }
+
+.mm__body ul {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.mm__body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  background: var(--bg);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.mm__body pre {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow-x: auto;
+}
+
+.mm__body strong { color: var(--fg); }

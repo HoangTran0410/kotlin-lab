@@ -1,7 +1,9 @@
 import { useCallback, useMemo } from 'react'
 import type { NarrationLine } from '../../engine/narrate/narrateTrace'
+import type { Event } from '../../engine/trace/events'
 import { usePlayback } from '../timeline/usePlayback'
 import { GraphCanvas } from './GraphCanvas'
+import { LeftoverNotice } from './LeftoverNotice'
 import type { ReactFlowGraph } from './toReactFlow'
 import './graph-stage.css'
 
@@ -31,7 +33,9 @@ function renderText(text: string): React.ReactNode[] {
  * nửa số event là hạ tầng (`THREAD_STATE`, `JOB_STATE`) và dừng ở đó thì màn
  * hình không đổi gì. Thanh kéo trong bảng gỡ lỗi vẫn đi từng event một.
  */
-export function GraphStage({ graph, narration, stepIndex, setStep, total, debugOpen, toggleDebug }: {
+export function GraphStage({
+  graph, narration, stepIndex, setStep, total, debugOpen, toggleDebug, events, source,
+}: {
   graph: ReactFlowGraph
   narration: readonly NarrationLine[]
   stepIndex: number
@@ -39,6 +43,8 @@ export function GraphStage({ graph, narration, stepIndex, setStep, total, debugO
   total: number
   debugOpen: boolean
   toggleDebug: () => void
+  events: readonly Event[]
+  source: string
 }) {
   const đãTới = useMemo(
     () => narration.filter(l => l.index < stepIndex),
@@ -69,6 +75,7 @@ export function GraphStage({ graph, narration, stepIndex, setStep, total, debugO
 
   return (
     <div className="k-stage">
+      <LeftoverNotice events={events} source={source} />
       <div className="k-stage__canvas">
         <GraphCanvas nodes={graph.nodes} edges={graph.edges} />
       </div>

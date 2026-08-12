@@ -21,6 +21,10 @@ const metas = import.meta.glob<LessonMeta>('./*/meta.json', { import: 'default',
  */
 const fixtures = import.meta.glob('./*/expected-jvm-output.txt', { query: '?raw', eager: true })
 
+/** Mô hình tư duy của từng bài — phần chữ đọc TRƯỚC khi bấm chạy. */
+const models = import.meta.glob<string>(
+  './*/mental-model.md', { query: '?raw', import: 'default', eager: true })
+
 const idFrom = (path: string): string => path.split('/')[1] ?? ''
 
 export const LESSON_LIST: LessonMeta[] = Object.values(metas).sort((a, b) => a.order - b.order)
@@ -36,3 +40,11 @@ export function lessonSource(id: string): string | null {
 export const LESSON_IDS_DOI_CHIEU_JVM: ReadonlySet<string> = new Set(
   Object.keys(fixtures).map(idFrom),
 )
+
+const modelById = new Map<string, string>(
+  Object.entries(models).map(([path, src]) => [idFrom(path), src]),
+)
+
+export function lessonMentalModel(id: string): string | null {
+  return modelById.get(id) ?? null
+}

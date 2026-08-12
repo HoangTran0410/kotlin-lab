@@ -9,6 +9,7 @@ import { clampDiagnosticLine } from './diagnostics/clampLine'
 import { ConsolePanel } from './console/ConsolePanel'
 import { LessonNav } from './lessons/LessonNav'
 import { AboutPanel } from './about/AboutPanel'
+import { MentalModel } from './mentalmodel/MentalModel'
 import { GraphStage } from './graph/GraphStage'
 import { toReactFlow } from './graph/toReactFlow'
 import { useLayout } from './graph/useLayout'
@@ -119,6 +120,9 @@ export function App() {
       nav={<LessonNav currentLessonId={lessonId} loadLesson={loadLesson} setSource={loadSource} />}
       editor={
         <div className="editor-col">
+          {/* Trên editor, không phải ở cột bên: đọc mô hình xong thì mắt đi
+              thẳng xuống đúng đoạn code hiện thân cho nó. */}
+          <MentalModel lessonId={lessonId} />
           <Panel title="Mã Kotlin" grow>
             <div ref={editorHost}>
               <CodeEditor
@@ -155,6 +159,8 @@ export function App() {
             total={compiled.events.length}
             debugOpen={debugOpen}
             toggleDebug={toggleDebug}
+            events={compiled.events}
+            source={source}
           />
         </Panel>
       }
