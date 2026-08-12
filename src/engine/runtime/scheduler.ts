@@ -25,6 +25,26 @@ interface Task {
   /** Đã chạy xong hoặc đã unwind — không được đụng tới generator nữa. */
   finished: boolean
   /**
+   * Đã ném tín hiệu huỷ vào generator này rồi, mà nó CHƯA chạy hết.
+   *
+   * Tồn tại vì unwind không còn luôn đồng bộ: generator có thể BẮT được tín
+   * hiệu huỷ rồi treo lại ở một điểm suspend khác — `runInlineBody` bắt xong
+   * là `yield joinChildren` để chờ con của scope chạy hết `finally` — nên
+   * `body.throw()` TRẢ VỀ một IteratorResult thay vì ném ra, và task còn phải
+   * được chạy tiếp.
+   *
+   * Dùng ĐÚNG MỘT việc: mở chốt `job.isCompleted` ở đầu `step()`. Job đã
+   * Cancelled từ trước khi tín hiệu được ném vào, nên nếu không có cờ này thì
+   * lượt resume kế tiếp bị chốt ấy chặn, generator bị bỏ rơi giữa chừng,
+   * `finished` không bao giờ được đặt và người `join()` nó treo vĩnh viễn.
+   *
+   * CỐ Ý KHÔNG dùng nó để chống ném hai lần: Kotlin ném CancellationException ở
+   * MỌI điểm suspend của một coroutine đã huỷ, không phải chỉ điểm đầu tiên.
+   * Việc chống ném hai lần chỉ áp cho `joinChildren` của scope inline — xem
+   * `đangChờConCủaScope`.
+   */
+  unwinding: boolean
+  /**
    * Các scope inline (runBlocking/coroutineScope/supervisorScope/withContext)
    * chạy trong generator của task NGOÀI, nên `currentJob` — vốn được gán từ
    * task.job ở đầu mỗi step() — không phải job đang thật sự thực thi. Ngăn xếp
@@ -206,7 +226,7 @@ export class Scheduler {
 
     const task: Task = {
       job, ctx: jobCtx, body: makeBody(job), resumeValue: undefined, resumeThrow: undefined,
-      started: false, finished: false, inlineStack: [],
+      started: false, finished: false, unwinding: false, inlineStack: [],
       parentDispatcher: parent ? this.tasks.get(parent.id)?.ctx.dispatcher ?? null : null,
     }
     this.tasks.set(id, task)
@@ -303,6 +323,12 @@ export class Scheduler {
   runToCompletion(): void {
     let guard = 0
     for (;;) {
+      // Đếm ở CẢ vòng ngoài, không chỉ vòng `ready`. Từ khi tín hiệu huỷ được
+      // ném lại ở mọi điểm suspend (đúng như Kotlin), một thân coroutine kiểu
+      // `while (true) { try { delay(1) } catch (e: CancellationException) { } }`
+      // quay vòng qua unwindCancelled mà KHÔNG bao giờ đi qua `ready` — chốt
+      // chỉ nằm ở vòng trong sẽ treo cứng trình duyệt thay vì báo lỗi.
+      if (++guard > 100_000) throw new Error('Scheduler: nghi ngờ lặp vô hạn')
       while (this.ready.length > 0) {
         if (++guard > 100_000) throw new Error('Scheduler: nghi ngờ lặp vô hạn')
         this.step(this.ready.shift()!)
@@ -357,15 +383,22 @@ export class Scheduler {
     let did = false
     for (const task of this.taskOrder) {
       if (task.finished || !task.started) continue
-      if (!task.job.isCancelled) continue
+      const governing = this.jobChiPhối(task)
+      if (!governing.isCancelled) continue
+      if (this.đangChờConCủaScope(task, governing)) continue
 
-      task.finished = true
+      // KHÔNG đặt `finished` ở đây. Unwind có thể kéo dài qua nhiều lượt
+      // scheduler (xem `Task.unwinding`), mà `finished` là thứ `isJobSettled`
+      // đọc để trả lời "đã dọn dẹp xong chưa" — đặt sớm là đánh thức người chờ
+      // trước khi `finally` kịp chạy.
+      task.unwinding = true
       did = true
       this.currentJob = task.job
       // Ngăn xếp inline vẫn còn nguyên từ lúc task bị treo: `finally` chạy trên
       // đường unwind nằm BÊN TRONG scope inline nào thì println của nó thuộc về
       // scope ấy, y như khi chạy bình thường.
       this.currentTask = task
+      let result: IteratorResult<Suspension, unknown> | null = null
       try {
         // Generator chạy các finally trên đường unwind rồi ném lại.
         //
@@ -377,8 +410,8 @@ export class Scheduler {
         // tức là công cụ dạy ngược cái khác biệt nó tồn tại để dạy.
         // Job bị CANCEL từ ngoài thì `failure` là null và vẫn nhận
         // CancellationException, đúng như Kotlin.
-        const f = task.job.failure
-        task.body.throw(f
+        const f = governing.failure
+        result = task.body.throw(f
           ? new KotlinThrow(f.exType, f.message)
           : new KotlinThrow('CancellationException', 'Job was cancelled'))
       } catch (err) {
@@ -391,17 +424,73 @@ export class Scheduler {
         // trí, và một exception nội bộ còn THAY THẾ luôn CancellationException
         // đang bay mà không để lại dấu vết nào.
         if (isEngineError(err)) throw err
+        // Ném ra được tới đây nghĩa là generator đã unwind XONG.
+        task.finished = true
+        task.unwinding = false
       } finally {
         this.currentJob = null
         this.currentTask = null
       }
+      if (result === null) continue
+      // Tới đây thì `body.throw()` TRẢ VỀ chứ không ném: generator đã bắt được
+      // tín hiệu huỷ và còn việc phải làm. Bỏ rơi nó ở đây là bỏ luôn mọi
+      // `finally` phía sau điểm bắt — đúng cái mà việc chọn generator đáng ra
+      // cho không. Đưa nó trở lại đường chạy bình thường của scheduler.
+      if (result.done) this.completeTask(task, result.value)
+      else this.suspend(task, result.value)
     }
     return did
   }
 
+  /**
+   * Job nào đang thật sự chi phối việc task này còn được chạy tiếp hay không.
+   *
+   * Không phải lúc nào cũng là `task.job`: khi task đang treo giữa thân một
+   * scope inline (`coroutineScope { delay(1000) }`), thân đó thuộc về job của
+   * scope, và chính job đó mới là cái bị huỷ khi một con của scope fail. Trước
+   * đây chỉ xét `task.job` nên tín hiệu huỷ không bao giờ tới nơi: job của scope
+   * đổi state đúng, nhưng "task" của nó là generator rỗng chưa từng chạy, còn
+   * generator thật thì thuộc task cha — mà cha không bị huỷ.
+   */
+  private jobChiPhối(task: Task): Job {
+    return task.inlineStack[task.inlineStack.length - 1] ?? task.job
+  }
+
+  /**
+   * Task đang đỗ ở `joinChildren` CỦA CHÍNH scope inline đang chi phối nó —
+   * tức scope ấy đã TỰ biết mình hỏng và đang chờ con chạy hết `finally` trước
+   * khi ném lại ở khung người gọi (`runInlineBody`, cả đường thuận lẫn đường
+   * `catch`). Đây là "đừng ném lần thứ hai cho cùng một job": tín hiệu huỷ đã
+   * ở trong generator rồi, ném thêm lần nữa rơi đúng vào cái `yield
+   * joinChildren` đang chờ và CẮT LUÔN việc chờ — người gọi chạy `catch` trước
+   * khi con kịp dọn dẹp, đúng lỗi R1 mà M1 đã sửa một lần.
+   *
+   * Đọc thẳng từ `waiters` chứ không giữ thêm cờ trên Task: `waiters` là mô tả
+   * ĐẦY ĐỦ của "đang đỗ ở joinChildren" tại thời điểm này, vì `unwindCancelled`
+   * chỉ chạy khi `ready` đã cạn (xem runToCompletion) — không có task nào vừa
+   * được đánh thức mà chưa kịp chạy. Cờ song song sẽ ôi thiu ở đúng những
+   * đường không ai nhớ cập nhật.
+   *
+   * `inlineStack.length > 0` là điều kiện thật, không phải cho vui: mọi thân
+   * launch/async/root đều kết thúc bằng một `joinChildren` cho CHÍNH job mình.
+   * Thiếu nó thì một launch bị huỷ từ ngoài trong lúc chờ con sẽ không bao giờ
+   * nhận được tín hiệu huỷ, và người `join()` nó treo vĩnh viễn.
+   */
+  private đangChờConCủaScope(task: Task, governing: Job): boolean {
+    if (task.inlineStack.length === 0) return false
+    return this.waiters.some(
+      w => w.task === task && w.kind === 'children' && w.targetId === governing.id)
+  }
+
   private step(task: Task): void {
     const { job } = task
-    if (job.isCompleted) return
+    // `task.unwinding` là ngoại lệ có chủ ý của chốt "job xong rồi thì thôi":
+    // một generator ĐANG unwind vẫn còn `finally` phải chạy và phần đuôi
+    // (`joinChildren` chờ con dọn dẹp) phải hoàn tất, mà job của nó thì đã
+    // Cancelled từ trước khi tín hiệu huỷ được ném vào. Chặn ở đây là bỏ rơi
+    // generator giữa chừng: `finally` không chạy, `finished` không bao giờ
+    // được đặt, và người `join()` nó treo vĩnh viễn.
+    if (job.isCompleted && !task.unwinding) return
 
     const acquired = this.pool.acquire(task.ctx.dispatcher, job.id)
     if (acquired === null) {
@@ -464,6 +553,9 @@ export class Scheduler {
       result = thrown !== undefined ? task.body.throw(thrown) : task.body.next(resumed)
     } catch (err) {
       task.finished = true
+      // Exception đã ra khỏi generator: nếu đây là phần đuôi của một đợt unwind
+      // thì đợt ấy kết thúc tại đây.
+      task.unwinding = false
       this.pool.release(threadId)
       this.emitter.emit({ k: 'THREAD_STATE', threadId, state: 'FREE' })
       this.currentJob = null
@@ -490,20 +582,35 @@ export class Scheduler {
     this.currentTask = null
 
     if (result.done) {
-      task.finished = true
-      // Lưu TRƯỚC khi chuyển trạng thái: người chờ được đánh thức theo trạng
-      // thái, nên nếu ghi sau thì await có thể đọc phải result còn rỗng.
-      job.result = result.value
-      if (!job.isCompleted) {
-        job.transitionTo('Completing')
-        this.emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Active', to: 'Completing' })
-        job.transitionTo('Completed')
-        this.emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Completing', to: 'Completed' })
-      }
+      this.completeTask(task, result.value)
       return
     }
 
     this.suspend(task, result.value)
+  }
+
+  /**
+   * Generator của task đã chạy hết: ghi kết quả rồi đóng job.
+   *
+   * Dùng CHUNG cho hai đường tới đích — `step()` (đường thuận) và
+   * `unwindCancelled` (generator nuốt tín hiệu huỷ rồi chạy nốt tới hết). Hai
+   * bản sao của khối này sẽ trôi khỏi nhau, và cái trôi được là thứ im lặng:
+   * quên `job.result` thì `await` đọc phải undefined, quên chuyển trạng thái
+   * thì job đứng mãi ở Active trong trace.
+   */
+  private completeTask(task: Task, value: unknown): void {
+    const { job } = task
+    task.finished = true
+    task.unwinding = false
+    // Lưu TRƯỚC khi chuyển trạng thái: người chờ được đánh thức theo trạng
+    // thái, nên nếu ghi sau thì await có thể đọc phải result còn rỗng.
+    job.result = value
+    if (!job.isCompleted) {
+      job.transitionTo('Completing')
+      this.emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Active', to: 'Completing' })
+      job.transitionTo('Completed')
+      this.emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Completing', to: 'Completed' })
+    }
   }
 
   private suspend(task: Task, s: Suspension): void {
@@ -642,7 +749,7 @@ export class Scheduler {
     this.emitter.emit({ k: 'JOB_STATE', id, from: 'New', to: 'Active' })
     const task: Task = {
       job, ctx: jobCtx, body: (function* (): VoidCoroutineBody { })(), resumeValue: undefined,
-      resumeThrow: undefined, started: true, finished: false, inlineStack: [],
+      resumeThrow: undefined, started: true, finished: false, unwinding: false, inlineStack: [],
       parentDispatcher: parentCtx.dispatcher,
     }
     this.tasks.set(id, task)
@@ -685,7 +792,7 @@ export class Scheduler {
     this.emitter.emit({ k: 'JOB_STATE', id, from: 'New', to: 'Active' })
     const task: Task = {
       job, ctx: jobCtx, body: (function* (): VoidCoroutineBody { })(), resumeValue: undefined,
-      resumeThrow: undefined, started: true, finished: true, inlineStack: [],
+      resumeThrow: undefined, started: true, finished: true, unwinding: false, inlineStack: [],
       parentDispatcher: null,
     }
     this.tasks.set(id, task)

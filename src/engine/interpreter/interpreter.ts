@@ -429,9 +429,23 @@ export class Interpreter {
         // `finally` chứ không phải hai lời gọi ở hai đường: scope inline có BA
         // đường thoát (thân xong, thân ném, con của scope fail) và đường thứ ba
         // không đi qua completeInline lẫn failInline. Chỉ `finally` mới ghép
-        // được đúng MỘT pop cho mỗi push — kể cả khi task bị huỷ ở một điểm
-        // suspend BÊN TRONG try (thân scope, joinChildren, hoặc điểm đổi
-        // dispatcher lượt về).
+        // được đúng MỘT pop cho mỗi push.
+        //
+        // Ba điểm suspend BÊN TRONG try mà huỷ có thể rơi vào — thân scope,
+        // `joinChildren`, và điểm đổi dispatcher lượt về — nay đều đi qua đây
+        // thật. Trước Task 20 thì KHÔNG: câu này từng nói quá, chỉ điểm đổi
+        // dispatcher là đúng.
+        //   - thân scope: `unwindCancelled` chỉ xét `task.job`, mà thân một
+        //     scope inline chạy trong task CHA (job cha không bị huỷ), nên tín
+        //     hiệu huỷ không bao giờ tới nơi. Nay xét `jobChiPhối` — đỉnh ngăn
+        //     xếp inline của task.
+        //   - `joinChildren`: tín hiệu có tới, nhưng `runInlineBody` bắt được
+        //     rồi `yield joinChildren` lần nữa, nên `body.throw()` TRẢ VỀ thay
+        //     vì ném; scheduler cũ vứt cái IteratorResult ấy đi và bỏ rơi
+        //     generator giữa chừng — `finally` không bao giờ chạy. Nay scheduler
+        //     đưa nó trở lại đường chạy bình thường (xem `unwindCancelled` và
+        //     `Task.unwinding`).
+        // Ca canh cho cả hai nằm ở `inline-cancel.test.ts`.
         this.scheduler.exitInline(job)
         // Đổi dispatcher VỀ, kể cả trên đường ném — đã đối chiếu Kotlin 2.1.20:
         // sau `try { withContext(Dispatchers.IO) { throw ... } } catch`, cả catch
@@ -516,6 +530,17 @@ export class Interpreter {
         // Kotlin: cùng lỗi R1, chỉ khác đường đi tới (thân scope ném, thay vì
         // con của scope fail).
         yield { s: 'joinChildren', jobId: job.id }
+        // Người gọi phải thấy FAILURE CỦA CHÍNH SCOPE NÀY, không phải thứ vừa
+        // bay qua thân nó — cùng luật với đường thuận ở cuối hàm, chỉ khác lối
+        // tới. Hai cái lệch nhau khi tín hiệu huỷ đi vào từ NGOÀI thân: với
+        // `coroutineScope { launch { throw boom }; withContext(IO) { delay() } }`,
+        // job withContext bị cancelJob kéo theo nên nhận CancellationException
+        // (nó không `failure`), và nếu cứ ném lại `err` thì cái
+        // CancellationException ấy chui thẳng qua khung của coroutineScope ra
+        // tới người gọi — `catch (e: RuntimeException)` không khớp và "boom"
+        // biến mất. Đã đối chiếu Kotlin thật: người gọi in "caught: boom".
+        const failure = job.failure
+        if (failure) throw new KotlinThrow(failure.exType, failure.message)
       } else {
         // ReturnSignal (lệnh `return`) là kết thúc BÌNH THƯỜNG của scope,
         // không phải failure — vẫn completeInline như đường thuận.
