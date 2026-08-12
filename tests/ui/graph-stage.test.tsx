@@ -101,7 +101,7 @@ describe('sân khấu đồ thị — hiểu được mà không cần nhìn đi
     // việc đó đã là bằng chứng tính năng chạy.
     fireEvent.click(screen.getByRole('button', { name: 'Gỡ lỗi sâu' }))
     const console_ = document.querySelector('.console, [data-testid="console"]')
-      ?? screen.getByText('Console & chẩn đoán').closest('.panel')!
+      ?? screen.getByText('Console').closest('.panel')!
     expect(console_.textContent).toContain('A xong')
   })
 })

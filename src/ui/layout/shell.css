@@ -155,3 +155,23 @@
   padding: 12px;
 }
 
+
+/* Cột mã: editor co giãn, ô lỗi bám đáy và chỉ có mặt khi có lỗi. */
+.editor-col {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.editor-col > .panel:last-child:not(.panel--grow) {
+  flex: none;
+  /* Nhiều lỗi thì cuộn trong ô, không đẩy editor biến mất khỏi màn hình. */
+  max-height: 45%;
+  border-top: 1px solid var(--state-cancelled);
+}
+
+.panel--error .panel__title {
+  color: var(--state-cancelled);
+  background: rgba(248, 81, 73, 0.08);
+}

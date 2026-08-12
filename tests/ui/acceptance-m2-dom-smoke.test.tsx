@@ -79,7 +79,7 @@ describe('SMOKE DOM (jsdom) — thay Playwright, App thật + store thật', () 
     expect(nodesAtMount.length, 'supervisor cần >=5 node trên graph').toBeGreaterThanOrEqual(5)
 
     act(() => { useLabStore.getState().setStep(total) })
-    const region = screen.getByRole('region', { name: 'Console & chẩn đoán' })
+    const region = screen.getByRole('region', { name: 'Console' })
     expect(within(region).getAllByText(/^t=/)).toHaveLength(2)
     expect(within(region).getByText('A xong')).toBeInTheDocument()
     expect(within(region).getByText('C xong')).toBeInTheDocument()
@@ -124,7 +124,7 @@ describe('SMOKE DOM (jsdom) — thay Playwright, App thật + store thật', () 
     const container = document.body
 
     act(() => { useLabStore.getState().setStep(total) })
-    const region = screen.getByRole('region', { name: 'Console & chẩn đoán' })
+    const region = screen.getByRole('region', { name: 'Console' })
     expect(within(region).getByText('Chưa có output.')).toBeInTheDocument()
 
     const colorsAtEnd = jobBorderColors(container)

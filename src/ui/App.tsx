@@ -114,16 +114,32 @@ export function App() {
       debugOpen={debugOpen}
       nav={<LessonNav currentLessonId={lessonId} loadLesson={loadLesson} setSource={setSource} />}
       editor={
-        <Panel title="Mã Kotlin" grow>
-          <div ref={editorHost}>
-            <CodeEditor
-              value={source}
-              onChange={handleChange}
-              currentLine={currentLine}
-              extraExtensions={diagnosticMarks}
-            />
-          </div>
-        </Panel>
+        <div className="editor-col">
+          <Panel title="Mã Kotlin" grow>
+            <div ref={editorHost}>
+              <CodeEditor
+                value={source}
+                onChange={handleChange}
+                currentLine={currentLine}
+                extraExtensions={diagnosticMarks}
+              />
+            </div>
+          </Panel>
+          {/* Lỗi nằm NGAY DƯỚI code, không nằm sau nút gỡ lỗi. Trước đây
+              diagnostic chỉ có trong bảng gỡ lỗi (mặc định đóng), nên người
+              học thấy dòng bị gạch đỏ trong editor mà không có một chữ nào
+              giải thích — biết là sai, không biết sai gì. Chỉ hiện khi CÓ lỗi:
+              lúc code sạch thì cả chiều cao thuộc về editor. */}
+          {diagnostics.length > 0 && (
+            <Panel title={`${diagnostics.length} lỗi cần sửa`} tone="error">
+              <DiagnosticsPanel
+                diagnostics={diagnostics}
+                docLines={source.split('\n').length}
+                onJumpToLine={handleJumpToLine}
+              />
+            </Panel>
+          )}
+        </div>
       }
       graph={
         <Panel title="Sơ đồ coroutine" grow>
@@ -149,12 +165,9 @@ export function App() {
           <Panel title="Đang xảy ra gì" grow>
             <NarrationPanel lines={narration} stepIndex={stepIndex} onJump={setStep} />
           </Panel>
-          <Panel title="Console & chẩn đoán">
-            <DiagnosticsPanel
-              diagnostics={diagnostics}
-              docLines={source.split('\n').length}
-              onJumpToLine={handleJumpToLine}
-            />
+          {/* Chẩn đoán đã chuyển sang cột mã (ngay dưới editor) — ở đây chỉ
+              còn console, để không hiện cùng một lỗi ở hai chỗ. */}
+          <Panel title="Console">
             <ConsolePanel events={compiled.events} stepIndex={stepIndex} />
           </Panel>
         </>

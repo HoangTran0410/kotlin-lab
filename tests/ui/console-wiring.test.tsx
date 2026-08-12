@@ -22,7 +22,7 @@ describe('nối dây App -> ConsolePanel — console thật đi theo stepIndex t
     render(<App />)
     openDebug()
 
-    const region = screen.getByRole('region', { name: 'Console & chẩn đoán' })
+    const region = screen.getByRole('region', { name: 'Console' })
     expect(within(region).getByText('Chưa có output.')).toBeInTheDocument()
 
     const total = useLabStore.getState().compiled.events.length

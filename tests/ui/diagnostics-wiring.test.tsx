@@ -4,7 +4,6 @@ import { render, screen } from '@testing-library/react'
 import { EditorView } from '@codemirror/view'
 import { App } from '../../src/ui/App'
 import { useLabStore } from '../../src/state/store'
-import { openDebug } from './helpers/openDebug'
 
 /**
  * "Nối dây" ngoài 7 test của brief (tests/ui/diagnostics.test.tsx), theo đúng
@@ -25,11 +24,18 @@ describe('nối dây App — diagnostics chảy từ store vào cả panel lẫn
 
     const { container } = render(<App />)
 
-    openDebug()
 
-    // Panel: thông điệp + hint thật từ store, không phải fixture dựng tay.
+    // Lỗi phải đọc được NGAY, với bảng gỡ lỗi vẫn ĐÓNG (mặc định). Đây là
+    // chính chỗ từng hỏng: người học chỉ thấy dòng bị gạch đỏ trong editor,
+    // còn câu giải thích thì nằm sau một nút mà họ không biết là phải bấm.
+    expect(screen.queryByRole('button', { name: 'Đóng bảng gỡ lỗi' }),
+      'bảng gỡ lỗi phải đang ĐÓNG thì test này mới có nghĩa').toBeNull()
     expect(screen.getByText(diag.message)).toBeInTheDocument()
     expect(screen.getByText(diag.hint!)).toBeInTheDocument()
+
+    // Và nó nằm trong CỘT MÃ, cạnh code — không phải ở cột bên kia màn hình.
+    const cotMa = container.querySelector('.editor-col')!
+    expect(cotMa.textContent, 'lỗi không nằm trong cột mã').toContain(diag.message)
 
     // Editor: gutter chấm đỏ + gạch chân THẬT SỰ được vẽ vào DOM của
     // EditorView sống — đây là phần mà test thuần diagnosticMarks.test.ts
@@ -38,11 +44,17 @@ describe('nối dây App — diagnostics chảy từ store vào cả panel lẫn
     expect(container.querySelector('.cm-diagnostic-dot')).not.toBeNull()
   })
 
+  it('code sạch thì KHÔNG có ô lỗi nào chiếm chỗ dưới editor', () => {
+    useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
+    useLabStore.getState().setSource('fun main() = runBlocking { println("hi") }')
+    render(<App />)
+    expect(screen.queryByRole('region', { name: /lỗi cần sửa/ })).toBeNull()
+  })
+
   it('không có lỗi thì CodeEditor sống không còn dấu nào', () => {
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource('fun main() = runBlocking { println("hi") }')
     const { container } = render(<App />)
-    openDebug()
     expect(useLabStore.getState().compiled.diagnostics).toEqual([])
     expect(container.querySelector('.cm-diagnostic-line')).toBeNull()
     expect(container.querySelector('.cm-diagnostic-dot')).toBeNull()
@@ -52,7 +64,6 @@ describe('nối dây App — diagnostics chảy từ store vào cả panel lẫn
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource('fun main() = runBlocking { val c = Channel<Int>() }')
     const { container } = render(<App />)
-    openDebug()
 
     const host = container.querySelector('[data-testid="code-editor"]') as HTMLElement
     const view = EditorView.findFromDOM(host)
