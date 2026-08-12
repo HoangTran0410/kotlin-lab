@@ -49,6 +49,19 @@ describe('Job state machine', () => {
     expect(j.isActive).toBe(true)
   })
 
+  it('isCompleted KHÁC !isActive — job mới tạo (New) cả hai đều false', () => {
+    // Task 19 làm cho `New` không còn quan sát được từ code Kotlin nữa (spawn
+    // chuyển Active ngay), nên guard cũ ở job-state.test.ts (dựa vào việc
+    // Kotlin đọc được job ở state New) không còn bắt được mutation
+    // "isCompleted = !isActive" nữa — đã đo: áp mutation đó vào job.ts rồi
+    // chạy TOÀN BỘ 510 test, không cái nào đỏ. Job mới tạo (state New) vẫn là
+    // hình dạng DUY NHẤT còn lại phân biệt được hai cái này ở tầng Job, nên
+    // guard phải chuyển xuống đây, mức unit test của chính Job.
+    const j = new Job('j', 'j', null, false)
+    expect(j.isActive).toBe(false)
+    expect(j.isCompleted).toBe(false)
+  })
+
   it('isCancelled đúng sau khi Cancelled', () => {
     const j = new Job('j', 'j', null, false)
     j.transitionTo('Active'); j.transitionTo('Cancelling'); j.transitionTo('Cancelled')

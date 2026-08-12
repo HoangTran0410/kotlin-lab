@@ -46,30 +46,36 @@ describe('job.isActive / isCancelled / isCompleted đọc trạng thái THẬT',
     expect(r.output).toEqual(['false', 'true'])
   })
 
-  it('isCompleted false ngay sau launch, trước khi job kịp chạy — phân biệt được với !isActive', () => {
-    // Vòng review đầu tiên (Task 4) kết luận sai rằng KHÔNG có ca nào bằng
-    // Kotlin nguồn phân biệt được `isCompleted` với `!isActive`, vì lý luận
-    // mã Kotlin chỉ quan sát job ở Active/Completed/Cancelled — bỏ sót state
-    // `New`: `Scheduler.spawn` (scheduler.ts) đẩy job vào `ready` mà KHÔNG
-    // chuyển state; `New -> Active` chỉ xảy ra ở lần step() ĐẦU TIÊN của job
-    // đó. `launch` trả về đồng bộ, nên ngay sau `val job = launch { ... }`,
-    // TRƯỚC điểm suspend kế tiếp, job vẫn ở `New`.
+  it('isCompleted false ngay sau launch, trước khi job kịp chạy', () => {
+    // LỊCH SỬ (trước Task 19): vòng review đầu tiên (Task 4) kết luận sai rằng
+    // KHÔNG có ca nào bằng Kotlin nguồn phân biệt được `isCompleted` với
+    // `!isActive`, vì lý luận mã Kotlin chỉ quan sát job ở
+    // Active/Completed/Cancelled — bỏ sót state `New` mà engine (trước khi
+    // sửa) để lộ ra: `Scheduler.spawn` đẩy job vào `ready` mà KHÔNG chuyển
+    // state, `New -> Active` chỉ xảy ra ở lần step() ĐẦU TIÊN, nên ngay sau
+    // `val job = launch { ... }` job vẫn ở `New` — và đó từng là ca DUY NHẤT
+    // trong cả bộ test phân biệt được `isCompleted` với mutation
+    // `!isActive` (New: isActive false -> !isActive true, SAI).
+    //
+    // Task 19 sửa đúng chỗ lệch đó: `isActive` bây giờ true ngay từ lúc tạo
+    // (khớp CoroutineStart.DEFAULT thật), nên `New` không còn quan sát được
+    // từ Kotlin nữa — cửa sổ mà ca này từng dùng để bắt mutation đã đóng lại.
+    // Đã đo: sau khi sửa, áp mutation "isCompleted = !isActive" vào job.ts
+    // rồi chạy TOÀN BỘ 510 test — không cái nào đỏ, kể cả ca này. Guard cho
+    // mutation đó đã dời xuống tầng unit test của Job
+    // (runtime-job.test.ts, 'isCompleted KHÁC !isActive — job mới tạo (New)
+    // cả hai đều false'), nơi `New` vẫn quan sát được trực tiếp trên chính
+    // đối tượng Job. Ca dưới đây giờ chỉ còn khẳng định giá trị isCompleted
+    // đúng theo Kotlin thật, không còn vai trò bắt mutation.
     //
     // Đối chiếu Kotlin thật (api.kotlinlang.org, cùng chương trình): in
-    // "false" rồi "true" — khớp đúng assertion dưới đây. (Engine lệch Kotlin
-    // thật ở `isActive` ngay tại điểm này — Kotlin cho true vì
-    // CoroutineStart.DEFAULT coi job là Active từ lúc tạo, engine cho false vì
-    // chưa step() lần nào — nhưng đó là chuyện của `isActive`, KHÔNG phải của
-    // `isCompleted`; ca này cố tình không assert `isActive` để không đóng
-    // băng chỗ lệch đó.)
+    // "false" rồi "true" — khớp đúng assertion dưới đây.
     const r = runSource(`fun main() = runBlocking {
     val job = launch { delay(10) }
     println(job.isCompleted)
     job.join()
     println(job.isCompleted)
 }`)
-    // Đột biến "isCompleted = !isActive" cho ['true', 'true'] (New: isActive
-    // false -> !isActive true; SAI dòng đầu).
     expect(r.output).toEqual(['false', 'true'])
   })
 })

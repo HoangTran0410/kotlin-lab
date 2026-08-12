@@ -195,6 +195,14 @@ export class Scheduler {
     this.emitter.emit({
       k: 'COROUTINE_CREATED', id, parentId: parent?.id ?? null, builder, ctx: jobCtx.summary(),
     }, srcLine)
+    // CoroutineStart.DEFAULT (đường DUY NHẤT subset này hỗ trợ, xem spec §4.1):
+    // Kotlin thật coi coroutine vừa tạo là Active NGAY LẬP TỨC — `New` chỉ tồn
+    // tại với CoroutineStart.LAZY, ngoài subset. `launch`/`async` trả về đồng
+    // bộ, nên mọi câu lệnh đứng giữa lời gọi và điểm suspend kế tiếp phải thấy
+    // Active, không phải New. Đối chiếu Kotlin thật (api.kotlinlang.org 2.1.20):
+    // `val job = launch { delay(10) }; println(job.isActive)` in "true".
+    job.transitionTo('Active')
+    this.emitter.emit({ k: 'JOB_STATE', id, from: 'New', to: 'Active' })
 
     const task: Task = {
       job, ctx: jobCtx, body: makeBody(job), resumeValue: undefined, resumeThrow: undefined,
@@ -431,9 +439,12 @@ export class Scheduler {
     }
 
     if (!task.started) {
+      // `New -> Active` KHÔNG còn xảy ra ở đây từ Task 19: job đã Active ngay
+      // lúc `spawn`/`spawnChildOf` tạo ra nó (khớp CoroutineStart.DEFAULT thật
+      // của Kotlin). Chỗ này chỉ còn đánh dấu THỰC THI bắt đầu — COROUTINE_STARTED
+      // là sự kiện chạy, khác với Active là trạng thái vòng đời; cố tình giữ
+      // `task.started` và event này nguyên chỗ cũ, không dời theo Active.
       task.started = true
-      job.transitionTo('Active')
-      this.emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'New', to: 'Active' })
       this.emitter.emit({ k: 'COROUTINE_STARTED', id: job.id, threadId })
     } else {
       this.emitter.emit({ k: 'COROUTINE_RESUMED', id: job.id, threadId })
