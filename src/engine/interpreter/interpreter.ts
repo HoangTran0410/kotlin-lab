@@ -399,51 +399,45 @@ export class Interpreter {
           : calleeName === 'coroutineScope' ? 'coroutineScope' : 'supervisorScope',
         env.enclosingJobId, isSupervisor, ctx,
       )
-      let result: KValue
-      try {
-        // Thân scope chạy trong Env mang jobId của scope, nên launch bên trong
-        // gắn đúng cha kể cả sau khi suspend/resume.
-        result = yield* this.evalBlock(lambda.body, env.child(job.id))
-        // coroutineScope/supervisorScope/runBlocking chỉ trả về khi mọi child xong.
-        yield { s: 'joinChildren', jobId: job.id }
-      } catch (err) {
-        // KHÔNG được gộp hai đường vào `finally { completeInline(job) }`.
-        // completeInline không có đường thất bại, nên một exception thoát khỏi
-        // thân scope sẽ báo scope HOÀN THÀNH THÀNH CÔNG: con của nó không ai
-        // huỷ và chạy tiếp như mồ côi, và failure không bao giờ đi qua
-        // reportFailure. Đúng thứ ngữ nghĩa mà công cụ này tồn tại để dạy.
-        if (err instanceof KotlinThrow) {
-          this.scheduler.failInline(job, toCause(err))
-          // Chờ con unwind XONG rồi mới ném ra ngoài. failInline vừa huỷ chúng,
-          // nhưng huỷ chỉ lật trạng thái Job — khối `finally` trong code Kotlin
-          // chỉ chạy khi scheduler ném vào generator ở vòng lặp sau. Bỏ bước
-          // này thì catch của người gọi chạy TRƯỚC finally của con, ngược hẳn
-          // Kotlin: cùng lỗi R1, chỉ khác đường đi tới (thân scope ném, thay vì
-          // con của scope fail).
-          yield { s: 'joinChildren', jobId: job.id }
-        } else {
-          // ReturnSignal (lệnh `return`) là kết thúc BÌNH THƯỜNG của scope,
-          // không phải failure — vẫn completeInline như đường thuận.
-          this.scheduler.completeInline(job)
-        }
-        throw err
+      // `withContext(Dispatchers.X)` là builder DUY NHẤT đổi được dispatcher
+      // giữa chừng. Ba builder kia không nhận dispatcher (coroutineScope /
+      // supervisorScope không có đối số; runBlocking lồng nhau nằm ngoài subset).
+      //
+      // `dispatcherCũ` phải là dispatcher THẬT của task đang chạy, không phải
+      // của job cha theo cấu trúc — hai cái này khác nhau khi withContext lồng
+      // nhau. `dispatcherMới` đọc từ ctx ĐÃ MERGE của chính job vừa tạo, không
+      // đọc `ctx` dựng từ đối số: `withContext(CoroutineName("x"))` không đặt
+      // dispatcher nào, và ctx-đối-số trả về 'Default' mặc định — so với nó thì
+      // mọi withContext-chỉ-đổi-tên đều hoá ra "đổi dispatcher".
+      const oldDispatcher = this.scheduler.currentDispatcher()
+      const newDispatcher = this.scheduler.dispatcherOf(job.id)
+      const needsSwitch = calleeName === 'withContext' && newDispatcher !== oldDispatcher
+      if (needsSwitch) {
+        yield { s: 'switchContext', jobId: job.id, dispatcher: newDispatcher, line: e.pos.line }
       }
-      // Con fail => scope NÉM LẠI ĐÚNG TẠI ĐÂY, tức trong khung của người gọi.
-      //
-      // Trước đây việc ném lại xảy ra gián tiếp: failure của con leo lên đánh
-      // dấu job bao ngoài là Cancelled, rồi unwindCancelled ném vào generator
-      // của nó. Cách đó cho ra output đúng nhưng SAI hai chỗ — trace nói
-      // runBlocking đã chết dù người học bắt được exception (R2), và tổ tiên bị
-      // ném vào trước khi con cháu kịp chạy finally (R1). Ném ở đây thì cả hai
-      // tự đúng: joinChildren ở trên đã bảo đảm mọi con unwind xong.
-      //
-      // `failure` chứ không phải `cause`: chỉ job THẬT SỰ fail mới ném lại.
-      // supervisorScope chặn failure của con ngay tại ranh giới nên `failure`
-      // của nó là null — đúng như Kotlin, caller không thấy gì cả.
-      const failure = job.failure
-      if (failure) throw new KotlinThrow(failure.exType, failure.message)
-      this.scheduler.completeInline(job)
-      return result
+      try {
+        return yield* this.runInlineBody(lambda.body, job, env)
+      } finally {
+        // `finally` chứ không phải hai lời gọi ở hai đường: scope inline có BA
+        // đường thoát (thân xong, thân ném, con của scope fail) và đường thứ ba
+        // không đi qua completeInline lẫn failInline. Chỉ `finally` mới ghép
+        // được đúng MỘT pop cho mỗi push, kể cả khi task bị huỷ giữa chừng.
+        this.scheduler.exitInline(job)
+        // Đổi dispatcher VỀ, kể cả trên đường ném — đã đối chiếu Kotlin 2.1.20:
+        // sau `try { withContext(Dispatchers.IO) { throw ... } } catch`, cả catch
+        // lẫn lệnh sau đó đều chạy trên thread `main`. `yield` trong `finally` là
+        // hợp lệ với generator JS và là cách duy nhất bảo đảm điều đó — cùng lý
+        // do mà `finally` của Kotlin chạy được khi bị cancel (spec §2.3).
+        //
+        // Đứng SAU exitInline: lúc này job withContext đã Completed và đã rời
+        // ngăn xếp, nên DISPATCH lượt về phải đứng tên job GỌI (job đang thật sự
+        // được resume trên dispatcher cũ), không phải tên một scope đã chết.
+        if (needsSwitch) {
+          yield {
+            s: 'switchContext', jobId: env.enclosingJobId ?? job.id, dispatcher: oldDispatcher,
+          }
+        }
+      }
     }
 
     if (calleeName === 'launch' || calleeName === 'async') {
@@ -481,6 +475,60 @@ export class Interpreter {
       }
     }
     return undefined
+  }
+
+  /**
+   * Thân của một scope inline đã được `spawnInline` tạo job: chạy thân, chờ con,
+   * rồi đóng job theo đúng đường thuận/nghịch. Tách khỏi `tryBuilder` để phần
+   * đổi dispatcher (yield vào/ra) bọc được toàn bộ khối này trong một try/finally
+   * mà không phải thụt lề lại toàn bộ logic vốn có.
+   */
+  private *runInlineBody(body: Block, job: Job, env: Env): Eval<KValue> {
+    let result: KValue
+    try {
+      // Thân scope chạy trong Env mang jobId của scope, nên launch bên trong
+      // gắn đúng cha kể cả sau khi suspend/resume.
+      result = yield* this.evalBlock(body, env.child(job.id))
+      // coroutineScope/supervisorScope/runBlocking chỉ trả về khi mọi child xong.
+      yield { s: 'joinChildren', jobId: job.id }
+    } catch (err) {
+      // KHÔNG được gộp hai đường vào `finally { completeInline(job) }`.
+      // completeInline không có đường thất bại, nên một exception thoát khỏi
+      // thân scope sẽ báo scope HOÀN THÀNH THÀNH CÔNG: con của nó không ai
+      // huỷ và chạy tiếp như mồ côi, và failure không bao giờ đi qua
+      // reportFailure. Đúng thứ ngữ nghĩa mà công cụ này tồn tại để dạy.
+      if (err instanceof KotlinThrow) {
+        this.scheduler.failInline(job, toCause(err))
+        // Chờ con unwind XONG rồi mới ném ra ngoài. failInline vừa huỷ chúng,
+        // nhưng huỷ chỉ lật trạng thái Job — khối `finally` trong code Kotlin
+        // chỉ chạy khi scheduler ném vào generator ở vòng lặp sau. Bỏ bước
+        // này thì catch của người gọi chạy TRƯỚC finally của con, ngược hẳn
+        // Kotlin: cùng lỗi R1, chỉ khác đường đi tới (thân scope ném, thay vì
+        // con của scope fail).
+        yield { s: 'joinChildren', jobId: job.id }
+      } else {
+        // ReturnSignal (lệnh `return`) là kết thúc BÌNH THƯỜNG của scope,
+        // không phải failure — vẫn completeInline như đường thuận.
+        this.scheduler.completeInline(job)
+      }
+      throw err
+    }
+    // Con fail => scope NÉM LẠI ĐÚNG TẠI ĐÂY, tức trong khung của người gọi.
+    //
+    // Trước đây việc ném lại xảy ra gián tiếp: failure của con leo lên đánh
+    // dấu job bao ngoài là Cancelled, rồi unwindCancelled ném vào generator
+    // của nó. Cách đó cho ra output đúng nhưng SAI hai chỗ — trace nói
+    // runBlocking đã chết dù người học bắt được exception (R2), và tổ tiên bị
+    // ném vào trước khi con cháu kịp chạy finally (R1). Ném ở đây thì cả hai
+    // tự đúng: joinChildren ở trên đã bảo đảm mọi con unwind xong.
+    //
+    // `failure` chứ không phải `cause`: chỉ job THẬT SỰ fail mới ném lại.
+    // supervisorScope chặn failure của con ngay tại ranh giới nên `failure`
+    // của nó là null — đúng như Kotlin, caller không thấy gì cả.
+    const failure = job.failure
+    if (failure) throw new KotlinThrow(failure.exType, failure.message)
+    this.scheduler.completeInline(job)
+    return result
   }
 
   /**

@@ -24,6 +24,31 @@ interface Task {
   started: boolean
   /** Đã chạy xong hoặc đã unwind — không được đụng tới generator nữa. */
   finished: boolean
+  /**
+   * Các scope inline (runBlocking/coroutineScope/supervisorScope/withContext)
+   * chạy trong generator của task NGOÀI, nên `currentJob` — vốn được gán từ
+   * task.job ở đầu mỗi step() — không phải job đang thật sự thực thi. Ngăn xếp
+   * này giữ job inline trong cùng CỦA RIÊNG TASK NÀY, và mọi event phát ra nhân
+   * danh "job hiện tại" phải đọc qua đây.
+   *
+   * Trên Task chứ không trên Scheduler: task có thể treo giữa thân một scope
+   * inline (`coroutineScope { delay(100) }`) trong khi task khác chạy. Ngăn xếp
+   * dùng chung ở mức Scheduler sẽ gán job inline của task đang treo cho
+   * `println` của task đang chạy — sai âm thầm, và chỉ hiện ra khi có hai
+   * coroutine xen kẽ.
+   */
+  inlineStack: Job[]
+  /**
+   * Dispatcher của cha TẠI LÚC TẠO, hoặc null nếu không có cha.
+   *
+   * Chụp lại thay vì đọc `ctx` của task cha khi cần: từ khi có `switchContext`,
+   * `task.ctx` là dữ liệu THAY ĐỔI ĐƯỢC — cha có thể đang ở giữa một
+   * `withContext(IO)` khi con lần đầu được chạy, và lúc đó so với ctx hiện thời
+   * của cha sẽ nuốt mất một DISPATCH có thật. Kotlin dispatch continuation đầu
+   * tiên của con ngay tại chỗ `launch` (CoroutineStart.DEFAULT), nên mốc so
+   * sánh đúng là dispatcher lúc TẠO.
+   */
+  parentDispatcher: string | null
 }
 
 export function toCause(err: unknown): FailureCause {
@@ -60,8 +85,19 @@ export class Scheduler {
   /** Mảng song song với `tasks`, để duyệt theo đúng thứ tự tạo. */
   private readonly taskOrder: Task[] = []
   private currentJob: Job | null = null
+  /**
+   * Task đang chạy generator NGAY LÚC NÀY. Đi kèm `currentJob` và luôn được đặt/
+   * xoá cùng lúc với nó; tách ra vì ngăn xếp scope inline nằm trên Task.
+   */
+  private currentTask: Task | null = null
   /** Coroutine gốc. Chương trình kết thúc khi nó kết thúc — xem runToCompletion. */
   private rootJobId: JobId | null = null
+  /**
+   * Task vừa đi qua `switchContext` và đang chờ được chạy lại trên dispatcher
+   * mới, kèm job đứng tên DISPATCH và dòng gây ra. Không thể phát DISPATCH ngay
+   * trong `suspend()`: threadId chỉ biết được sau khi `acquire` ở step kế.
+   */
+  private readonly pendingDispatch = new Map<Task, { jobId: JobId; line?: number }>()
 
   /**
    * Task đang chờ một job khác kết thúc. Mảng, không phải Map lồng, để thứ tự
@@ -75,8 +111,38 @@ export class Scheduler {
 
   private newJobId(): JobId { return `j${this.nextJobId++}` }
 
+  /**
+   * Job mà code đang chạy THUỘC VỀ, khác với `currentJob` (job của task).
+   * Trong `withContext(Dispatchers.IO) { println("x") }`, task đang chạy vẫn là
+   * task của runBlocking, nhưng dòng println đó thuộc về job withContext — đó
+   * là thứ đồ thị phải highlight. Mọi event phát ra nhân danh "job hiện tại"
+   * phải đọc qua đây, đừng đọc `currentJob`.
+   */
+  private get currentInlineJob(): Job | null {
+    const t = this.currentTask
+    return t ? (t.inlineStack[t.inlineStack.length - 1] ?? t.job) : this.currentJob
+  }
+
+  /** Dispatcher THẬT của task đang chạy — đã tính cả các withContext lồng nhau. */
+  currentDispatcher(): string {
+    if (!this.currentTask) {
+      // Không có task nào đang chạy thì không có dispatcher nào "đang hiệu lực".
+      // Trả bừa 'Default' ở đây sẽ làm interpreter tưởng đang đổi dispatcher và
+      // phát DISPATCH rác; chết ngay còn hơn dựng trace sai.
+      throw new Error('Scheduler: currentDispatcher() được gọi ngoài lúc chạy một task')
+    }
+    return this.currentTask.ctx.dispatcher
+  }
+
+  /** Dispatcher hiệu lực của một job đã tồn tại (ctx của nó đã merge với cha). */
+  dispatcherOf(jobId: JobId): string {
+    const task = this.tasks.get(jobId)
+    if (!task) throw new Error(`Scheduler: không có task nào cho job ${jobId}`)
+    return task.ctx.dispatcher
+  }
+
   println(text: string, srcLine?: number): void {
-    this.emitter.emit({ k: 'PRINTLN', id: this.currentJob?.id ?? 'j0', text }, srcLine)
+    this.emitter.emit({ k: 'PRINTLN', id: this.currentInlineJob?.id ?? 'j0', text }, srcLine)
   }
 
   spawnRoot(makeBody: (job: Job) => CoroutineBody): Job {
@@ -116,7 +182,8 @@ export class Scheduler {
 
     const task: Task = {
       job, ctx: jobCtx, body: makeBody(job), resumeValue: undefined, resumeThrow: undefined,
-      started: false, finished: false,
+      started: false, finished: false, inlineStack: [],
+      parentDispatcher: parent ? this.tasks.get(parent.id)?.ctx.dispatcher ?? null : null,
     }
     this.tasks.set(id, task)
     this.taskOrder.push(task)
@@ -271,6 +338,10 @@ export class Scheduler {
       task.finished = true
       did = true
       this.currentJob = task.job
+      // Ngăn xếp inline vẫn còn nguyên từ lúc task bị treo: `finally` chạy trên
+      // đường unwind nằm BÊN TRONG scope inline nào thì println của nó thuộc về
+      // scope ấy, y như khi chạy bình thường.
+      this.currentTask = task
       try {
         // Generator chạy các finally trên đường unwind rồi ném lại.
         //
@@ -290,6 +361,7 @@ export class Scheduler {
         // Bình thường: ném lại sau khi finally đã chạy xong. Không phải lỗi.
       } finally {
         this.currentJob = null
+        this.currentTask = null
       }
     }
     return did
@@ -313,6 +385,26 @@ export class Scheduler {
     }
     const threadId = acquired
     this.currentJob = job
+    this.currentTask = task
+
+    // DISPATCH nghĩa là ĐỔI dispatcher, không phải "được xếp lịch". Phát khi:
+    //  - task vừa qua switchContext (withContext đổi dispatcher), hoặc
+    //  - lần chạy đầu tiên của một coroutine có dispatcher khác cha nó.
+    // Nếu phát ở mọi lần acquire thì nó trùng lặp COROUTINE_STARTED/RESUMED và
+    // mất hẳn ý nghĩa "chỗ này đổi thread".
+    //
+    // Phải nằm TRƯỚC khối `task.started = true` bên dưới: điều kiện lần-đầu đọc
+    // chính cờ đó.
+    const pending = this.pendingDispatch.get(task)
+    this.pendingDispatch.delete(task)
+    if (pending) {
+      this.emitter.emit(
+        { k: 'DISPATCH', id: pending.jobId, dispatcher: task.ctx.dispatcher, threadId },
+        pending.line)
+    } else if (!task.started && task.parentDispatcher !== null
+               && task.parentDispatcher !== task.ctx.dispatcher) {
+      this.emitter.emit({ k: 'DISPATCH', id: job.id, dispatcher: task.ctx.dispatcher, threadId })
+    }
 
     if (!task.started) {
       task.started = true
@@ -340,6 +432,7 @@ export class Scheduler {
       this.pool.release(threadId)
       this.emitter.emit({ k: 'THREAD_STATE', threadId, state: 'FREE' })
       this.currentJob = null
+      this.currentTask = null
       // Cùng lý do (và cùng cách canh) như failInline: job đã kết thúc RỒI thì
       // đây không phải failure mới, chỉ là cùng một exception đang đi ngược ra
       // qua khung của nó. Ghi lại lần nữa là nhân đôi sự kiện — và tệ hơn, ghi
@@ -359,6 +452,7 @@ export class Scheduler {
     this.pool.release(threadId)
     this.emitter.emit({ k: 'THREAD_STATE', threadId, state: 'FREE' })
     this.currentJob = null
+    this.currentTask = null
 
     if (result.done) {
       task.finished = true
@@ -378,9 +472,17 @@ export class Scheduler {
   }
 
   private suspend(task: Task, s: Suspension): void {
-    // 'joinChildren' không có trong schema Event — gom về 'join' khi ghi trace.
-    const reason = s.s === 'joinChildren' ? 'join' : s.s
-    this.emitter.emit({ k: 'COROUTINE_SUSPENDED', id: task.job.id, reason }, s.line)
+    // `switchContext` là điểm nhường quyền KỸ THUẬT (phải trả thread cũ rồi mới
+    // lấy được thread mới), KHÔNG phải điểm suspend mà người học cần thấy như
+    // delay/await/join. Kotlin cũng không coi withContext là suspend point của
+    // coroutine gọi theo nghĩa đó. Phát COROUTINE_SUSPENDED ở đây sẽ nhét thêm
+    // một cặp suspended/resumed vào timeline cho MỌI withContext đổi dispatcher,
+    // làm nhiễu đúng thứ mà bài học muốn chỉ ra: chỗ đổi thread.
+    if (s.s !== 'switchContext') {
+      // 'joinChildren' không có trong schema Event — gom về 'join' khi ghi trace.
+      const reason = s.s === 'joinChildren' ? 'join' : s.s
+      this.emitter.emit({ k: 'COROUTINE_SUSPENDED', id: task.job.id, reason }, s.line)
+    }
 
     switch (s.s) {
       case 'delay':
@@ -411,6 +513,15 @@ export class Scheduler {
           this.ready.push(task); break
         }
         this.waiters.push({ task, kind: 'children', targetId: s.jobId })
+        break
+      }
+      case 'switchContext': {
+        task.ctx = task.ctx.withDispatcher(s.dispatcher)
+        // Thread cũ đã được release ở cuối step(); thread mới sẽ acquire ở step
+        // kế. DISPATCH phải mang threadId MỚI, mà threadId chỉ biết được sau khi
+        // acquire — nên ghi nợ ở đây, trả ở đầu step() kế.
+        this.pendingDispatch.set(task, { jobId: s.jobId, line: s.line })
+        this.ready.push(task)
         break
       }
     }
@@ -496,10 +607,15 @@ export class Scheduler {
     this.emitter.emit({ k: 'JOB_STATE', id, from: 'New', to: 'Active' })
     const task: Task = {
       job, ctx: jobCtx, body: (function* (): VoidCoroutineBody { })(), resumeValue: undefined,
-      resumeThrow: undefined, started: true, finished: false,
+      resumeThrow: undefined, started: true, finished: false, inlineStack: [],
+      parentDispatcher: parentCtx.dispatcher,
     }
     this.tasks.set(id, task)
     this.taskOrder.push(task)
+    // Từ đây tới exitInline(job), MỌI event nhân danh "job hiện tại" thuộc về
+    // scope này chứ không thuộc task bao ngoài. Push vào ngăn xếp của task đang
+    // chạy — spawnInline chỉ được gọi từ trong thân một coroutine.
+    this.pushInline(job)
     return job
   }
 
@@ -532,11 +648,44 @@ export class Scheduler {
     this.emitter.emit({ k: 'JOB_STATE', id, from: 'New', to: 'Active' })
     const task: Task = {
       job, ctx: jobCtx, body: (function* (): VoidCoroutineBody { })(), resumeValue: undefined,
-      resumeThrow: undefined, started: true, finished: true,
+      resumeThrow: undefined, started: true, finished: true, inlineStack: [],
+      parentDispatcher: null,
     }
     this.tasks.set(id, task)
     this.taskOrder.push(task)
     return job
+  }
+
+  private pushInline(job: Job): void {
+    if (!this.currentTask) {
+      throw new Error(
+        `Scheduler: spawnInline(${job.id}) ngoài lúc chạy một task. Scope inline chỉ ` +
+        'tồn tại bên trong thân một coroutine — không có task thì không có ngăn xếp để push.',
+      )
+    }
+    this.currentTask.inlineStack.push(job)
+  }
+
+  /**
+   * Rời một scope inline. Pop phải đúng job đang ở đỉnh — nếu không khớp, ném
+   * lỗi thay vì im lặng, vì lệch ngăn xếp sẽ gán nhầm job cho MỌI println về sau.
+   *
+   * Gọi từ interpreter trong `finally`, KHÔNG gọi từ completeInline/failInline.
+   * Scope inline có BA đường thoát, và đường thứ ba — con của scope fail nên
+   * interpreter ném lại tại `if (job.failure)` — không đi qua hàm nào trong hai
+   * hàm đó. Đặt pop ở đấy thì ngăn xếp rò đúng ở ca ấy.
+   */
+  exitInline(job: Job): void {
+    const task = this.currentTask
+    if (!task) {
+      throw new Error(`Scheduler: exitInline(${job.id}) ngoài lúc chạy một task`)
+    }
+    const top = task.inlineStack.pop()
+    if (top !== job) {
+      throw new Error(
+        `Scheduler: ngăn xếp inline lệch — pop ${job.id} nhưng đỉnh là ${top?.id ?? 'rỗng'}`,
+      )
+    }
   }
 
   /**

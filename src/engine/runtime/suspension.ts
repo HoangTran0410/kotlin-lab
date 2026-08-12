@@ -13,6 +13,16 @@ export type Suspension =
   /** Chờ MỌI child của jobId kết thúc. coroutineScope/supervisorScope dùng cái này. */
   | { s: 'joinChildren'; jobId: JobId; line?: number }
   | { s: 'yield'; line?: number }
+  /**
+   * Đổi dispatcher giữa chừng (withContext). Task được xếp lại hàng ready của
+   * pool mới: thread cũ đã được release ở cuối step(), thread mới được acquire
+   * ở step kế — đó là toàn bộ cơ chế "đổi thread" mà người học nhìn thấy.
+   *
+   * `jobId` là job sẽ đứng tên sự kiện DISPATCH: job withContext ở lượt ĐI
+   * (nó là cái được dispatch sang dispatcher mới), job gọi ở lượt VỀ (lúc đó
+   * job withContext đã Completed, không thể còn được dispatch đi đâu nữa).
+   */
+  | { s: 'switchContext'; jobId: JobId; dispatcher: string; line?: number }
 
 /**
  * Thân coroutine: generator yield ra điểm suspend, nhận lại giá trị resume.
