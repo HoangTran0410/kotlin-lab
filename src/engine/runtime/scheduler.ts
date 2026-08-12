@@ -74,6 +74,22 @@ export function toCause(err: unknown): FailureCause {
   return { exType: 'Exception', message: String(err), isCancellation: false }
 }
 
+/**
+ * Lỗi của ENGINE, không phải exception của chương trình Kotlin đang chạy: một
+ * bất biến đã vỡ và không có nghĩa nào để "chạy tiếp".
+ *
+ * Nhận dạng theo hình dạng chứ không `instanceof KotlinThrow`, đúng cùng lý do
+ * (và cùng cách) như `toCause`: test của Scheduler dựng exception Kotlin giả
+ * bằng `Object.assign(new Error, { kotlinType })`, và những cái đó phải được coi
+ * là exception của chương trình.
+ *
+ * `ReturnSignal` của interpreter KHÔNG phải Error nên không lọt vào đây — nó là
+ * tín hiệu điều khiển nội bộ, giữ nguyên đường xử lý cũ.
+ */
+function isEngineError(err: unknown): boolean {
+  return err instanceof Error && !('kotlinType' in err)
+}
+
 export class Scheduler {
   readonly emitter = new TraceEmitter()
   readonly clock = new VirtualClock()
@@ -357,8 +373,16 @@ export class Scheduler {
         task.body.throw(f
           ? new KotlinThrow(f.exType, f.message)
           : new KotlinThrow('CancellationException', 'Job was cancelled'))
-      } catch {
-        // Bình thường: ném lại sau khi finally đã chạy xong. Không phải lỗi.
+      } catch (err) {
+        // Generator ném lại exception KOTLIN sau khi finally đã chạy xong —
+        // bình thường, không phải lỗi, nuốt đúng.
+        //
+        // Nhưng `catch` TRẦN thì nuốt cả lỗi bất biến của chính engine ném ra từ
+        // một `finally` đang unwind — trong đó có "ngăn xếp inline lệch". Phép
+        // kiểm ấy tồn tại để hỏng thật ồn ào; bị nuốt ở đây thì nó thành trang
+        // trí, và một exception nội bộ còn THAY THẾ luôn CancellationException
+        // đang bay mà không để lại dấu vết nào.
+        if (isEngineError(err)) throw err
       } finally {
         this.currentJob = null
         this.currentTask = null
@@ -612,10 +636,12 @@ export class Scheduler {
     }
     this.tasks.set(id, task)
     this.taskOrder.push(task)
-    // Từ đây tới exitInline(job), MỌI event nhân danh "job hiện tại" thuộc về
-    // scope này chứ không thuộc task bao ngoài. Push vào ngăn xếp của task đang
-    // chạy — spawnInline chỉ được gọi từ trong thân một coroutine.
-    this.pushInline(job)
+    // KHÔNG push vào ngăn xếp inline ở đây. Việc TẠO job và việc BƯỚC VÀO scope
+    // là hai thời điểm khác nhau: giữa chúng, withContext còn yield một điểm đổi
+    // dispatcher, và task có thể bị huỷ ngay tại điểm đó. Push ở đây thì cú push
+    // ấy nằm NGOÀI try/finally sở hữu cú pop, nên lần huỷ đó rò một job trong
+    // ngăn xếp. Người gọi phải tự gọi `enterInline` làm câu lệnh đầu tiên trong
+    // chính cái try có `exitInline` ở finally.
     return job
   }
 
@@ -656,10 +682,22 @@ export class Scheduler {
     return job
   }
 
-  private pushInline(job: Job): void {
+  /**
+   * BƯỚC VÀO một scope inline: từ đây tới `exitInline`, mọi event nhân danh "job
+   * hiện tại" thuộc về scope này chứ không thuộc task bao ngoài.
+   *
+   * Tách khỏi `spawnInline` và bắt buộc gọi làm câu lệnh ĐẦU TIÊN trong chính
+   * cái `try` có `exitInline` ở `finally`. Push ở chỗ khác thì có một cửa sổ
+   * trong đó ngăn xếp đã bẩn mà `finally` chưa canh: `withContext` yield điểm
+   * đổi dispatcher NGAY SAU khi tạo job, và nếu job bị huỷ tại đúng điểm đó thì
+   * `unwindCancelled` ném vào generator TRƯỚC `try` — pop không bao giờ chạy, và
+   * mọi println về sau (kể cả `finally` dọn dẹp của người dùng) mang id của một
+   * scope chưa từng chạy thân. Đã đo được đúng lỗi ấy trước khi tách.
+   */
+  enterInline(job: Job): void {
     if (!this.currentTask) {
       throw new Error(
-        `Scheduler: spawnInline(${job.id}) ngoài lúc chạy một task. Scope inline chỉ ` +
+        `Scheduler: enterInline(${job.id}) ngoài lúc chạy một task. Scope inline chỉ ` +
         'tồn tại bên trong thân một coroutine — không có task thì không có ngăn xếp để push.',
       )
     }

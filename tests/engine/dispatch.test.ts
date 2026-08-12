@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { runSource } from '../../src/engine/run'
+import { Scheduler } from '../../src/engine/runtime/scheduler'
+import type { VoidCoroutineBody } from '../../src/engine/runtime/suspension'
 import type { Event } from '../../src/engine/trace/events'
 
 /**
@@ -101,6 +103,39 @@ describe('println gắn đúng job của scope inline bao quanh', () => {
     expect(idCủaPrintln(src, 'sau lỗi con')).toBe(gốc.id)
   })
 
+  it('huỷ rơi đúng điểm đổi dispatcher: cleanup mang job launch, không mang job withContext', () => {
+    // Cửa sổ giữa "tạo job scope" và "bước vào scope" là có thật: withContext
+    // yield một điểm đổi dispatcher ngay sau khi tạo job, và task nằm trong hàng
+    // ready tại đó. Nếu bị huỷ đúng lúc ấy, unwindCancelled ném vào generator
+    // NGAY TẠI điểm yield đó — tức TRƯỚC cái try sở hữu cú pop.
+    //
+    // Đã đo trước khi sửa: `cleanup` mang j4 — job withContext mà thân nó chưa
+    // từng chạy — trong khi ca đối chứng ngay dưới cho j2. Push phải nằm bên
+    // TRONG try thì cửa sổ ấy mới biến mất.
+    const src = `fun main() = runBlocking {
+    val j = launch { try { withContext(Dispatchers.IO) { delay(1000) } } finally { println("cleanup") } }
+    launch { j.cancel() }
+}`
+    const r = runSource(src)
+    const tạo = createdOf(r.events)
+    const launchĐầu = tạo.filter(e => e.builder === 'launch')[0]!
+    const wc = tạo.find(e => e.builder === 'withContext')!
+    expect(idCủaPrintln(src, 'cleanup')).toBe(launchĐầu.id)
+    expect(idCủaPrintln(src, 'cleanup')).not.toBe(wc.id)
+  })
+
+  it('đối chứng: cùng chương trình nhưng KHÔNG có withContext cũng cho cùng một id', () => {
+    // Không có ca này thì ca trên không chứng minh được gì: phải thấy rằng id
+    // đúng là id mà chương trình KHÔNG có scope inline cho ra.
+    const src = `fun main() = runBlocking {
+    val j = launch { try { delay(1000) } finally { println("cleanup") } }
+    launch { j.cancel() }
+}`
+    const r = runSource(src)
+    const launchĐầu = createdOf(r.events).filter(e => e.builder === 'launch')[0]!
+    expect(idCủaPrintln(src, 'cleanup')).toBe(launchĐầu.id)
+  })
+
   it('hai coroutine xen kẽ: println của cái này không mang job inline của cái kia', () => {
     const src = `fun main() = runBlocking {
     launch { coroutineScope { delay(50); println("trong scope A") } }
@@ -136,6 +171,34 @@ describe('withContext đổi dispatcher thật', () => {
     const d = dispatchOf(r.events)
     expect(d.length).toBeGreaterThanOrEqual(2)
     expect(d.some(e => e.dispatcher === 'IO')).toBe(true)
+  })
+
+  it('DISPATCH mang đúng job và đúng thread ở cả lượt đi lẫn lượt về', () => {
+    // Ca trên chỉ kiểm `dispatcher`, nên hoán đổi jobId lượt đi với lượt về vẫn
+    // xanh. `id` mới là thứ foldTrace dùng để dời thread của node (world.ts:71-74):
+    //  - lượt ĐI đứng tên job withContext — nó là cái được đưa sang IO;
+    //  - lượt VỀ đứng tên job GỌI — lúc đó job withContext đã Completed, dời
+    //    thread cho một node đã chết là hình dạng bất khả thi.
+    const r = runSource(`fun main() = runBlocking {
+    withContext(Dispatchers.IO) { println("x") }
+}`)
+    const gốc = createdOf(r.events)[0]!
+    const wc = createdOf(r.events).find(e => e.builder === 'withContext')!
+    expect(dispatchOf(r.events).map(e => ({ id: e.id, dispatcher: e.dispatcher, threadId: e.threadId })))
+      .toEqual([
+        { id: wc.id, dispatcher: 'IO', threadId: 'IO-1' },
+        { id: gốc.id, dispatcher: 'Main', threadId: 'Main-1' },
+      ])
+  })
+
+  it('DISPATCH lượt đi trỏ đúng dòng gọi withContext', () => {
+    // Canh trường `line` của suspension switchContext. Bỏ nó đi thì editor mất
+    // dòng để tô ở đúng bước đổi thread — bước mà bài học muốn chỉ vào.
+    const r = runSource(`fun main() = runBlocking {
+    println("trước")
+    withContext(Dispatchers.IO) { println("trong") }
+}`)
+    expect(dispatchOf(r.events)[0]!.srcLine).toBe(3)
   })
 
   it('withContext CÙNG dispatcher thì KHÔNG đổi thread và không phát DISPATCH', () => {
@@ -196,6 +259,49 @@ describe('withContext đổi dispatcher thật', () => {
   })
 })
 
+describe('lỗi bất biến của engine không được nuốt trên đường unwind', () => {
+  it('Error ném ra từ finally lúc unwind nổi lên tới người gọi', () => {
+    // Phép kiểm "đỉnh ngăn xếp inline phải khớp" (exitInline) chỉ có nghĩa nếu
+    // nó ném được RA NGOÀI. unwindCancelled từng bắt bằng `catch` trần, nên một
+    // lỗi mất cân bằng ném ra từ `finally` trong lúc unwind sẽ biến mất và còn
+    // thay thế luôn CancellationException đang bay.
+    //
+    // Dựng thẳng trên Scheduler thay vì qua source Kotlin: không có đoạn Kotlin
+    // hợp lệ nào làm lệch được ngăn xếp (đó là điểm của cả task này), nên chỉ
+    // còn cách bơm thẳng một Error bất biến vào đúng đường đi ấy.
+    const s = new Scheduler()
+    s.spawnRoot(() => (function* (): VoidCoroutineBody {
+      const con = s.spawnChild(function* (): VoidCoroutineBody {
+        try {
+          yield { s: 'delay', ms: 1000 }
+        } finally {
+          throw new Error('Scheduler: ngăn xếp inline lệch (giả lập)')
+        }
+      })
+      yield { s: 'delay', ms: 10 }
+      s.cancel(con, {
+        exType: 'CancellationException', message: 'Job was cancelled', isCancellation: true,
+      })
+      yield { s: 'delay', ms: 10 }
+    })())
+    expect(() => { s.runToCompletion() }).toThrow('ngăn xếp inline lệch')
+  })
+
+  it('exception KOTLIN ném lại lúc unwind vẫn được nuốt như cũ', () => {
+    // Nửa còn lại của hợp đồng: `finally` chạy xong rồi generator ném lại
+    // CancellationException là chuyện BÌNH THƯỜNG. Nếu điều kiện lọc quá tay,
+    // mọi chương trình có coroutine bị huỷ sẽ nổ.
+    const r = runSource(`fun main() = runBlocking {
+    val j = launch { try { delay(1000) } finally { println("cleanup") } }
+    delay(10)
+    j.cancel()
+    delay(10)
+    println("xong")
+}`)
+    expect(r.output).toEqual(['cleanup', 'xong'])
+  })
+})
+
 describe('DISPATCH khi coroutine con chạy trên dispatcher khác cha', () => {
   it('launch(Dispatchers.IO) từ Main phát DISPATCH', () => {
     const r = runSource(`fun main() = runBlocking {
@@ -203,6 +309,26 @@ describe('DISPATCH khi coroutine con chạy trên dispatcher khác cha', () => {
     delay(50)
 }`)
     expect(dispatchOf(r.events).some(e => e.dispatcher === 'IO')).toBe(true)
+  })
+
+  it('launch(IO) tạo TRƯỚC khi cha đổi dispatcher vẫn phát DISPATCH của riêng nó', () => {
+    // Mốc so sánh là dispatcher của cha LÚC TẠO, không phải lúc con chạy lần
+    // đầu. Ở đây cha `withContext(Dispatchers.IO)` NGAY SAU lời gọi launch, và
+    // `suspend()` ghi đè `task.ctx` của cha ngay tại điểm yield đó — tức TRƯỚC
+    // khi con (đang đứng trước cha trong hàng ready) kịp chạy. Đọc ctx của cha
+    // lúc ấy sẽ thấy IO === IO và nuốt mất DISPATCH của con.
+    //
+    // Đã đo cả hai thiết kế trên chính chương trình này:
+    //   chụp-lúc-tạo: [j2->IO, j3->IO, j1->Main]   (j2 = launch con)
+    //   đọc-lúc-chạy: [j3->IO, j1->Main]           (j2 biến mất)
+    // Kotlin dispatch continuation đầu tiên của con ngay tại chỗ `launch`
+    // (CoroutineStart.DEFAULT), nên bản có j2 mới là bản đúng.
+    const r = runSource(`fun main() = runBlocking {
+    launch(Dispatchers.IO) { delay(10) }
+    withContext(Dispatchers.IO) { delay(100) }
+}`)
+    const con = createdOf(r.events).find(e => e.builder === 'launch')!
+    expect(dispatchOf(r.events).map(e => e.id)).toContain(con.id)
   })
 
   it('launch cùng dispatcher với cha KHÔNG phát DISPATCH', () => {

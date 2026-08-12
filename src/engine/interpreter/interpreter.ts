@@ -416,12 +416,22 @@ export class Interpreter {
         yield { s: 'switchContext', jobId: job.id, dispatcher: newDispatcher, line: e.pos.line }
       }
       try {
+        // Câu lệnh ĐẦU TIÊN trong try, và cú push DUY NHẤT. Đặt nó ở
+        // `spawnInline` (tức trước `yield switchContext` phía trên) thì có một
+        // cửa sổ push-rồi-mà-chưa-được-finally-canh: huỷ rơi đúng vào điểm đổi
+        // dispatcher sẽ ném vào generator TRƯỚC try, pop không bao giờ chạy, và
+        // `finally { println(...) }` của người dùng mang id của scope withContext
+        // chưa từng chạy thân. Đã đo trước khi sửa; ca canh nằm ở
+        // dispatch.test.ts "huỷ rơi đúng điểm đổi dispatcher".
+        this.scheduler.enterInline(job)
         return yield* this.runInlineBody(lambda.body, job, env)
       } finally {
         // `finally` chứ không phải hai lời gọi ở hai đường: scope inline có BA
         // đường thoát (thân xong, thân ném, con của scope fail) và đường thứ ba
         // không đi qua completeInline lẫn failInline. Chỉ `finally` mới ghép
-        // được đúng MỘT pop cho mỗi push, kể cả khi task bị huỷ giữa chừng.
+        // được đúng MỘT pop cho mỗi push — kể cả khi task bị huỷ ở một điểm
+        // suspend BÊN TRONG try (thân scope, joinChildren, hoặc điểm đổi
+        // dispatcher lượt về).
         this.scheduler.exitInline(job)
         // Đổi dispatcher VỀ, kể cả trên đường ném — đã đối chiếu Kotlin 2.1.20:
         // sau `try { withContext(Dispatchers.IO) { throw ... } } catch`, cả catch
