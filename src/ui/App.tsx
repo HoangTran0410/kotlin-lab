@@ -6,8 +6,11 @@ import { CodeEditor } from './editor/CodeEditor'
 import { diagnosticMarks, setDiagnosticLines } from './editor/diagnosticMarks'
 import { DiagnosticsPanel } from './diagnostics/DiagnosticsPanel'
 import { clampDiagnosticLine } from './diagnostics/clampLine'
+import { GraphCanvas } from './graph/GraphCanvas'
+import { toReactFlow } from './graph/toReactFlow'
+import { useLayout } from './graph/useLayout'
 import { useLabStore } from '../state/store'
-import { selectCurrentLine } from '../state/selectors'
+import { selectCurrentLine, selectWorld } from '../state/selectors'
 
 /**
  * runSourceSafe biên dịch lại TOÀN BỘ trace (parse + interpret + buildGraphSpec)
@@ -49,8 +52,17 @@ export function App() {
   const source = useLabStore(s => s.source)
   const currentLine = useLabStore(selectCurrentLine)
   const diagnostics = useLabStore(s => s.compiled.diagnostics)
+  const compiled = useLabStore(s => s.compiled)
+  const world = useLabStore(selectWorld)
   const handleChange = useDebouncedSetSource()
   const editorHost = useRef<HTMLDivElement>(null)
+
+  // Task 15: layout chạy MỘT LẦN mỗi compile (deps = compiled.revision, xem
+  // useLayout.ts) — kéo timeline chỉ đổi `world` (qua selectWorld/stepIndex),
+  // không chạm lại ELK. toReactFlow (Task 12) là hàm thuần: gộp layout cố
+  // định với world theo-step để ra node/edge React Flow, không tính lại vị trí.
+  const layout = useLayout(compiled)
+  const graphData = toReactFlow(compiled.spec, layout, world)
 
   // Đẩy diagnostic vào diagnosticMarks (gutter chấm đỏ + gạch chân) mỗi khi
   // danh sách đổi. Cắm field/gutter qua `extraExtensions` (đã có sẵn từ Task
@@ -93,7 +105,7 @@ export function App() {
       }
       graph={
         <Panel title="Sơ đồ coroutine" grow>
-          <p>Sơ đồ coroutine sẽ vào đây ở task sau.</p>
+          <GraphCanvas nodes={graphData.nodes} edges={graphData.edges} />
         </Panel>
       }
       timeline={
