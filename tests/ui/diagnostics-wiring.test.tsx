@@ -54,7 +54,12 @@ describe('nối dây App — diagnostics chảy từ store vào cả panel lẫn
     if (!view) throw new Error('không tìm thấy EditorView trong DOM')
     const dispatchSpy = vi.spyOn(view, 'dispatch')
 
-    const button = screen.getByRole('button')
+    // Scoped bằng class riêng của DiagnosticsPanel, KHÔNG screen.getByRole('button')
+    // trần: giả định "App chỉ có đúng một nút" đã vỡ ở Task 17 khi
+    // PlaybackControls thêm 7 nút thật (Lùi/Phát-Tạm dừng/Tiến + 4 tốc độ) vào
+    // mọi render của App. Test này chỉ quan tâm nút CỦA DIAGNOSTICS PANEL.
+    const button = container.querySelector<HTMLButtonElement>('.diagnostic-item__button')
+    if (!button) throw new Error('không tìm thấy nút diagnostic trong DOM')
     expect(() => act(() => { button.click() })).not.toThrow()
     expect(dispatchSpy).toHaveBeenCalled()
   })
