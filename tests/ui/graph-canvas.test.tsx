@@ -26,7 +26,7 @@ function job(id: string, x: number, y: number): FlowNode {
     id, type: 'job', position: { x, y }, width: 200, height: 68,
     data: {
       name: id, builder: 'launch', isSupervisor: false, phase: 'live',
-      state: 'Active', cause: null, varName: null, suspendReason: null, lastPrint: null, printCount: 0, failure: null, dispatcher: 'Main', threadId: null, isCurrent: false,
+      state: 'Active', cause: null, causeMessage: null, varName: null, suspendReason: null, lastPrint: null, printCount: 0, failure: null, dispatcher: 'Main', threadId: null, isCurrent: false,
     },
   }
 }

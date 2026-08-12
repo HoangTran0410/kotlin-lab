@@ -31,7 +31,7 @@ export type EventBody =
   | { k: 'COROUTINE_STARTED'; id: JobId; threadId: ThreadId }
   | { k: 'COROUTINE_SUSPENDED'; id: JobId; reason: 'delay' | 'await' | 'join' | 'yield' | 'collect' | 'emit' }
   | { k: 'COROUTINE_RESUMED'; id: JobId; threadId: ThreadId }
-  | { k: 'JOB_STATE'; id: JobId; from: JobState; to: JobState; cause?: string }
+  | { k: 'JOB_STATE'; id: JobId; from: JobState; to: JobState; cause?: string; causeMessage?: string }
   | { k: 'EXCEPTION_THROWN'; id: JobId; exType: string; message: string }
   | { k: 'EXCEPTION_CAUGHT'; id: JobId; exType: string }
   | { k: 'FAILURE_PROPAGATED'; from: JobId; to: JobId; blockedBySupervisor: boolean }

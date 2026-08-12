@@ -95,14 +95,16 @@ export function JobNode({ id, data }: NodeProps<FlowNode>) {
               `RuntimeException` isn't debuggable — two different throw sites
               look identical. The message only exists on EXCEPTION_THROWN, so
               previously reading it meant scrubbing to hit exactly ONE event.
-              A job cancelled by PROPAGATION has no `failure` of its own, so it
-              still only shows the type — correctly, since it didn't throw
-              anything. */}
+              `causeMessage` carries it even onto a job that never threw
+              anything itself — an innocent sibling dragged down by
+              `cancelJob`, or an ancestor a failure climbed through — because
+              the learner still benefits from seeing WHY the whole subtree
+              died, not just that it did. */}
           {showCause && (
-            <span className="k-job-node__cause" title={data.failure ? `${data.failure.exType}: ${data.failure.message}` : data.cause ?? ''}>
+            <span className="k-job-node__cause" title={data.causeMessage ? `${data.cause}: ${data.causeMessage}` : data.cause ?? ''}>
               {data.cause}
-              {data.failure && data.failure.message !== '' && (
-                <span className="k-job-node__msg">: {data.failure.message}</span>
+              {data.causeMessage && data.causeMessage !== '' && (
+                <span className="k-job-node__msg">: {data.causeMessage}</span>
               )}
             </span>
           )}

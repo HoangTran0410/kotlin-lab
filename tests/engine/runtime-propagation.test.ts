@@ -82,6 +82,22 @@ describe('propagation — cancel goes down', () => {
       .map(e => (e as { id: string }).id)
     expect(order).toEqual(['a', 'b', 'c', 'p'])
   })
+
+  it('cancelJob does NOT attach the causing message to its Cancelling event', () => {
+    // A job cancelled via cancelJob (a sibling, a descendant subtree, or an
+    // explicit user cancel()) never actually receives the original
+    // exception when unwound — scheduler.ts's unwindCancelled only rethrows
+    // `governing.failure`, and cancelJob deliberately never sets `.failure`
+    // (see propagation.ts). So the graph must not claim otherwise: showing
+    // the culprit's message here would contradict what that job's own
+    // try/catch would really see (a synthetic CancellationException).
+    const j = new Job('j', 'J', null, false)
+    j.transitionTo('Active')
+    const em = new TraceEmitter()
+    cancelJob(j, boom, em, 'user')
+    const toCancelling = em.events.find(e => e.k === 'JOB_STATE' && (e as { to: string }).to === 'Cancelling')
+    expect((toCancelling as { causeMessage?: string })?.causeMessage).toBeUndefined()
+  })
 })
 
 describe('propagation — failure goes up', () => {
@@ -104,6 +120,35 @@ describe('propagation — failure goes up', () => {
     reportFailure(b, boom, em)
     const ev = em.events.find(e => e.k === 'FAILURE_PROPAGATED')
     expect(ev).toMatchObject({ from: 'b', to: 'p', blockedBySupervisor: false })
+  })
+
+  it('an ordinary parent dragged down by a child failure also gets the causing message on its own Cancelling event', () => {
+    // p never threw anything itself — its own body never even ran the
+    // failing statement — but the exception that killed the tree is still
+    // the useful thing to show on p's node, same as it's shown on b's.
+    const { b } = tree(false)
+    const em = new TraceEmitter()
+    reportFailure(b, boom, em)
+    const pCancelling = em.events.find(
+      e => e.k === 'JOB_STATE' && (e as { id: string }).id === 'p' && (e as { to: string }).to === 'Cancelling',
+    )
+    expect((pCancelling as { causeMessage?: string })?.causeMessage).toBe('boom')
+  })
+
+  it('a sibling dragged down alongside the failing child does NOT get the causing message', () => {
+    // a and c are cancelled via cancelJob (the "cancel the parent's
+    // remaining children" step inside reportFailure), not terminateAsFailed
+    // — they never receive b's exception, only a synthetic
+    // CancellationException (locked down in
+    // interpreter-coroutines.test.ts). The graph must not show them a
+    // message they never actually got.
+    const { b } = tree(false)
+    const em = new TraceEmitter()
+    reportFailure(b, boom, em)
+    const aCancelling = em.events.find(
+      e => e.k === 'JOB_STATE' && (e as { id: string }).id === 'a' && (e as { to: string }).to === 'Cancelling',
+    )
+    expect((aCancelling as { causeMessage?: string })?.causeMessage).toBeUndefined()
   })
 
   it('CancellationException does NOT fail the parent', () => {

@@ -14,6 +14,15 @@ export interface JobView {
   threadId: ThreadId | null
   cause: string | null
   /**
+   * The message that came with `cause`, when the job's Cancelling/Cancelled
+   * transition carried one. Populated even when this job never threw
+   * anything itself — e.g. an innocent sibling dragged down by `cancelJob`,
+   * or an ordinary/scope-coroutine ancestor a child's failure climbed
+   * through — because the learner still benefits from seeing WHY, and
+   * `failure` below is deliberately left null in exactly those cases.
+   */
+  causeMessage: string | null
+  /**
    * Most recent `println` line printed by THIS job itself, plus the total
    * count of lines it has printed.
    *
@@ -101,13 +110,13 @@ export function applyEvent(w: WorldState, e: Event): void {
         id: e.id, parentId: e.parentId, builder: e.builder, state: 'New',
         dispatcher: e.ctx.dispatcher, name: e.ctx.name, varName: e.varName ?? null,
         isSupervisor: e.ctx.isSupervisor,
-        suspendReason: null, threadId: null, cause: null,
+        suspendReason: null, threadId: null, cause: null, causeMessage: null,
         lastPrint: null, printCount: 0, failure: null,
       })
       break
     case 'JOB_STATE': {
       const j = w.jobs.get(e.id)
-      if (j) { j.state = e.to; if (e.cause) j.cause = e.cause }
+      if (j) { j.state = e.to; if (e.cause) { j.cause = e.cause; j.causeMessage = e.causeMessage ?? null } }
       break
     }
     case 'COROUTINE_STARTED':

@@ -17,6 +17,13 @@ export interface FlowNodeData extends Record<string, unknown> {
   state: JobState | null
   /** Only non-null when state ∈ {Cancelling, Cancelled} — locks down backlog item B4, see below. */
   cause: string | null
+  /**
+   * The message that came with `cause`, gated the same way. Populated even
+   * for a job that never threw anything itself (dragged down by a sibling's
+   * or a descendant's failure) — `failure` below is null in exactly that
+   * case, so this is the only place such a node can get a message from.
+   */
+  causeMessage: string | null
   suspendReason: string | null
   /** The most recent println line printed by THIS node itself, and the total number of lines printed. */
   lastPrint: string | null
@@ -110,6 +117,9 @@ export function toReactFlow(spec: GraphSpec, layout: LayoutResult, world: WorldS
     const cause = job !== undefined && (job.state === 'Cancelling' || job.state === 'Cancelled')
       ? job.cause
       : null
+    const causeMessage = job !== undefined && (job.state === 'Cancelling' || job.state === 'Cancelled')
+      ? job.causeMessage
+      : null
 
     const node: FlowNode = {
       id: n.id,
@@ -125,6 +135,7 @@ export function toReactFlow(spec: GraphSpec, layout: LayoutResult, world: WorldS
         phase: ph,
         state,
         cause,
+        causeMessage,
         suspendReason: job?.suspendReason ?? null,
         lastPrint: job?.lastPrint ?? null,
         printCount: job?.printCount ?? 0,

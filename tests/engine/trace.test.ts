@@ -77,4 +77,14 @@ describe('trace', () => {
     const w = foldTrace(sample(), -5)
     expect({ jobs: w.jobs.size, output: w.output }).toEqual({ jobs: 0, output: [] })
   })
+
+  it('JOB_STATE causeMessage folds into JobView.causeMessage, alongside cause', () => {
+    const em = new TraceEmitter()
+    em.emit({ k: 'COROUTINE_CREATED', id: 'j1', parentId: null, builder: 'launch',
+      ctx: { dispatcher: 'Main', name: null, isSupervisor: false, hasHandler: false } })
+    em.emit({ k: 'JOB_STATE', id: 'j1', from: 'New', to: 'Active' })
+    em.emit({ k: 'JOB_STATE', id: 'j1', from: 'Active', to: 'Cancelling', cause: 'RuntimeException', causeMessage: 'boom' })
+    const w = foldTrace(em.events, em.events.length)
+    expect(w.jobs.get('j1')).toMatchObject({ cause: 'RuntimeException', causeMessage: 'boom' })
+  })
 })

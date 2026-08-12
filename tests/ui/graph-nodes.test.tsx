@@ -22,7 +22,7 @@ const renderInFlow = (ui: React.ReactElement) => render(<ReactFlowProvider>{ui}<
 
 const BASE_DATA: FlowNodeData = {
   name: null, builder: 'launch', isSupervisor: false, phase: 'live',
-  state: 'Active', cause: null, varName: null, suspendReason: null, lastPrint: null, printCount: 0, failure: null, dispatcher: 'Main', threadId: null, isCurrent: false,
+  state: 'Active', cause: null, causeMessage: null, varName: null, suspendReason: null, lastPrint: null, printCount: 0, failure: null, dispatcher: 'Main', threadId: null, isCurrent: false,
 }
 
 /** The rest of NodeProps that React Flow fills in automatically on a real mount — filled in by hand here since the test calls the component directly. */
@@ -137,6 +137,13 @@ describe('JobNode (Task 13)', () => {
     // still renders, doesn't throw, and no k-job-node__cause element appears.
     expect(document.querySelector('.k-job-node__cause')).toBeNull()
   })
+
+  it('shows the causing message from causeMessage even when this job has no failure of its own (an ancestor the failure climbed through)', () => {
+    renderInFlow(<JobNode {...jobNodeProps({
+      ...BASE_DATA, state: 'Cancelled', cause: 'RuntimeException', causeMessage: 'boom', failure: null,
+    })} />)
+    expect(screen.getByText(': boom')).toBeInTheDocument()
+  })
 })
 
 describe('ScopeNode (Task 13)', () => {
@@ -161,5 +168,29 @@ describe('ScopeNode (Task 13)', () => {
       <ScopeNode {...scopeNodeProps({ ...BASE_DATA, name: 'scope-1', phase: 'unborn', state: null })} />,
     )
     expect(screen.queryByText('scope-1')).not.toBeInTheDocument()
+  })
+
+  it('cause only shows when state is Cancelling/Cancelled', () => {
+    // Same rule as JobNode: a container (coroutineScope, an ordinary launch
+    // with children, ...) can die too, and its border already turns red —
+    // but without this, its box gives NO textual reason at all, not even
+    // the bare exception type.
+    const { unmount } = renderInFlow(
+      <ScopeNode {...scopeNodeProps({ ...BASE_DATA, state: 'Active', cause: 'RuntimeException' })} />,
+    )
+    expect(screen.queryByText('RuntimeException')).not.toBeInTheDocument()
+    unmount()
+
+    renderInFlow(
+      <ScopeNode {...scopeNodeProps({ ...BASE_DATA, state: 'Cancelled', cause: 'RuntimeException' })} />,
+    )
+    expect(screen.getByText('RuntimeException')).toBeInTheDocument()
+  })
+
+  it('shows the causing message alongside the type when present', () => {
+    renderInFlow(<ScopeNode {...scopeNodeProps({
+      ...BASE_DATA, state: 'Cancelled', cause: 'RuntimeException', causeMessage: 'boom', failure: null,
+    })} />)
+    expect(screen.getByText(': boom')).toBeInTheDocument()
   })
 })

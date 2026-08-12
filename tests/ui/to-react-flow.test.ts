@@ -232,6 +232,41 @@ describe('toReactFlow — where anti-jitter gets locked down (Task 12)', () => {
     expect(x?.data.cause).toBeNull()
   })
 
+  it('an ancestor the failure climbed through shows the causing message, even without a failure of its own', async () => {
+    // normalfail: j2 (the coroutineScope) is dragged down because its child
+    // j4 (launch B, `throw RuntimeException("boom")`) failed. j2 never threw
+    // anything itself — `failure` stays null — but j2's Cancelling event DID
+    // come from terminateAsFailed (reportFailure's climb-up loop), which
+    // means j2 genuinely inherits this as its own recorded failure (for a
+    // coroutineScope this is literally rethrown at its call site), so the
+    // message belongs on its node.
+    const events = eventsOf('normalfail')
+    const spec = buildGraphSpec(events)
+    const layout = await layoutGraph(spec)
+    const world = foldTrace(events, events.length)
+    expect(world.jobs.get('j2'), 'fixture').toMatchObject({ state: 'Cancelled', builder: 'coroutineScope', failure: null })
+
+    const j2 = toReactFlow(spec, layout, world).nodes.find(n => n.id === 'j2')
+    expect(j2?.data.causeMessage).toBe('boom')
+  })
+
+  it('an innocent sibling dragged down alongside the failure does NOT get the causing message', async () => {
+    // j3 (launch A) is a SIBLING of j4 (the thrower) — cancelled via
+    // cancelJob, not terminateAsFailed. It never actually receives the
+    // original exception when unwound, only a synthetic
+    // CancellationException (locked down in
+    // interpreter-coroutines.test.ts's "still gets a CancellationException,
+    // not a sibling's exception"). The graph must not claim otherwise.
+    const events = eventsOf('normalfail')
+    const spec = buildGraphSpec(events)
+    const layout = await layoutGraph(spec)
+    const world = foldTrace(events, events.length)
+    expect(world.jobs.get('j3'), 'fixture').toMatchObject({ state: 'Cancelled', builder: 'launch', failure: null })
+
+    const j3 = toReactFlow(spec, layout, world).nodes.find(n => n.id === 'j3')
+    expect(j3?.data.causeMessage).toBeNull()
+  })
+
   it('a node missing its layout box gets skipped, not thrown', async () => {
     const events = eventsOf('jobtree')
     const spec = buildGraphSpec(events)

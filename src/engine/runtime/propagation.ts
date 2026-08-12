@@ -27,6 +27,12 @@ export function cancelJob(
     cancelJob(child, cause, emitter, job.id)
   }
 
+  // Deliberately does NOT carry `causeMessage`: a job cancelled here never
+  // actually receives the culprit's exception when unwound — only a
+  // synthetic CancellationException (scheduler.ts's unwindCancelled only
+  // rethrows `governing.failure`, which cancelJob never sets, unlike
+  // terminateAsFailed below). Showing the message here would tell the
+  // learner this job saw something it never did.
   const prev = job.state
   if (prev !== 'Cancelling') {
     job.transitionTo('Cancelling')
@@ -54,7 +60,7 @@ function terminateAsFailed(job: Job, cause: FailureCause, emitter: TraceEmitter)
   const prev = job.state
   if (prev !== 'Cancelling') {
     job.transitionTo('Cancelling')
-    emitter.emit({ k: 'JOB_STATE', id: job.id, from: prev, to: 'Cancelling', cause: cause.exType },
+    emitter.emit({ k: 'JOB_STATE', id: job.id, from: prev, to: 'Cancelling', cause: cause.exType, causeMessage: cause.message },
       job.suspendedAtLine ?? cause.line)
   }
   job.cause = cause
@@ -63,7 +69,7 @@ function terminateAsFailed(job: Job, cause: FailureCause, emitter: TraceEmitter)
   // does NOT set this field.
   job.failure = cause
   job.transitionTo('Cancelled')
-  emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Cancelling', to: 'Cancelled', cause: cause.exType },
+  emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Cancelling', to: 'Cancelled', cause: cause.exType, causeMessage: cause.message },
     job.suspendedAtLine ?? cause.line)
 }
 

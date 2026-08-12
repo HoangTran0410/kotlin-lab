@@ -22,6 +22,10 @@ export function ScopeNode({ id, data }: NodeProps<FlowNode>) {
   if (data.isSupervisor) classes.push('k-scope-node--supervisor')
   if (unborn) classes.push('k-scope-node--unborn')
   if (data.isCurrent && !unborn) classes.push('k-scope-node--current')
+  // Same gating as JobNode: a container can die too (border already turns
+  // red), but without this its box gave no textual reason at all — not even
+  // the bare exception type, let alone the message.
+  const showCause = data.cause !== null && (data.state === 'Cancelling' || data.state === 'Cancelled')
 
   return (
     <div
@@ -32,14 +36,24 @@ export function ScopeNode({ id, data }: NodeProps<FlowNode>) {
     >
       <NodePorts />
       {!unborn && (
-        <div className="k-scope-node__title">
-          {jobLabel({ id, builder: data.builder, name: data.name, varName: data.varName })}
-          <span className="k-scope-node__id">{id}</span>
-          {data.isSupervisor && <span className="k-scope-node__tag">supervisor</span>}
-          {data.lastPrint !== null && (
-            <span className="k-scope-node__print" title={data.lastPrint}>» {data.lastPrint}</span>
+        <>
+          <div className="k-scope-node__title">
+            {jobLabel({ id, builder: data.builder, name: data.name, varName: data.varName })}
+            <span className="k-scope-node__id">{id}</span>
+            {data.isSupervisor && <span className="k-scope-node__tag">supervisor</span>}
+            {data.lastPrint !== null && (
+              <span className="k-scope-node__print" title={data.lastPrint}>» {data.lastPrint}</span>
+            )}
+          </div>
+          {showCause && (
+            <span className="k-job-node__cause" title={data.causeMessage ? `${data.cause}: ${data.causeMessage}` : data.cause ?? ''}>
+              {data.cause}
+              {data.causeMessage && data.causeMessage !== '' && (
+                <span className="k-job-node__msg">: {data.causeMessage}</span>
+              )}
+            </span>
           )}
-        </div>
+        </>
       )}
     </div>
   )
