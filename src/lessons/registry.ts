@@ -14,6 +14,13 @@ export interface LessonMeta { id: string; order: number; title: string; summary:
 const sources = import.meta.glob<string>('./*/main.kt', { query: '?raw', import: 'default', eager: true })
 const metas = import.meta.glob<LessonMeta>('./*/meta.json', { import: 'default', eager: true })
 
+/**
+ * Bài nào đã được so từng dòng với output JVM thật — suy từ sự CÓ MẶT của
+ * fixture, không phải từ một danh sách viết tay. Trang giới thiệu hiện con số
+ * này, và nó phải tự đúng khi ai đó thêm hoặc rút một fixture.
+ */
+const fixtures = import.meta.glob('./*/expected-jvm-output.txt', { query: '?raw', eager: true })
+
 const idFrom = (path: string): string => path.split('/')[1] ?? ''
 
 export const LESSON_LIST: LessonMeta[] = Object.values(metas).sort((a, b) => a.order - b.order)
@@ -25,3 +32,7 @@ const byId = new Map<string, string>(
 export function lessonSource(id: string): string | null {
   return byId.get(id) ?? null
 }
+
+export const LESSON_IDS_DOI_CHIEU_JVM: ReadonlySet<string> = new Set(
+  Object.keys(fixtures).map(idFrom),
+)

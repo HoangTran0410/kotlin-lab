@@ -1,0 +1,188 @@
+/* Hộp phủ toàn màn hình: đây là thứ người ta đọc MỘT LẦN, đọc kỹ, rồi đóng —
+   không phải một panel sống chung với đồ thị. Nhét nó vào cột bên sẽ vừa chật
+   vừa cạnh tranh chú ý với thứ đang chạy. */
+.about {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(1, 4, 9, 0.75);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 4vh 16px;
+  overflow-y: auto;
+}
+
+.about__box {
+  width: min(980px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  outline: none;
+  display: flex;
+  flex-direction: column;
+  max-height: 92vh;
+}
+
+.about__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.about__head h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.about__sub {
+  margin: 0;
+  color: var(--fg-dim);
+  max-width: 70ch;
+}
+
+.about__close {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  font-size: 20px;
+  line-height: 1;
+  padding: 2px 10px 5px;
+  cursor: pointer;
+}
+
+.about__close:hover { color: var(--fg); border-color: var(--fg-dim); }
+
+.about__body {
+  padding: 4px 20px 20px;
+  overflow-y: auto;
+}
+
+.about__sec { margin-top: 18px; }
+
+.about__sec h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-dim);
+}
+
+.about__sec h4 {
+  margin: 14px 0 8px;
+  font-size: 13px;
+  color: var(--k-launch);
+}
+
+.about__facts {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 88ch;
+}
+
+.about__cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  /* auto-fill chứ không phải số cột cố định: hộp này rộng 980px trên màn to
+     nhưng chỉ còn một cột trên màn hẹp, và thẻ ví dụ không được bóp ngang. */
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.about__card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px 12px;
+}
+
+.about__cardHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.about__ten {
+  font-size: 13px;
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.about__try {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--k-launch);
+  border-radius: 999px;
+  color: var(--k-launch);
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.about__try:hover { background: rgba(88, 166, 255, 0.14); }
+
+.about__mo {
+  margin: 0 0 8px;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+
+/* Output của ví dụ, không phải mã nguồn: mã nằm trong editor sau khi bấm "Mở
+   ví dụ". Hiện kết quả ở đây để lướt qua là biết ví dụ đó chứng minh điều gì. */
+.about__ra {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--bg);
+  border-left: 2px solid var(--state-completed);
+  border-radius: 0 4px 4px 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--fg);
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.about__unsup {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.about__unsup li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+
+.about__unsup code {
+  flex-shrink: 0;
+  min-width: 190px;
+  color: var(--state-cancelled);
+  font-size: 12px;
+}
+
+.about__unsup span {
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+
+.about__facts code, .about__unsup code, .about__ten {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}

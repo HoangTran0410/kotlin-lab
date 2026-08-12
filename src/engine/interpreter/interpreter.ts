@@ -299,6 +299,15 @@ export class Interpreter {
     const ctxValue = yield* this.tryContextFactory(calleeName, e, env)
     if (ctxValue !== undefined) return ctxValue
 
+    // `x.toString()` — một trong những lời gọi phổ biến nhất của Kotlin, và
+    // trước đây nó rơi xuống tận nhánh cuối rồi trả Unit im lặng:
+    // `println(i.toString())` in ra "kotlin.Unit". Dùng chính `display` mà phép
+    // `+` giữa chuỗi và số đang dùng, nên `"" + i` và `i.toString()` không thể
+    // cho ra hai kết quả khác nhau.
+    if (calleeName === 'toString' && e.callee.k === 'Member') {
+      return { t: 'str', v: display(yield* this.evalExpr(e.callee.target, env)) }
+    }
+
     const name = e.callee.k === 'Ident' ? e.callee.name : null
 
     // error(msg) nằm trong subset §4.1 và 3 kịch bản gốc dùng nó. Trước đây

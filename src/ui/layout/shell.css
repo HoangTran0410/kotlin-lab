@@ -83,8 +83,26 @@
   opacity: 0.6;
 }
 
-.shell__reset {
+/* `margin-left: auto` chuyển sang nút này — nó là nút đầu tiên của cụm bên
+   phải, nên nó mới là chỗ đẩy cả cụm về cuối header. Để trên .shell__reset thì
+   hai nút bị tách rời hai đầu. */
+.shell__about {
   margin-left: auto;
+  flex: none;
+  background: transparent;
+  border: 1px solid var(--k-launch);
+  border-radius: 4px;
+  padding: 4px 10px;
+  color: var(--k-launch);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.shell__about:hover { background: rgba(88, 166, 255, 0.14); }
+
+.shell__reset {
   flex: none;
   background: transparent;
   border: 1px solid var(--border);

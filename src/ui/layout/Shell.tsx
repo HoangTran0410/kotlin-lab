@@ -13,9 +13,10 @@ import './shell.css'
  * Bảng gỡ lỗi là chỗ đào sâu (từng event một, console đầy đủ, lịch sử diễn
  * giải), không phải chỗ bắt buộc phải liếc để hiểu chuyện gì đang xảy ra.
  */
-export function Shell({ nav, editor, graph, timeline, side, debugOpen }: {
+export function Shell({ nav, editor, graph, timeline, side, debugOpen, onMoGioiThieu }: {
   nav: ReactNode; editor: ReactNode; graph: ReactNode
   timeline: ReactNode; side: ReactNode; debugOpen: boolean
+  onMoGioiThieu: () => void
 }) {
   const { left, right, setLeft, setRight, reset } = usePanelWidths()
 
@@ -24,6 +25,16 @@ export function Shell({ nav, editor, graph, timeline, side, debugOpen }: {
       <header className="shell__head">
         <h1>Kotlin Coroutines Lab</h1>
         {nav}
+        {/* Đứng TRƯỚC "Bố cục mặc định": câu hỏi đầu tiên của người mở app lần
+            đầu là công cụ này chạy được gì, không phải bề rộng cột. */}
+        <button
+          type="button"
+          className="shell__about"
+          onClick={onMoGioiThieu}
+          title="Engine chạy được cú pháp nào, neo vào Kotlin bản nào, khác Kotlin thật ở đâu"
+        >
+          Chạy được gì?
+        </button>
         <button type="button" className="shell__reset" onClick={reset} title="Đưa bề rộng các cột về mặc định">
           Bố cục mặc định
         </button>

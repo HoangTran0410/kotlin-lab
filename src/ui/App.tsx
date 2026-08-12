@@ -8,6 +8,7 @@ import { DiagnosticsPanel } from './diagnostics/DiagnosticsPanel'
 import { clampDiagnosticLine } from './diagnostics/clampLine'
 import { ConsolePanel } from './console/ConsolePanel'
 import { LessonNav } from './lessons/LessonNav'
+import { AboutPanel } from './about/AboutPanel'
 import { GraphStage } from './graph/GraphStage'
 import { toReactFlow } from './graph/toReactFlow'
 import { useLayout } from './graph/useLayout'
@@ -64,8 +65,9 @@ export function App() {
   const setStep = useLabStore(s => s.setStep)
   const lessonId = useLabStore(s => s.lessonId)
   const loadLesson = useLabStore(s => s.loadLesson)
-  const setSource = useLabStore(s => s.setSource)
+  const loadSource = useLabStore(s => s.loadSource)
   const handleChange = useDebouncedSetSource()
+  const [aboutOpen, setAboutOpen] = useState(false)
   // Bảng gỡ lỗi (console + chẩn đoán + diễn giải đầy đủ + timeline từng event)
   // mặc định ĐÓNG: đồ thị đã tự kể được chuyện gì đang xảy ra.
   const [debugOpen, setDebugOpen] = useState(false)
@@ -110,9 +112,11 @@ export function App() {
   }, [])
 
   return (
+    <>
     <Shell
       debugOpen={debugOpen}
-      nav={<LessonNav currentLessonId={lessonId} loadLesson={loadLesson} setSource={setSource} />}
+      onMoGioiThieu={() => setAboutOpen(true)}
+      nav={<LessonNav currentLessonId={lessonId} loadLesson={loadLesson} setSource={loadSource} />}
       editor={
         <div className="editor-col">
           <Panel title="Mã Kotlin" grow>
@@ -173,5 +177,7 @@ export function App() {
         </>
       }
     />
+    {aboutOpen && <AboutPanel onClose={() => setAboutOpen(false)} onMoViDu={loadSource} />}
+    </>
   )
 }

@@ -88,6 +88,33 @@ describe('construct chưa hỗ trợ phải BÁO, không được trả giá tr�
     expect(d[0]!.hint).toBeTruthy()
   })
 
+  it('toString() chạy thật, không trả "kotlin.Unit"', () => {
+    // Hai lỗi chồng lên nhau ở cùng một chỗ, tìm ra khi viết trang giới thiệu:
+    //   1. `UNSUPPORTED[name]` tra trần nên đọc trúng Object.prototype.toString
+    //      -> báo "'toString' chưa được hỗ trợ", hint là một HÀM lọt ra UI.
+    //   2. Gỡ được chẩn đoán giả đó thì lộ ra lỗi thật: lời gọi rơi xuống nhánh
+    //      cuối của evalCall và trả Unit, nên nó IN RA "kotlin.Unit".
+    const r = runSource(`fun main() = runBlocking {
+    val i = 7
+    println(i.toString())
+    println("chuỗi: " + i.toString())
+}`)
+    expect(r.diagnostics).toEqual([])
+    expect(r.output).toEqual(['7', 'chuỗi: 7'])
+  })
+
+  it('tên kế thừa từ Object.prototype không bị nhận nhầm là construct chưa hỗ trợ', () => {
+    // `valueOf`, `constructor`, `hasOwnProperty`... đều là định danh hợp lệ
+    // trong Kotlin. Tra bảng bằng `[]` trần thì cả ba bị chặn.
+    const r = runSource(`fun main() = runBlocking {
+    val valueOf = 1
+    val constructor = 2
+    println(valueOf + constructor)
+}`)
+    expect(r.diagnostics).toEqual([])
+    expect(r.output).toEqual(['3'])
+  })
+
   it('không có construct chưa hỗ trợ nào lọt qua mà im lặng trả Unit', async () => {
     // Canh gác theo chiều DƯƠNG: mọi khoá trong danh sách chưa hỗ trợ, khi
     // xuất hiện trong source, đều phải sinh diagnostic. Test này sẽ đỏ nếu ai

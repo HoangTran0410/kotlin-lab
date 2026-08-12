@@ -11,6 +11,19 @@ const COROUTINE_BUILDERS = new Set([
   'launch', 'async', 'runBlocking', 'coroutineScope', 'supervisorScope', 'withContext',
 ])
 
+/**
+ * Tra bảng UNSUPPORTED mà KHÔNG chạm tới Object.prototype.
+ *
+ * `UNSUPPORTED[name]` trần đọc trúng cả thành viên kế thừa: `toString`,
+ * `valueOf`, `constructor`, `hasOwnProperty`... Đã đo trước khi sửa —
+ * `i.toString()` (một trong những lời gọi phổ biến nhất của Kotlin) bị báo
+ * "'toString' chưa được hỗ trợ", còn `hint` là một HÀM lọt thẳng ra UI; và một
+ * biến tên `valueOf` cũng bị chặn dù chẳng liên quan gì.
+ */
+function goiYChuaHoTro(name: string): string | undefined {
+  return Object.hasOwn(UNSUPPORTED, name) ? UNSUPPORTED[name] : undefined
+}
+
 export function validate(program: Program): Diagnostic[] {
   const out: Diagnostic[] = []
 
@@ -53,7 +66,7 @@ export function validate(program: Program): Diagnostic[] {
             hint: 'Đặt bên trong thân một trong các builder trên, hoặc đọc qua biến Job cụ thể (job.isActive).',
           })
         }
-        const hint = UNSUPPORTED[e.name]
+        const hint = goiYChuaHoTro(e.name)
         if (hint) out.push({
           severity: 'error',
           message: `'${e.name}' chưa được hỗ trợ ở phiên bản này.`,
@@ -62,7 +75,7 @@ export function validate(program: Program): Diagnostic[] {
         break
       }
       case 'Member': {
-        const hint = UNSUPPORTED[e.name]
+        const hint = goiYChuaHoTro(e.name)
         if (hint) out.push({
           severity: 'error',
           message: `'${e.name}' chưa được hỗ trợ ở phiên bản này.`,

@@ -18,8 +18,9 @@
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { LESSONS, loadLessonSource } from '../src/lessons/index'
+import { PLAYGROUND_API } from '../src/engine/kotlinVersion'
 
-const API = 'https://api.kotlinlang.org/api/2.1.20/compiler/run'
+const API = PLAYGROUND_API
 
 interface KotlinError { severity: string; message: string; interval?: unknown }
 interface RunResponse {
