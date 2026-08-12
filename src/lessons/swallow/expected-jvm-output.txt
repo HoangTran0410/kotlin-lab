@@ -1,0 +1,4 @@
+1. gọi cancelAndJoin()
+2. bắt được Exception — nhưng đây là TÍN HIỆU HUỶ, không phải lỗi
+3. thân vẫn chạy tiếp dù coroutine đã bị huỷ
+4. job.isCancelled = true

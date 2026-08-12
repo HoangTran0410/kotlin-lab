@@ -69,6 +69,25 @@ describe('construct chưa hỗ trợ phải BÁO, không được trả giá tr�
     expect(d[0]!.hint).toBeTruthy()
   })
 
+  it('CoroutineExceptionHandler bị chặn ở ĐÚNG dạng người ta hay viết', () => {
+    // Không phải `println(CoroutineExceptionHandler)` — không ai viết thế. Dạng
+    // thật là một Call có trailing lambda, cộng vào context của scope gốc: đúng
+    // pattern Android kinh điển. Nó ĐI QUA được cả parser lẫn applyCtxValue
+    // (ctx.hasHandler thành true) nhưng scheduler chưa bao giờ phát
+    // HANDLER_RECEIVED, nên trước khi chặn thì đoạn này chạy ra kết quả của một
+    // scope KHÔNG có handler mà không một lời cảnh báo.
+    const d = chỗBáo(`fun main() = runBlocking {
+    val handler = CoroutineExceptionHandler { _, e -> println("bắt: " + e.message) }
+    val scope = CoroutineScope(SupervisorJob() + handler)
+    scope.launch { throw RuntimeException("boom") }
+    delay(50)
+}`)
+    expect(d.length).toBeGreaterThan(0)
+    expect(d[0]!.line).toBe(2)
+    expect(d[0]!.message).toContain('CoroutineExceptionHandler')
+    expect(d[0]!.hint).toBeTruthy()
+  })
+
   it('không có construct chưa hỗ trợ nào lọt qua mà im lặng trả Unit', async () => {
     // Canh gác theo chiều DƯƠNG: mọi khoá trong danh sách chưa hỗ trợ, khi
     // xuất hiện trong source, đều phải sinh diagnostic. Test này sẽ đỏ nếu ai

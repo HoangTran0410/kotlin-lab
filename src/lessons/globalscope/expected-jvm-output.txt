@@ -1,0 +1,3 @@
+1. hai coroutine cùng chạy, nhưng chỉ MỘT cái treo dưới runBlocking
+2. con TRONG cây — runBlocking chờ nó xong mới kết thúc
+3. main xong — coroutine của GlobalScope bị bỏ lại giữa chừng

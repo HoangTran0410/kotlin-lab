@@ -1,6 +1,6 @@
 {
   "id": "nestedtrap",
-  "order": 9,
+  "order": 12,
   "title": "Cái bẫy lồng nhau — supervisor chỉ cứu con trực tiếp",
   "summary": "Một launch thường nằm giữa là đủ để cả nhánh con fail-fast trở lại.",
   "concepts": [

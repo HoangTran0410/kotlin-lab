@@ -1,0 +1,4 @@
+1. tuần tự — gọi xong cái này mới tới cái kia
+2. tuần tự xong: 5
+3. song song — async khởi động CẢ HAI rồi mới await
+4. song song xong: 5

@@ -25,11 +25,17 @@ describe('lesson — nghiệm thu M1', () => {
     expect(new Set(LESSONS.map(l => l.id)).size, 'có hai bài trùng id').toBe(LESSONS.length)
   })
 
-  it('đủ 9 bài, đúng thứ tự dạy của bản HTML gốc', () => {
-    expect(LESSONS.map(l => l.id)).toEqual([
+  it('9 bài gốc còn đủ và giữ nguyên thứ tự dạy tương đối', () => {
+    // Trước đây là một danh sách CỨNG đúng 9 phần tử. Nó pin được hai thứ khác
+    // nhau — "đủ 9 bài gốc" và "không có bài nào khác" — mà chỉ cái thứ nhất
+    // mới là điều đáng giữ. Thêm bài mới xen vào giữa lộ trình là việc bình
+    // thường; mất một bài gốc, hay đảo thứ tự dạy của chúng, thì không.
+    const goc = [
       'suspend', 'jobtree', 'exception', 'normalfail', 'supervisor',
       'launchasync', 'dispatcher', 'scopecompare', 'nestedtrap',
-    ])
+    ]
+    const ids = LESSONS.map(l => l.id)
+    expect(ids.filter(id => goc.includes(id))).toEqual(goc)
   })
 
   it('mỗi bài có tiêu đề, tóm tắt và ít nhất hai khái niệm', () => {

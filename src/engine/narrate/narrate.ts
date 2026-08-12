@@ -90,7 +90,12 @@ export function narrate(event: Event, before: WorldState): string | null {
       return `\`${at(e.id)}\` ném \`${e.exType}\`${e.message ? `: "${e.message}"` : ''}.`
 
     case 'EXCEPTION_CAUGHT':
-      return `\`${at(e.id)}\` BẮT ĐƯỢC \`${e.exType}\` — exception đã được xử lý, nên job này KHÔNG fail.`
+      // CancellationException KHÔNG được nói chung một câu với lỗi thường.
+      // Câu "đã xử lý nên job không fail" đúng về chữ nhưng dạy ngược đúng chỗ
+      // người ta hay sai nhất: job vẫn bị huỷ, chỉ có tín hiệu huỷ là bị nuốt.
+      return e.exType === 'CancellationException'
+        ? `\`${at(e.id)}\` bắt được \`CancellationException\` — đây là TÍN HIỆU HUỶ, không phải lỗi. Bắt nó là nuốt luôn lệnh huỷ: thân coroutine chạy tiếp như chưa có chuyện gì, trong khi Job thì đã Cancelled.`
+        : `\`${at(e.id)}\` BẮT ĐƯỢC \`${e.exType}\` — exception đã được xử lý, nên job này KHÔNG fail.`
 
     case 'FAILURE_PROPAGATED': {
       const con = at(e.from)

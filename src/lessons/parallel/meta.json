@@ -1,0 +1,12 @@
+{
+  "id": "parallel",
+  "order": 9,
+  "title": "Tuần tự hay song song — nhìn đồng hồ mới thấy",
+  "summary": "Cùng một kết quả, nhưng 400ms và 200ms. Khác biệt nằm ở chỗ async đặt TRƯỚC await.",
+  "concepts": [
+    "async",
+    "await",
+    "song song",
+    "suspend fun"
+  ]
+}

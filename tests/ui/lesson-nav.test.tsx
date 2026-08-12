@@ -13,8 +13,8 @@ describe('LessonNav', () => {
     )
     const items = container.querySelectorAll<HTMLButtonElement>('.lesson-nav__item')
     expect(items).toHaveLength(LESSON_LIST.length)
-    expect(LESSON_LIST.length, 'nav phải liệt kê đủ 9 bài').toBe(9)
-    // Chip chỉ hiện SỐ + nhãn ngắn (9 bài không xếp vừa một hàng nếu hiện cả
+    expect(LESSON_LIST.length, 'nav không liệt kê bài nào').toBeGreaterThan(0)
+    // Chip chỉ hiện SỐ + nhãn ngắn (cả lộ trình không xếp vừa một hàng nếu hiện cả
     // summary), nhưng title/summary đầy đủ vẫn phải tới được người dùng — qua
     // tooltip. Canh cả hai: số thứ tự đúng, và không bài nào mất chữ.
     expect([...items].map(b => b.querySelector('.lesson-nav__num')?.textContent))

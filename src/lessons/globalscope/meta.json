@@ -1,0 +1,12 @@
+{
+  "id": "globalscope",
+  "order": 13,
+  "title": "GlobalScope — coroutine không có cha",
+  "summary": "Không cha thì không ai chờ, không ai huỷ. Nhìn đồ thị: nó đứng riêng một cây.",
+  "concepts": [
+    "GlobalScope",
+    "structured concurrency",
+    "job mồ côi",
+    "vòng đời"
+  ]
+}

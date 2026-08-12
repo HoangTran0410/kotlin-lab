@@ -102,6 +102,12 @@ export class Interpreter {
             for (const c of s.catches) {
               if (c.type === 'Exception' || c.type === err.kotlinType
                   || (c.type === 'Throwable')) {
+                // Phát TRƯỚC khi chạy thân catch: mọi println bên trong thân
+                // phải nằm SAU câu "đã bắt được" trên trace, không phải trước.
+                // `c.block.pos` là dấu `{` của đúng nhánh catch khớp — dòng mà
+                // người học cần nhìn. `s.pos` là dòng của `try`, có thể cách
+                // đó cả chục dòng và trỏ về chỗ chẳng có gì xảy ra.
+                this.scheduler.exceptionCaught(err.kotlinType, c.block.pos.line)
                 const scope = env.child()
                 scope.declare(c.name, {
                   t: 'obj', className: err.kotlinType,

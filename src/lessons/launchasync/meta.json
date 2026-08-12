@@ -1,6 +1,6 @@
 {
   "id": "launchasync",
-  "order": 6,
+  "order": 8,
   "title": "launch vs async — Job vs Deferred",
   "summary": "join() chỉ chờ; await() chờ và đọc, nên await() mới là chỗ exception hiện ra.",
   "concepts": [

@@ -193,6 +193,20 @@ export class Scheduler {
     this.emitter.emit({ k: 'PRINTLN', id: this.currentInlineJob?.id ?? 'j0', text }, srcLine)
   }
 
+  /**
+   * Một `catch` vừa khớp. Phát từ interpreter, cùng đường với `println`.
+   *
+   * EXCEPTION_CAUGHT có trong events.ts và có câu diễn giải từ M1, nhưng KHÔNG
+   * ai phát nó — nên hai bài học sống bằng chính khoảnh khắc này (`exception`:
+   * bắt được thì job không fail; `swallow`: catch rộng nuốt luôn tín hiệu huỷ)
+   * chỉ hiện ra một EXCEPTION_THROWN rồi im, không có gì trên đồ thị nói rằng
+   * nó đã được xử lý. Người học phải tự suy ra từ việc "không thấy job đỏ".
+   */
+  exceptionCaught(exType: string, srcLine?: number): void {
+    this.emitter.emit(
+      { k: 'EXCEPTION_CAUGHT', id: this.currentInlineJob?.id ?? 'j0', exType }, srcLine)
+  }
+
   spawnRoot(makeBody: (job: Job) => CoroutineBody): Job {
     const job = this.spawn(
       null, false, 'runBlocking', CoroutineContext.empty().withDispatcher('Main'), makeBody)

@@ -39,6 +39,16 @@ export const UNSUPPORTED: Record<string, string> = {
   mutableListOf: 'Collection chưa có ở M1. Dùng for (i in 1..n) thay cho danh sách.',
   forEach: 'forEach chưa có ở M1. Dùng for (i in 1..n) hoặc repeat(n).',
 
+  // CoroutineExceptionHandler ĐI QUA được cả parser lẫn context (applyCtxValue
+  // đặt cờ handler, và CtxSummary.hasHandler thành true), nhưng KHÔNG ai gọi
+  // nó: scheduler chưa bao giờ phát HANDLER_RECEIVED. Nên pattern Android kinh
+  // điển nhất — scope gốc có handler để không sập app — chạy ở đây ra kết quả
+  // của một scope KHÔNG có handler, mà không một lời cảnh báo. Đó đúng là loại
+  // sai âm thầm mà công cụ này tồn tại để chống. Báo cho tới khi nó được cài.
+  CoroutineExceptionHandler: 'CoroutineExceptionHandler chưa được cài — context nhận nó nhưng không '
+    + 'ai gọi tới, nên kết quả sẽ giống hệt khi không có handler. Dùng try/catch quanh '
+    + 'coroutineScope, hoặc supervisorScope, để thấy đường đi của failure.',
+
   // ---- Nằm ngoài phạm vi M3 hoặc dời tới milestone sau ----
   // children là Sequence<Job> — hỗ trợ nó kéo theo cả API sequence, ngoài
   // phạm vi M3. Cây job đã hiện sẵn trên đồ thị.

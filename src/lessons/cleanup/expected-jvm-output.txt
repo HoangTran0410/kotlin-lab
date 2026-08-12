@@ -1,0 +1,4 @@
+1. mở tài nguyên
+2. gọi cancelAndJoin()
+3. finally VẪN chạy khi bị huỷ — đây là chỗ dọn dẹp
+4. cancelAndJoin() chờ dọn dẹp xong mới đi tiếp
