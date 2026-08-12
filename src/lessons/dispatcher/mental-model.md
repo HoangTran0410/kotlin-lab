@@ -27,3 +27,11 @@ right.
 
 The thread badge on the node switches from one pool to another and then **switches
 back** — while the node itself stays a single, unbroken node from start to finish.
+One coroutine, two threads, at different times.
+
+In the pool strip under the graph, watch the same hop from the other side: a slot on
+one pool empties, a slot on the other fills, and the arriving slot is marked at the
+exact step it happens. The strip is also where `IO` versus `Default` stops being a
+sentence and becomes a shape — eight boxes next to four. And the count beside the
+slots (`+N suspended, holding no thread`) is the reason a pool that small is enough:
+a coroutine parked in `delay` gave its thread back.
