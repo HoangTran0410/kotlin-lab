@@ -89,6 +89,10 @@ interface Task {
    * so the correct baseline for comparison is the dispatcher AT CREATION.
    */
   parentDispatcher: string | null
+  /** Active delay timer; cancelled when cancellation resumes the generator early. */
+  pendingDelayTimerId: number | null
+  builder: 'launch' | 'async' | 'runBlocking' | 'coroutineScope' | 'supervisorScope'
+    | 'withContext' | 'withTimeout' | 'withTimeoutOrNull' | 'scope'
 }
 
 export function toCause(err: unknown): FailureCause {
@@ -97,7 +101,10 @@ export function toCause(err: unknown): FailureCause {
   // the Scheduler has no reason to depend on the interpreter's concrete
   // class.
   if (err && typeof err === 'object' && 'kotlinType' in err) {
-    const e = err as { kotlinType: string; kotlinMessage?: string; message?: string; line?: number }
+    const e = err as {
+      kotlinType: string; kotlinMessage?: string; message?: string; line?: number
+      timeoutOwnerJobId?: JobId
+    }
     return {
       exType: e.kotlinType,
       // Prefer kotlinMessage. KotlinThrow's Error.message is built as
@@ -105,12 +112,13 @@ export function toCause(err: unknown): FailureCause {
       // up the type name: `catch (e: RuntimeException) { println(e.message) }`
       // would print "RuntimeException: boom" instead of "boom".
       message: e.kotlinMessage ?? e.message ?? '',
-      isCancellation: e.kotlinType === 'CancellationException',
+      isCancellation: e.kotlinType.endsWith('CancellationException'),
       // Duck-typed (not instanceof), same as the rest of this function — the
       // Scheduler's tests build fake errors with Object.assign and don't
       // carry a `line`, so reading undefined via optional chaining is
       // correct, not a bug.
       line: e.line,
+      timeoutOwnerJobId: e.timeoutOwnerJobId,
     }
   }
   return { exType: 'Exception', message: String(err), isCancellation: false }
@@ -160,6 +168,8 @@ export class Scheduler {
    * `acquire` on the next step.
    */
   private readonly pendingDispatch = new Map<Task, { jobId: JobId; line?: number }>()
+  /** Uncaught launch failures wait here until all cancelled descendants finish cleanup. */
+  private readonly pendingHandlers: { job: Job; cause: FailureCause }[] = []
 
   /**
    * Tasks waiting for another job to finish. An array, not a nested Map, so
@@ -280,6 +290,8 @@ export class Scheduler {
       started: false, finished: false, unwinding: false, inlineStack: [],
       startLine: startLine ?? srcLine, resumeLine: undefined,
       parentDispatcher: parent ? this.tasks.get(parent.id)?.ctx.dispatcher ?? null : null,
+      pendingDelayTimerId: null,
+      builder,
     }
     this.tasks.set(id, task)
     this.taskOrder.push(task)
@@ -398,6 +410,7 @@ export class Scheduler {
       // advancing the clock. Placed before sweepWaiters so finally isn't
       // deferred by yet another loop iteration.
       if (this.unwindCancelled()) continue
+      if (this.deliverSettledHandlers()) continue
       // Sweep waiters AFTER ready has drained, not after every step. A job
       // that just finished may have unblocked a waiter; skip this line and
       // the clock would jump right past work that was already ready to run.
@@ -461,6 +474,10 @@ export class Scheduler {
       // reads to answer "has cleanup finished" — setting it early would wake
       // a waiter before `finally` has had a chance to run.
       task.unwinding = true
+      if (task.pendingDelayTimerId !== null) {
+        this.clock.cancel(task.pendingDelayTimerId)
+        task.pendingDelayTimerId = null
+      }
       did = true
       this.currentJob = task.job
       // The inline stack is still intact from when the task was suspended:
@@ -481,9 +498,13 @@ export class Scheduler {
         // A job CANCELLED from outside has `failure` as null and still gets
         // CancellationException, matching Kotlin.
         const f = governing.failure
+        const cancellation = governing.cause?.isCancellation ? governing.cause : null
         result = task.body.throw(f
-          ? new KotlinThrow(f.exType, f.message)
-          : new KotlinThrow('CancellationException', 'Job was cancelled'))
+          ? new KotlinThrow(f.exType, f.message, undefined, f.timeoutOwnerJobId)
+          : cancellation
+            ? new KotlinThrow(cancellation.exType, cancellation.message, undefined,
+              cancellation.timeoutOwnerJobId)
+            : new KotlinThrow('CancellationException', 'Job was cancelled'))
       } catch (err) {
         // The generator re-throws the KOTLIN exception after finally has
         // finished running — normal, not a bug, correctly swallowed here.
@@ -494,6 +515,23 @@ export class Scheduler {
         // it becomes decorative, and an internal exception would even
         // REPLACE the in-flight CancellationException without leaving a trace.
         if (isEngineError(err)) throw err
+        const replacement = toCause(err)
+        const inFlight = governing.failure ?? governing.cause
+        const replacesInFlight = !replacement.isCancellation
+          && (inFlight === null
+            || replacement.exType !== inFlight.exType
+            || replacement.message !== inFlight.message
+            || replacement.timeoutOwnerJobId !== inFlight.timeoutOwnerJobId)
+        if (replacesInFlight) {
+          governing.failure = replacement
+          governing.cause = replacement
+          this.emitter.emit({
+            k: 'EXCEPTION_THROWN', id: governing.id,
+            exType: replacement.exType, message: replacement.message,
+          }, replacement.line)
+          const unhandled = reportFailure(governing, replacement, this.emitter)
+          if (unhandled) this.queueUnhandled(governing, unhandled, replacement)
+        }
         // Reaching here means the generator has FINISHED unwinding.
         task.finished = true
         task.unwinding = false
@@ -562,6 +600,7 @@ export class Scheduler {
 
   private step(task: Task): void {
     const { job } = task
+    const governing = this.governingJob(task)
     // `task.unwinding` is a deliberate exception to the "job is already done,
     // so stop" gate: a generator that is CURRENTLY unwinding still has
     // `finally` blocks to run and a tail (`joinChildren` waiting for
@@ -570,7 +609,7 @@ export class Scheduler {
     // would abandon the generator mid-flight: `finally` wouldn't run,
     // `finished` would never be set, and whoever `join()`s it would hang
     // forever.
-    if (job.isCompleted && !task.unwinding) return
+    if (job.isCompleted && !task.unwinding && governing === job) return
 
     const acquired = this.pool.acquire(task.ctx.dispatcher, job.id)
     if (acquired === null) {
@@ -659,7 +698,8 @@ export class Scheduler {
       const cause = toCause(err)
       this.emitter.emit(
         { k: 'EXCEPTION_THROWN', id: job.id, exType: cause.exType, message: cause.message }, cause.line)
-      reportFailure(job, cause, this.emitter)
+      const unhandled = reportFailure(job, cause, this.emitter)
+      if (unhandled) this.queueUnhandled(job, unhandled, cause)
       return
     }
 
@@ -726,7 +766,13 @@ export class Scheduler {
 
     switch (s.s) {
       case 'delay':
-        this.clock.schedule(this.clock.now + s.ms, () => { this.ready.push(task) })
+        {
+          const timerId = this.clock.schedule(this.clock.now + s.ms, () => {
+            if (task.pendingDelayTimerId === timerId) task.pendingDelayTimerId = null
+            if (!this.governingJob(task).isCancelled) this.ready.push(task)
+          })
+          task.pendingDelayTimerId = timerId
+        }
         break
       case 'yield':
         this.ready.push(task)
@@ -838,7 +884,8 @@ export class Scheduler {
    * the tree, but the body runs right here, not queued separately.
    */
   spawnInline(
-    builder: 'runBlocking' | 'coroutineScope' | 'supervisorScope' | 'withContext',
+    builder: 'runBlocking' | 'coroutineScope' | 'supervisorScope' | 'withContext'
+      | 'withTimeout' | 'withTimeoutOrNull',
     parentJobId: JobId | null,
     isSupervisor: boolean,
     ctx: CoroutineContext,
@@ -850,7 +897,14 @@ export class Scheduler {
     // runBlocking is NOT a scope coroutine: kotlinx's BlockingCoroutine
     // blocks the calling thread rather than returning the exception into a
     // continuation. See Job.isScopeCoroutine.
-    const job = new Job(id, merged.name ?? id, parent, isSupervisor, builder !== 'runBlocking')
+    const job = new Job(
+      id,
+      merged.name ?? id,
+      parent,
+      isSupervisor,
+      builder !== 'runBlocking',
+      merged.isNonCancellable,
+    )
     parent?.addChild(job)
     const jobCtx = merged.withJob(job)
     this.emitter.emit({
@@ -863,9 +917,17 @@ export class Scheduler {
       resumeThrow: undefined, started: true, finished: false, unwinding: false, inlineStack: [],
       startLine: undefined, resumeLine: undefined,
       parentDispatcher: parentCtx.dispatcher,
+      pendingDelayTimerId: null,
+      builder,
     }
     this.tasks.set(id, task)
     this.taskOrder.push(task)
+    if (parent?.isCompleted && !merged.isNonCancellable) {
+      cancelJob(job, {
+        exType: 'CancellationException', message: 'Job was cancelled', isCancellation: true,
+      }, this.emitter, parent.id)
+      task.finished = true
+    }
     // Do NOT push onto the inline stack here. CREATING the job and ENTERING
     // the scope are two different moments: between them, withContext still
     // yields a dispatcher-switch point, and the task could be cancelled
@@ -912,6 +974,8 @@ export class Scheduler {
       resumeThrow: undefined, started: true, finished: true, unwinding: false, inlineStack: [],
       startLine: undefined, resumeLine: undefined,
       parentDispatcher: null,
+      pendingDelayTimerId: null,
+      builder: 'scope',
     }
     this.tasks.set(id, task)
     this.taskOrder.push(task)
@@ -1013,8 +1077,60 @@ export class Scheduler {
     reportFailure(job, cause, this.emitter)
   }
 
-  cancelById(jobId: JobId, cause: FailureCause): void {
+  cancelById(jobId: JobId, cause: FailureCause, from: JobId | 'user' = 'user'): void {
     const task = this.tasks.get(jobId)
-    if (task) cancelJob(task.job, cause, this.emitter, 'user')
+    if (task) cancelJob(task.job, cause, this.emitter, from)
+  }
+
+  private deliverUnhandled(job: Job, cause: FailureCause): void {
+    const task = this.tasks.get(job.id)
+    const handler = task?.ctx.handlerBody
+    if (!task || !handler) return
+    this.emitter.emit({ k: 'HANDLER_RECEIVED', id: job.id, handler: 'CEH', exType: cause.exType }, cause.line)
+    const previousJob = this.currentJob
+    const previousTask = this.currentTask
+    this.currentJob = job
+    this.currentTask = task
+    try {
+      const result = handler(cause).next()
+      if (!result.done) throw new Error('CoroutineExceptionHandler bodies must not suspend')
+    } finally {
+      this.currentJob = previousJob
+      this.currentTask = previousTask
+    }
+  }
+
+  /** The root coroutine under the terminal scope owns the failure. */
+  private queueUnhandled(failed: Job, boundary: Job, cause: FailureCause): void {
+    let owner = boundary
+    const boundaryBuilder = this.tasks.get(boundary.id)?.builder
+    if (boundaryBuilder !== 'launch' && boundaryBuilder !== 'async') {
+      owner = failed
+      while (owner.parent && owner.parent !== boundary) owner = owner.parent
+    }
+    // A root Deferred owns its exception. An async nested below a root launch
+    // does not: propagation has already made that launch the terminal owner.
+    if (this.tasks.get(owner.id)?.builder === 'async') return
+    // A cleanup failure from a sibling cancelled by an already-pending primary
+    // failure is secondary. The primary terminal event owns this cancelled tree.
+    if (this.pendingHandlers.some(pending => pending.job === failed
+      || pending.job.descendants().includes(failed))) return
+    this.pendingHandlers.push({ job: boundary, cause })
+  }
+
+  private deliverSettledHandlers(): boolean {
+    let delivered = false
+    const waiting: typeof this.pendingHandlers = []
+    for (const pending of this.pendingHandlers) {
+      if (!pending.job.descendants().every(child => this.isJobSettled(child.id))) {
+        waiting.push(pending)
+        continue
+      }
+      this.deliverUnhandled(pending.job, pending.cause)
+      delivered = true
+    }
+    this.pendingHandlers.length = 0
+    this.pendingHandlers.push(...waiting)
+    return delivered
   }
 }

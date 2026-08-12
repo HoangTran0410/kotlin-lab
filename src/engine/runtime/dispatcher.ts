@@ -5,7 +5,9 @@ export const DISPATCHER_POOL_SIZE: Record<string, number> = {
   Main: 1,
   Default: 4,
   IO: 8,
-  Unconfined: 1,
+  // Unconfined has no pool of its own. The scheduler uses one deterministic
+  // carrier marker because this simulator intentionally runs one continuation at a time.
+  Unconfined: 0,
 }
 
 export interface VirtualThread {
@@ -22,6 +24,11 @@ export class DispatcherPool {
   private ensure(dispatcher: string): VirtualThread[] {
     if (!this.order.includes(dispatcher)) {
       this.order.push(dispatcher)
+      if (dispatcher === 'Unconfined') {
+        const id = 'Unconfined-carrier'
+        this.threads.set(id, { id, dispatcher, jobId: null })
+        return this.threadsOf(dispatcher)
+      }
       const n = DISPATCHER_POOL_SIZE[dispatcher] ?? 1
       for (let i = 1; i <= n; i++) {
         const id = `${dispatcher}-${i}`

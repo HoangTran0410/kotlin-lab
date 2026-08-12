@@ -44,6 +44,16 @@ describe('LessonNav — three entry points in the header', () => {
     const src = setSource.mock.calls[0]![0] as string
     expect(runSourceSafe(src).diagnostics).toEqual([])
   })
+
+  it('shows a one-click restore action only when a source can be restored', () => {
+    const onRestoreSource = vi.fn()
+    const { rerender } = render(<LessonNav {...navProps} canRestoreSource={false} onRestoreSource={onRestoreSource} />)
+    expect(screen.queryByRole('button', { name: 'Restore source' })).toBeNull()
+
+    rerender(<LessonNav {...navProps} canRestoreSource onRestoreSource={onRestoreSource} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Restore source' }))
+    expect(onRestoreSource).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('LessonList — the whole path, no lesson hidden', () => {

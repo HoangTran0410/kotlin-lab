@@ -40,6 +40,29 @@ describe('about page — wired into the app', () => {
     }
   })
 
+  it('groups runnable capabilities into the four learning-oriented sections', () => {
+    render(<App />)
+    const box = openAbout()
+    for (const heading of ['Core', 'Context', 'Flow', 'Advanced']) {
+      expect(within(box).getByRole('heading', { name: heading })).toBeInTheDocument()
+    }
+    expect(within(within(box).getByRole('region', { name: 'Core' })).getByText('launch { }')).toBeInTheDocument()
+    expect(within(within(box).getByRole('region', { name: 'Context' })).getByText('withContext(...)')).toBeInTheDocument()
+    expect(within(within(box).getByRole('region', { name: 'Flow' })).getByText('coroutineScope { }')).toBeInTheDocument()
+    expect(within(within(box).getByRole('region', { name: 'Advanced' })).getByText('join() / cancel() / cancelAndJoin()')).toBeInTheDocument()
+  })
+
+  it('renders every source-of-truth capability exactly once across the grouped sections', () => {
+    render(<App />)
+    const box = openAbout()
+    const grouped = ['Core', 'Context', 'Flow', 'Advanced'].map(name => within(box).getByRole('region', { name }))
+
+    for (const capability of CAPABILITIES.flatMap(group => group.items)) {
+      const count = grouped.reduce((total, section) => total + within(section).queryAllByText(capability.name).length, 0)
+      expect(count, `${capability.name} is missing from or duplicated across grouped capabilities`).toBe(1)
+    }
+  })
+
   it('lists every NOT-supported construct, with a replacement hint', () => {
     render(<App />)
     const box = openAbout()

@@ -92,6 +92,17 @@ export const CAPABILITIES: CapabilityGroup[] = [
         ],
       },
       {
+        name: 'withTimeout(...) / withTimeoutOrNull(...)',
+        summary: 'Uses deterministic virtual time, cancels the block and its children, or returns null on timeout.',
+        kotlin: mainBlock(`    try {
+        withTimeout(10) { delay(20) }
+    } catch (e: TimeoutCancellationException) {
+        println("timeout throws")
+    }
+    println(withTimeoutOrNull(10) { delay(20); 7 })`),
+        output: ['timeout throws', 'null'],
+      },
+      {
         name: 'CoroutineScope(...) / MainScope()',
         summary: "A self-managed scope with its own root Job — it doesn't hang off the calling coroutine.",
         kotlin: mainBlock(`    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -157,6 +168,19 @@ export const CAPABILITIES: CapabilityGroup[] = [
     job.cancelAndJoin()`),
         output: ['finally still runs'],
       },
+      {
+        name: 'withContext(NonCancellable)',
+        summary: 'Allows suspending cleanup in finally after cancellation; other NonCancellable placements are rejected.',
+        kotlin: mainBlock(`    val job = launch {
+        try { delay(100) }
+        finally {
+            withContext(NonCancellable) { delay(5); println("cleanup finished") }
+        }
+    }
+    delay(10)
+    job.cancelAndJoin()`),
+        output: ['cleanup finished'],
+      },
     ],
   },
   {
@@ -164,11 +188,12 @@ export const CAPABILITIES: CapabilityGroup[] = [
     items: [
       {
         name: 'Dispatchers.Main / Default / IO / Unconfined',
-        summary: "Four virtual thread pools. A child inherits its parent's dispatcher unless told otherwise.",
+        summary: 'Main, Default, and IO use virtual pools. Unconfined uses a deterministic carrier approximation, not a dedicated pool.',
         kotlin: mainBlock(`    launch(Dispatchers.Default) { println("Default") }
     launch(Dispatchers.IO) { println("IO") }
+    launch(Dispatchers.Unconfined) { println("Unconfined approximation") }
     delay(10)`),
-        output: ['Default', 'IO'],
+        output: ['Default', 'IO', 'Unconfined approximation'],
       },
       {
         name: 'CoroutineName("...")',
@@ -185,6 +210,15 @@ export const CAPABILITIES: CapabilityGroup[] = [
     delay(10)
     scope.cancel()`),
         output: ['inherits all three elements from the scope'],
+      },
+      {
+        name: 'CoroutineExceptionHandler',
+        summary: 'Receives an uncaught launch exception only after propagation reaches a root or supervisor boundary.',
+        kotlin: mainBlock(`    val handler = CoroutineExceptionHandler { _, e -> println("caught: " + e.message) }
+    val scope = CoroutineScope(SupervisorJob() + handler)
+    scope.launch { throw RuntimeException("boom") }
+    delay(10)`),
+        output: ['caught: boom'],
       },
     ],
   },

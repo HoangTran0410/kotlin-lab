@@ -21,7 +21,12 @@ export class KotlinThrow extends Error {
    * long, a synthetic re-throw of CancellationException while unwinding) — not
    * tied to any specific line of user code.
    */
-  constructor(readonly kotlinType: string, readonly kotlinMessage: string, readonly line?: number) {
+  constructor(
+    readonly kotlinType: string,
+    readonly kotlinMessage: string,
+    readonly line?: number,
+    readonly timeoutOwnerJobId?: string,
+  ) {
     super(`${kotlinType}: ${kotlinMessage}`)
   }
 }

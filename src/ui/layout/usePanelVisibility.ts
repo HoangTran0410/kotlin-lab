@@ -19,6 +19,12 @@ export const REGION_TITLE: Record<Region, string> = {
 }
 
 export type Visibility = Record<Region, boolean>
+export const MOBILE_REGION_LABEL: Record<Region, string> = { left: 'Code', bottom: 'Graph', right: 'Explain' }
+export const MOBILE_REGION_TITLE: Record<Region, string> = {
+  left: 'The Kotlin editor and its errors',
+  bottom: 'The coroutine graph',
+  right: 'The explanation and console',
+}
 
 /**
  * Same defaults the single debug toggle used to produce — editor open, the
@@ -32,6 +38,10 @@ const DEFAULTS: Visibility = { left: true, bottom: false, right: false }
  * simply picks up the defaults for visibility.
  */
 const STORAGE_KEY = 'kcl.panels.show.v1'
+const compactMedia = (): MediaQueryList | null =>
+  typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(max-width: 900px)')
+    : null
 
 function read(): Visibility {
   try {
@@ -60,12 +70,26 @@ function read(): Visibility {
  */
 export function usePanelVisibility() {
   const [show, setShow] = useState<Visibility>(read)
+  const [isCompact, setIsCompact] = useState(() => compactMedia()?.matches ?? false)
+  const [mobileRegion, setMobileRegion] = useState<Region>('left')
+
+  useEffect(() => {
+    const media = compactMedia()
+    if (!media) return
+    const update = (): void => setIsCompact(media.matches)
+    update()
+    media.addEventListener?.('change', update)
+    return () => media.removeEventListener?.('change', update)
+  }, [])
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(show)) } catch { /* private mode */ }
   }, [show])
 
-  const toggle = useCallback((r: Region) => setShow(v => ({ ...v, [r]: !v[r] })), [])
+  const toggle = useCallback((r: Region) => {
+    if (isCompact) setMobileRegion(r)
+    else setShow(v => ({ ...v, [r]: !v[r] }))
+  }, [isCompact])
 
-  return { show, toggle }
+  return { show, toggle, isCompact, mobileRegion }
 }

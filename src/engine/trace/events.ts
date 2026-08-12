@@ -26,7 +26,7 @@ export type EventBody =
       // Scheduler.spawnScopeRoot). It is NOT a builder in Kotlin — but it is
       // a real node in the job tree, so it has to be present on the trace.
       builder: 'launch' | 'async' | 'runBlocking' | 'coroutineScope' | 'supervisorScope'
-        | 'withContext' | 'scope'
+        | 'withContext' | 'withTimeout' | 'withTimeoutOrNull' | 'scope'
       ctx: CtxSummary }
   | { k: 'COROUTINE_STARTED'; id: JobId; threadId: ThreadId }
   | { k: 'COROUTINE_SUSPENDED'; id: JobId; reason: 'delay' | 'await' | 'join' | 'yield' | 'collect' | 'emit' }

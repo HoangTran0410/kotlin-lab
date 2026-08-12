@@ -21,6 +21,30 @@ const openLessons = (): HTMLElement => {
 }
 
 describe('App wiring -> lesson path', () => {
+  it('an empty first workspace offers and starts lesson 1 directly', () => {
+    useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start lesson 1' }))
+
+    expect(useLabStore.getState().lessonId).toBe(LESSON_LIST[0]!.id)
+    expect(useLabStore.getState().source).toBe(lessonSource(LESSON_LIST[0]!.id))
+  })
+
+  it('restore source reverses a lesson overwrite without a confirmation dialog', () => {
+    const original = 'fun main() = runBlocking { println("mine") }'
+    useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
+    useLabStore.getState().setSource(original)
+    render(<App />)
+
+    const box = openLessons()
+    fireEvent.click(box.querySelectorAll<HTMLButtonElement>('.les__card')[0]!)
+    fireEvent.click(screen.getByRole('button', { name: 'Restore source' }))
+
+    expect(useLabStore.getState().source).toBe(original)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
   it('clicking a lesson loads real source, the right lessonId, clamps stepIndex to 0, and closes the box', () => {
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource(lessonSource('jobtree')!)

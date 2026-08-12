@@ -23,7 +23,7 @@ export function cancelJob(
     job.suspendedAtLine ?? cause.line)
 
   for (const child of job.children) {
-    if (child.isCompleted) continue
+    if (child.isCompleted || child.isNonCancellable) continue
     cancelJob(child, cause, emitter, job.id)
   }
 
@@ -73,7 +73,7 @@ function terminateAsFailed(job: Job, cause: FailureCause, emitter: TraceEmitter)
     job.suspendedAtLine ?? cause.line)
 }
 
-export function reportFailure(child: Job, cause: FailureCause, emitter: TraceEmitter): void {
+export function reportFailure(child: Job, cause: FailureCause, emitter: TraceEmitter): Job | null {
   child.cause = cause
 
   // Structured concurrency: a failing coroutine must cancel ITS OWN CHILDREN
@@ -82,13 +82,13 @@ export function reportFailure(child: Job, cause: FailureCause, emitter: TraceEmi
   // after their parent is already Cancelled, violating the single most
   // fundamental principle this tool teaches.
   for (const c of child.children) {
-    if (c.isCompleted) continue
+    if (c.isCompleted || c.isNonCancellable) continue
     cancelJob(c, cause, emitter, child.id)
   }
 
   terminateAsFailed(child, cause, emitter)
 
-  if (cause.isCancellation) return
+  if (cause.isCancellation) return null
 
   // Failure climbs up THROUGH MULTIPLE LEVELS, not just one. If we only
   // notified the direct parent and stopped, then for a tree R -> P -> {A,B,C}
@@ -99,7 +99,7 @@ export function reportFailure(child: Job, cause: FailureCause, emitter: TraceEmi
   let node = child
   for (;;) {
     const parent = node.parent
-    if (!parent) return
+    if (!parent) return node
 
     // `cause.line` is the line of the `throw` that caused this propagation
     // chain. Tag it onto EVERY event of the chain so the cursor in the
@@ -126,13 +126,13 @@ export function reportFailure(child: Job, cause: FailureCause, emitter: TraceEmi
     // Placed BEFORE the supervisor branch so the two flags stay independent:
     // supervisorScope is both a supervisor and a scope, and either reason
     // alone stops propagation here.
-    if (node.isScopeCoroutine) return
+    if (node.isScopeCoroutine) return null
 
     // A supervisor blocks FAILURE PROPAGATION. It doesn't swallow the
     // exception — delivering an unhandled exception to the handler is the
     // scheduler's job, not this one.
-    if (parent.isSupervisor) return
-    if (parent.isCompleted) return
+    if (parent.isSupervisor) return node
+    if (parent.isCompleted) return node
 
     parent.cause = cause
 

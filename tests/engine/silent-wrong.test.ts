@@ -70,24 +70,16 @@ describe('an unsupported construct must be REPORTED, not return a garbage value'
     expect(d[0]!.hint).toBeTruthy()
   })
 
-  it('CoroutineExceptionHandler is blocked in the form people ACTUALLY write', () => {
-    // Not `println(CoroutineExceptionHandler)` — nobody writes that. The real
-    // form is a Call with a trailing lambda, added into the root scope's
-    // context: the classic Android pattern. It DOES flow through both the
-    // parser and applyCtxValue (ctx.hasHandler becomes true), but the
-    // scheduler never emits HANDLER_RECEIVED, so before this was blocked, this
-    // snippet ran with the result of a scope that has NO handler, without a
-    // single warning.
-    const d = diagnosticsOf(`fun main() = runBlocking {
+  it('CoroutineExceptionHandler executes in the classic supervisor-root form', () => {
+    const r = runSource(`fun main() = runBlocking {
     val handler = CoroutineExceptionHandler { _, e -> println("caught: " + e.message) }
     val scope = CoroutineScope(SupervisorJob() + handler)
     scope.launch { throw RuntimeException("boom") }
     delay(50)
 }`)
-    expect(d.length).toBeGreaterThan(0)
-    expect(d[0]!.line).toBe(2)
-    expect(d[0]!.message).toContain('CoroutineExceptionHandler')
-    expect(d[0]!.hint).toBeTruthy()
+    expect(r.diagnostics).toEqual([])
+    expect(r.output).toEqual(['caught: boom'])
+    expect(r.events.filter(e => e.k === 'HANDLER_RECEIVED' && e.handler === 'CEH')).toHaveLength(1)
   })
 
   it('toString() actually runs, instead of returning "kotlin.Unit"', () => {

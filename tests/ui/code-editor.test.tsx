@@ -1,7 +1,8 @@
 import { act } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import { render } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { EditorView } from '@codemirror/view'
+import { undo } from '@codemirror/commands'
 import { CodeEditor } from '../../src/ui/editor/CodeEditor'
 import { App } from '../../src/ui/App'
 import { useLabStore } from '../../src/state/store'
@@ -40,10 +41,12 @@ describe('CodeEditor — CodeMirror 6 with Kotlin syntax', () => {
   })
 
   it('changing the value prop from outside changes the doc to match', () => {
-    const { container, rerender } = render(<CodeEditor value="a" onChange={() => {}} />)
-    rerender(<CodeEditor value="fun main() = runBlocking { }" onChange={() => {}} />)
+    const onChange = vi.fn()
+    const { container, rerender } = render(<CodeEditor value="a" onChange={onChange} />)
+    rerender(<CodeEditor value="fun main() = runBlocking { }" onChange={onChange} />)
     const view = viewOf(container)
     expect(view.state.doc.toString()).toBe('fun main() = runBlocking { }')
+    expect(onChange).not.toHaveBeenCalled()
   })
 
   it('changing the value prop to the value it ALREADY has does NOT dispatch (no infinite loop)', () => {
@@ -74,6 +77,47 @@ describe('CodeEditor — CodeMirror 6 with Kotlin syntax', () => {
 
       act(() => { vi.advanceTimersByTime(200) })
       expect(setSource, '5 keystrokes must collapse into EXACTLY 1 compile').toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('restores the latest typed draft after immediately loading a lesson', () => {
+    vi.useFakeTimers()
+    try {
+      useLabStore.setState({ source: '', lessonId: null, stepIndex: 0, previousSource: null, previousLessonId: null, canRestoreSource: false })
+      const { container } = render(<App />)
+      const view = viewOf(container)
+      view.dispatch({ changes: { from: 0, insert: 'draft' } })
+
+      const nav = screen.getByRole('navigation', { name: 'Lesson path' })
+      fireEvent.click(within(nav).getAllByRole('button')[0]!)
+      fireEvent.click(screen.getByRole('dialog').querySelectorAll<HTMLButtonElement>('.les__card')[0]!)
+      act(() => { vi.advanceTimersByTime(250) })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Restore source' }))
+      expect(useLabStore.getState().source).toBe('draft')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not let native undo cross a lesson-load boundary', () => {
+    vi.useFakeTimers()
+    try {
+      useLabStore.setState({ source: '', lessonId: null, stepIndex: 0, previousSource: null, previousLessonId: null, canRestoreSource: false })
+      const { container } = render(<App />)
+      viewOf(container).dispatch({ changes: { from: 0, insert: 'draft' } })
+
+      const nav = screen.getByRole('navigation', { name: 'Lesson path' })
+      fireEvent.click(within(nav).getAllByRole('button')[0]!)
+      fireEvent.click(screen.getByRole('dialog').querySelectorAll<HTMLButtonElement>('.les__card')[0]!)
+      act(() => { vi.advanceTimersByTime(250) })
+
+      const loaded = viewOf(container)
+      expect(undo(loaded)).toBe(false)
+      expect(useLabStore.getState().lessonId).not.toBeNull()
+      expect(useLabStore.getState().source).not.toBe('draft')
     } finally {
       vi.useRealTimers()
     }

@@ -17,8 +17,17 @@
      each other. */
   --edge-cancel: #f0883e;
 }
-body { margin: 0; background: var(--bg); color: var(--fg);
+body { margin: 0; overflow-x: hidden; background: var(--bg); color: var(--fg);
   font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; }
+
+:where(button, [role='tab'], [role='separator']):focus-visible {
+  outline: 2px solid var(--k-launch);
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  :where(button, [role='tab']) { min-height: 44px; }
+}
 
 /* Task 9: the line currently running in the trace. Left border + faint
    background to distinguish it from highlightActiveLine()'s background

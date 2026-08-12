@@ -9,6 +9,29 @@ const st = () => useLabStore.getState()
 beforeEach(() => { useLabStore.setState({ source: '', stepIndex: 0, lessonId: null }); st().setSource(SRC) })
 
 describe('store — the trace is the one source of truth', () => {
+  it('restores the one source replaced by a lesson load', () => {
+    const original = st().source
+
+    st().loadLesson('supervisor')
+
+    expect(st().previousSource).toBe(original)
+    expect(st().canRestoreSource).toBe(true)
+    st().restoreSource()
+    expect(st().source).toBe(original)
+    expect(st().lessonId).toBeNull()
+    expect(st().canRestoreSource).toBe(false)
+  })
+
+  it('keeps only the latest source before an overwrite', () => {
+    st().loadSource('fun main() = runBlocking { println("example") }')
+    const beforeLesson = st().source
+    st().loadLesson('supervisor')
+
+    st().restoreSource()
+
+    expect(st().source).toBe(beforeLesson)
+  })
+
   it('setStep clamps into [0, event count]', () => {
     st().setStep(-5); expect(st().stepIndex).toBe(0)
     st().setStep(99999); expect(st().stepIndex).toBe(st().compiled.events.length)

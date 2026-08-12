@@ -34,19 +34,32 @@ import { selectCurrentLine, selectWorld } from '../state/selectors'
  */
 const SET_SOURCE_DEBOUNCE_MS = 250
 
-function useDebouncedSetSource(): (src: string) => void {
+function useDebouncedSetSource() {
   const setSource = useLabStore(s => s.setSource)
   const timer = useRef<number | undefined>(undefined)
+  const pending = useRef<string | null>(null)
 
   useEffect(() => () => window.clearTimeout(timer.current), [])
 
-  return useCallback(
+  const flush = useCallback(() => {
+    window.clearTimeout(timer.current)
+    timer.current = undefined
+    if (pending.current !== null) {
+      setSource(pending.current)
+      pending.current = null
+    }
+  }, [setSource])
+
+  const queue = useCallback(
     (src: string) => {
       window.clearTimeout(timer.current)
-      timer.current = window.setTimeout(() => setSource(src), SET_SOURCE_DEBOUNCE_MS)
+      pending.current = src
+      timer.current = window.setTimeout(() => flush(), SET_SOURCE_DEBOUNCE_MS)
     },
-    [setSource],
+    [flush],
   )
+
+  return { queue, flush }
 }
 
 /**
@@ -65,6 +78,7 @@ function findEditorView(host: HTMLDivElement | null): EditorView | null {
 
 export function App() {
   const source = useLabStore(s => s.source)
+  const sourceLoadRevision = useLabStore(s => s.sourceLoadRevision)
   const currentLine = useLabStore(selectCurrentLine)
   const diagnostics = useLabStore(s => s.compiled.diagnostics)
   const compiled = useLabStore(s => s.compiled)
@@ -74,11 +88,13 @@ export function App() {
   const lessonId = useLabStore(s => s.lessonId)
   const loadLesson = useLabStore(s => s.loadLesson)
   const loadSource = useLabStore(s => s.loadSource)
+  const canRestoreSource = useLabStore(s => s.canRestoreSource)
+  const restoreSource = useLabStore(s => s.restoreSource)
   const breakpoints = useLabStore(s => s.breakpoints)
   // Zustand actions are stable across renders, which is what lets the gutter
   // extension — built once at editor mount — hold on to this one.
   const toggleBreakpoint = useLabStore(s => s.toggleBreakpoint)
-  const handleChange = useDebouncedSetSource()
+  const { queue: handleChange, flush: flushSource } = useDebouncedSetSource()
   // Shared modal for the lesson path + about page. `null` = closed.
   const [tab, setTab] = useState<string | null>(null)
   const editorHost = useRef<HTMLDivElement>(null)
@@ -88,7 +104,7 @@ export function App() {
   // selectWorld/stepIndex), it never touches ELK again. toReactFlow (Task 12)
   // is a pure function: it merges the fixed layout with the per-step world to
   // produce React Flow nodes/edges, without recomputing positions.
-  const layout = useLayout(compiled)
+  const { layout, error: layoutError } = useLayout(compiled)
   const graphData = toReactFlow(compiled.spec, layout, world)
 
   // Narration depends on the TRACE, not on the step — computed once per
@@ -153,9 +169,13 @@ export function App() {
           currentLessonId={lessonId}
           onOpenLessons={() => setTab('lessons')}
           onOpenAbout={() => setTab('about')}
-          setSource={loadSource}
+          setSource={src => { flushSource(); loadSource(src) }}
+          canRestoreSource={canRestoreSource}
+          onRestoreSource={() => { flushSource(); restoreSource() }}
         />
       }
+      isEmpty={source.length === 0}
+      onStartLesson={() => { flushSource(); loadLesson(LESSON_LIST[0]!.id) }}
       editor={
         <div className="editor-col">
           {/* Above the editor, not in a side column: once you've read the
@@ -164,6 +184,7 @@ export function App() {
           <Panel title="Kotlin source" grow>
             <div ref={editorHost}>
               <CodeEditor
+                key={sourceLoadRevision}
                 value={source}
                 onChange={handleChange}
                 currentLine={currentLine}
@@ -190,6 +211,7 @@ export function App() {
       }
       graph={
         <Panel title="Coroutine graph" grow>
+          {layoutError !== null && <p role="alert">Could not lay out graph: {layoutError}</p>}
           <GraphStage
             graph={graphData}
             narration={narration}
@@ -235,14 +257,14 @@ export function App() {
             content: (
               <LessonList
                 currentLessonId={lessonId}
-                onPick={id => { loadLesson(id); setTab(null) }}
+                onPick={id => { flushSource(); loadLesson(id); setTab(null) }}
               />
             ),
           },
           {
             id: 'about',
             label: 'What can it run?',
-            content: <AboutContent onOpenExample={src => { loadSource(src); setTab(null) }} />,
+            content: <AboutContent onOpenExample={src => { flushSource(); loadSource(src); setTab(null) }} />,
           },
         ]}
       />

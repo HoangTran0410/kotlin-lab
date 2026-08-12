@@ -39,10 +39,15 @@ function box(x: number): LayoutResult {
 }
 
 /** A promise controllable from outside — sets up the "two results come back out of order" scenario. */
-function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+function deferred<T>(): {
+  promise: Promise<T>
+  resolve: (v: T) => void
+  reject: (error: Error) => void
+} {
   let resolve!: (v: T) => void
-  const promise = new Promise<T>(r => { resolve = r })
-  return { promise, resolve }
+  let reject!: (error: Error) => void
+  const promise = new Promise<T>((r, j) => { resolve = r; reject = j })
+  return { promise, resolve, reject }
 }
 
 afterEach(() => {
@@ -107,11 +112,13 @@ describe('useLayout (Task 15) — ELK runs once per compile, resists stale resul
 
     // The FRESH result arrives first...
     await act(async () => { fresh.resolve(freshResult) })
-    expect(result.current).toBe(freshResult)
+    expect(result.current.layout).toBe(freshResult)
+    expect(result.current.error).toBeNull()
 
     // ...then the STALE result arrives after — must be discarded, must not overwrite the fresh result.
     await act(async () => { stale.resolve(staleResult) })
-    expect(result.current).toBe(freshResult)
+    expect(result.current.layout).toBe(freshResult)
+    expect(result.current.error).toBeNull()
   })
 
   it("unmounting midway: a result arriving afterward doesn't setState, no React warning", async () => {
@@ -132,6 +139,27 @@ describe('useLayout (Task 15) — ELK runs once per compile, resists stale resul
     expect(errorSpy).not.toHaveBeenCalled()
   })
 
+  it('a stale rejection after a fresh layout does not replace the layout with an error', async () => {
+    const stale = deferred<LayoutResult>()
+    const fresh = deferred<LayoutResult>()
+    const spy = spyLayoutGraph()
+    spy.mockImplementationOnce(() => stale.promise)
+    spy.mockImplementationOnce(() => fresh.promise)
+
+    const { result, rerender } = renderHook(
+      ({ compiled }: { compiled: Compiled }) => useLayout(compiled),
+      { initialProps: { compiled: compiledFixture() } },
+    )
+    rerender({ compiled: compiledFixture() })
+
+    const freshResult = box(9)
+    await act(async () => { fresh.resolve(freshResult) })
+    await act(async () => { stale.reject(new Error("Layout algorithm 'layered' not found")) })
+
+    expect(result.current.layout).toBe(freshResult)
+    expect(result.current.error).toBeNull()
+  })
+
   it("empty spec doesn't call ELK, returns an empty map", () => {
     const spy = spyLayoutGraph()
     const compiled = compiledFixture(EMPTY_SPEC)
@@ -139,6 +167,31 @@ describe('useLayout (Task 15) — ELK runs once per compile, resists stale resul
     const { result } = renderHook(() => useLayout(compiled))
 
     expect(spy).not.toHaveBeenCalled()
-    expect(result.current).toEqual(new Map())
+    expect(result.current.layout).toEqual(new Map())
+    expect(result.current.error).toBeNull()
+  })
+
+  it("reports ELK's layered-algorithm rejection instead of leaving it unhandled", async () => {
+    spyLayoutGraph().mockRejectedValueOnce(new Error("Layout algorithm 'layered' not found"))
+    const compiled = compiledFixture()
+
+    const { result } = renderHook(() => useLayout(compiled))
+
+    await waitFor(() => {
+      expect(result.current.error).toBe("Layout algorithm 'layered' not found")
+    })
+  })
+
+  it('an unmounted request can reject without causing a React warning', async () => {
+    const pending = deferred<LayoutResult>()
+    spyLayoutGraph().mockReturnValue(pending.promise)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const { unmount } = renderHook(() => useLayout(compiledFixture()))
+    unmount()
+
+    await act(async () => { pending.reject(new Error("Layout algorithm 'layered' not found")) })
+
+    expect(errorSpy).not.toHaveBeenCalled()
   })
 })

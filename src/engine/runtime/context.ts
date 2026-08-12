@@ -1,5 +1,8 @@
 import type { CtxSummary } from '../trace/events'
-import type { Job } from './job'
+import type { FailureCause, Job } from './job'
+import type { CoroutineBody } from './suspension'
+
+export type ExceptionHandlerBody = (cause: FailureCause) => CoroutineBody
 
 export class CoroutineContext {
   /**
@@ -13,10 +16,12 @@ export class CoroutineContext {
     readonly name: string | null,
     readonly handler: string | null,
     private readonly supervisorOrNull: boolean | null,
+    readonly handlerBody: ExceptionHandlerBody | null,
+    private readonly nonCancellableOrNull: boolean | null,
   ) {}
 
   static empty(): CoroutineContext {
-    return new CoroutineContext(null, null, null, null, null)
+    return new CoroutineContext(null, null, null, null, null, null, null)
   }
 
   /** The value actually used at runtime; if not set, it's Default, like Kotlin. */
@@ -36,21 +41,31 @@ export class CoroutineContext {
    * flag, not this one — see the note there.
    */
   get isSupervisor(): boolean { return this.supervisorOrNull ?? false }
+  get isNonCancellable(): boolean { return this.nonCancellableOrNull ?? false }
 
   withJob(job: Job): CoroutineContext {
-    return new CoroutineContext(job, this.dispatcherOrNull, this.name, this.handler, this.supervisorOrNull)
+    return new CoroutineContext(job, this.dispatcherOrNull, this.name, this.handler, this.supervisorOrNull,
+      this.handlerBody, this.nonCancellableOrNull)
   }
   withDispatcher(d: string): CoroutineContext {
-    return new CoroutineContext(this.job, d, this.name, this.handler, this.supervisorOrNull)
+    return new CoroutineContext(this.job, d, this.name, this.handler, this.supervisorOrNull,
+      this.handlerBody, this.nonCancellableOrNull)
   }
   withName(n: string): CoroutineContext {
-    return new CoroutineContext(this.job, this.dispatcherOrNull, n, this.handler, this.supervisorOrNull)
+    return new CoroutineContext(this.job, this.dispatcherOrNull, n, this.handler, this.supervisorOrNull,
+      this.handlerBody, this.nonCancellableOrNull)
   }
-  withHandler(h: string): CoroutineContext {
-    return new CoroutineContext(this.job, this.dispatcherOrNull, this.name, h, this.supervisorOrNull)
+  withHandler(h: string, body: ExceptionHandlerBody | null = null): CoroutineContext {
+    return new CoroutineContext(this.job, this.dispatcherOrNull, this.name, h, this.supervisorOrNull,
+      body, this.nonCancellableOrNull)
   }
   withSupervisor(v: boolean): CoroutineContext {
-    return new CoroutineContext(this.job, this.dispatcherOrNull, this.name, this.handler, v)
+    return new CoroutineContext(this.job, this.dispatcherOrNull, this.name, this.handler, v,
+      this.handlerBody, this.nonCancellableOrNull)
+  }
+  withNonCancellable(v: boolean): CoroutineContext {
+    return new CoroutineContext(this.job, this.dispatcherOrNull, this.name, this.handler,
+      this.supervisorOrNull, this.handlerBody, v)
   }
 
   /** Kotlin's + operator: the right-hand element overrides the left-hand element of the same kind. */
@@ -61,6 +76,8 @@ export class CoroutineContext {
       other.name ?? this.name,
       other.handler ?? this.handler,
       other.supervisorOrNull ?? this.supervisorOrNull,
+      other.handler !== null ? other.handlerBody : this.handlerBody,
+      other.nonCancellableOrNull ?? this.nonCancellableOrNull,
     )
   }
 

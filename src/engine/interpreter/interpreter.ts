@@ -69,7 +69,13 @@ export class Interpreter {
         const v = yield* this.evalExpr(s.expr, env)
         if (v.t === 'obj') {
           const msg = v.fields.get('message')
-          throw new KotlinThrow(v.className, msg && msg.t === 'str' ? msg.v : '', s.pos.line)
+          const timeoutOwner = v.fields.get('__timeoutOwnerJobId')
+          throw new KotlinThrow(
+            v.className,
+            msg && msg.t === 'str' ? msg.v : '',
+            s.pos.line,
+            timeoutOwner?.t === 'str' ? timeoutOwner.v : undefined,
+          )
         }
         throw new KotlinThrow('Exception', display(v), s.pos.line)
       }
@@ -111,10 +117,13 @@ export class Interpreter {
                 // nothing that actually happened.
                 this.scheduler.exceptionCaught(err.kotlinType, c.block.pos.line)
                 const scope = env.child()
-                scope.declare(c.name, {
-                  t: 'obj', className: err.kotlinType,
-                  fields: new Map([['message', { t: 'str', v: err.kotlinMessage } as KValue]]),
-                })
+                const fields = new Map<string, KValue>([
+                  ['message', { t: 'str', v: err.kotlinMessage }],
+                ])
+                if (err.timeoutOwnerJobId !== undefined) {
+                  fields.set('__timeoutOwnerJobId', { t: 'str', v: err.timeoutOwnerJobId })
+                }
+                scope.declare(c.name, { t: 'obj', className: err.kotlinType, fields })
                 return yield* this.evalBlock(c.block, scope)
               }
             }
@@ -441,17 +450,35 @@ export class Interpreter {
     calleeName: string | null, e: Expr & { k: 'Call' }, env: Env,
   ): Eval<KValue | undefined> {
     if (calleeName === 'runBlocking' || calleeName === 'coroutineScope'
-        || calleeName === 'supervisorScope' || calleeName === 'withContext') {
+        || calleeName === 'supervisorScope' || calleeName === 'withContext'
+        || calleeName === 'withTimeout' || calleeName === 'withTimeoutOrNull') {
       const lambda = e.lambda
       if (!lambda) return UNIT
       const isSupervisor = calleeName === 'supervisorScope'
-      const ctx = yield* this.contextFromArgs(e, env)
+      const isTimeout = calleeName === 'withTimeout' || calleeName === 'withTimeoutOrNull'
+      let timeoutMs: number | null = null
+      let ctx: CoroutineContext
+      if (isTimeout) {
+        const value = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
+        timeoutMs = value.t === 'num' ? value.v : 0
+        if (timeoutMs <= 0) {
+          if (calleeName === 'withTimeoutOrNull') return { t: 'null' }
+          throw new KotlinThrow('TimeoutCancellationException',
+            `Timed out immediately after ${timeoutMs} ms`, e.pos.line)
+        }
+        ctx = CoroutineContext.empty()
+      } else {
+        ctx = yield* this.contextFromArgs(e, env)
+      }
       const job = this.scheduler.spawnInline(
         calleeName === 'runBlocking' ? 'runBlocking'
           : calleeName === 'withContext' ? 'withContext'
-          : calleeName === 'coroutineScope' ? 'coroutineScope' : 'supervisorScope',
+          : calleeName === 'coroutineScope' ? 'coroutineScope'
+          : calleeName === 'supervisorScope' ? 'supervisorScope'
+          : calleeName,
         env.enclosingJobId, isSupervisor, ctx,
       )
+      if (job.isCancelled) throw new KotlinThrow('CancellationException', 'Job was cancelled', e.pos.line)
       // `withContext(Dispatchers.X)` is the ONLY builder that can change the
       // dispatcher mid-flight. The other three don't accept a dispatcher
       // (coroutineScope / supervisorScope take no arguments; nested
@@ -471,6 +498,16 @@ export class Interpreter {
       if (needsSwitch) {
         yield { s: 'switchContext', jobId: job.id, dispatcher: newDispatcher, line: e.pos.line }
       }
+      const timeoutTimer = timeoutMs === null ? null : this.scheduler.clock.schedule(
+        this.scheduler.clock.now + timeoutMs,
+        () => this.scheduler.cancelById(job.id, {
+          exType: 'TimeoutCancellationException',
+          message: `Timed out after ${timeoutMs} ms`,
+          isCancellation: true,
+          line: e.pos.line,
+          timeoutOwnerJobId: job.id,
+        }, job.id),
+      )
       try {
         // The FIRST statement inside the try, and the ONLY push. Placing it in
         // `spawnInline` (i.e. before the `yield switchContext` above) would
@@ -482,8 +519,18 @@ export class Interpreter {
         // before fixing this; the regression test lives in dispatch.test.ts
         // "cancellation landing exactly at the dispatcher switch".
         this.scheduler.enterInline(job)
-        return yield* this.runInlineBody(lambda.body, job, env)
+        try {
+          return yield* this.runInlineBody(lambda.body, job, env)
+        } catch (err) {
+          if (calleeName === 'withTimeoutOrNull' && err instanceof KotlinThrow
+              && err.kotlinType === 'TimeoutCancellationException'
+              && err.timeoutOwnerJobId === job.id) {
+            return { t: 'null' }
+          }
+          throw err
+        }
       } finally {
+        if (timeoutTimer !== null) this.scheduler.clock.cancel(timeoutTimer)
         // `finally`, not two calls on two separate paths: an inline scope has
         // THREE exit paths (body finishes, body throws, a child of the scope
         // fails) and the third path goes through neither completeInline nor
@@ -615,7 +662,8 @@ export class Interpreter {
         // `catch (e: RuntimeException)` wouldn't match, and "boom" would
         // vanish. Cross-checked against real Kotlin: the caller sees "caught: boom".
         const failure = job.failure
-        if (failure) throw new KotlinThrow(failure.exType, failure.message)
+        if (failure) throw new KotlinThrow(failure.exType, failure.message, undefined,
+          failure.timeoutOwnerJobId)
       } else {
         // A ReturnSignal (the `return` statement) is a NORMAL end of the
         // scope, not a failure — still completeInline as on the forward path.
@@ -638,7 +686,12 @@ export class Interpreter {
     // supervisorScope blocks a child's failure right at its boundary, so its
     // `failure` is null — exactly like Kotlin, the caller sees nothing at all.
     const failure = job.failure
-    if (failure) throw new KotlinThrow(failure.exType, failure.message)
+    if (failure) throw new KotlinThrow(failure.exType, failure.message, undefined,
+      failure.timeoutOwnerJobId)
+    if (job.isCancelled && job.cause?.isCancellation) {
+      throw new KotlinThrow(job.cause.exType, job.cause.message, undefined,
+        job.cause.timeoutOwnerJobId)
+    }
     this.scheduler.completeInline(job)
     return result
   }
@@ -650,6 +703,13 @@ export class Interpreter {
   protected *tryContextFactory(
     calleeName: string | null, e: Expr & { k: 'Call' }, env: Env,
   ): Eval<KValue | undefined> {
+    if (calleeName === 'CoroutineExceptionHandler') {
+      if (!e.lambda) return UNIT
+      return {
+        t: 'obj', className: 'CoroutineExceptionHandler',
+        fields: new Map([['__handler', { t: 'lambda', lambda: e.lambda, env } as KValue]]),
+      }
+    }
     if (calleeName === 'SupervisorJob' || calleeName === 'Job') {
       return {
         t: 'obj', className: calleeName,
@@ -783,7 +843,22 @@ export class Interpreter {
       const n = v.fields.get('name')
       return n && n.t === 'str' ? ctx.withName(n.v) : ctx
     }
-    if (v.className === 'CoroutineExceptionHandler') return ctx.withHandler('CEH')
+    if (v.className === 'CoroutineExceptionHandler') {
+      const handler = v.fields.get('__handler')
+      if (!handler || handler.t !== 'lambda') return ctx
+      return ctx.withHandler('CEH', cause => {
+        const scope = handler.env.child()
+        const first = handler.lambda.params[0]
+        const second = handler.lambda.params[1]
+        if (first) scope.declare(first, { t: 'obj', className: 'CoroutineContext', fields: new Map() })
+        if (second) scope.declare(second, {
+          t: 'obj', className: cause.exType,
+          fields: new Map([['message', { t: 'str', v: cause.message } as KValue]]),
+        })
+        return this.evalBlock(handler.lambda.body, scope)
+      })
+    }
+    if (v.className === 'NonCancellable') return ctx.withNonCancellable(true)
     // The Job element of the context. Before Task 5, both fell straight
     // through to `return ctx` and the supervisor flag got dropped right at
     // context-construction time: every `CoroutineScope(SupervisorJob())` ran

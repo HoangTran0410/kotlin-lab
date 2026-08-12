@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { App } from '../../src/ui/App'
 import { REGION_LABEL, REGIONS } from '../../src/ui/layout/usePanelVisibility'
@@ -57,5 +57,42 @@ describe('panel visibility — one toggle per region', () => {
     fireEvent.click(toggle('Code'))
     expect(document.querySelector('.shell__left')).toBeNull()
     expect(document.querySelector('.shell__center')).toBeInTheDocument()
+  })
+
+  it('uses one mobile workspace region without changing desktop preferences', () => {
+    const media = {
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as MediaQueryList
+    vi.stubGlobal('matchMedia', () => media)
+    try {
+      localStorage.setItem('kcl.panels.show.v1', JSON.stringify({ left: true, bottom: true, right: true }))
+      render(<App />)
+
+      expect(screen.getByRole('button', { name: 'Code' })).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByRole('button', { name: 'Graph' })).toHaveAttribute('aria-pressed', 'false')
+      expect(screen.getByRole('button', { name: 'Explain' })).toHaveAttribute('aria-pressed', 'false')
+      fireEvent.click(screen.getByRole('button', { name: 'Explain' }))
+      expect(document.querySelector('.shell__main')).toHaveAttribute('data-mobile-active', 'right')
+      expect(localStorage.getItem('kcl.panels.show.v1')).toContain('"bottom":true')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('keeps Start lesson 1 reachable in the initial compact Code workspace', () => {
+    const media = { matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() } as unknown as MediaQueryList
+    vi.stubGlobal('matchMedia', () => media)
+    try {
+      render(<App />)
+      const code = document.querySelector('.shell__left')!
+      const cta = screen.getByRole('button', { name: 'Start lesson 1' })
+      expect(code).toContainElement(cta)
+      expect(getComputedStyle(code).position).toBe('relative')
+      expect(cta.parentElement).toHaveClass('shell__empty--code')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

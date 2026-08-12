@@ -4,6 +4,13 @@ import { layoutGraph, type LayoutResult } from './elkLayout'
 
 const EMPTY_LAYOUT: LayoutResult = new Map()
 
+export interface LayoutState {
+  layout: LayoutResult
+  error: string | null
+}
+
+const EMPTY_LAYOUT_STATE: LayoutState = { layout: EMPTY_LAYOUT, error: null }
+
 /**
  * Runs `layoutGraph` (ELK, Task 11) inside a `useEffect` with dependency
  * **`compiled.revision`** — NOT `compiled.spec` (a NEW object every time
@@ -27,8 +34,8 @@ const EMPTY_LAYOUT: LayoutResult = new Map()
  * mechanism: the effect's cleanup (which runs when deps change OR on unmount)
  * always makes the token of the run that just finished stale.
  */
-export function useLayout(compiled: Compiled): LayoutResult {
-  const [layout, setLayout] = useState<LayoutResult>(EMPTY_LAYOUT)
+export function useLayout(compiled: Compiled): LayoutState {
+  const [state, setState] = useState<LayoutState>(EMPTY_LAYOUT_STATE)
   const tokenRef = useRef(0)
 
   useEffect(() => {
@@ -40,14 +47,24 @@ export function useLayout(compiled: Compiled): LayoutResult {
     // Promise still costs a wasted microtask on the most frequently hit path
     // (mount).
     if (compiled.spec.nodes.length === 0) {
-      setLayout(EMPTY_LAYOUT)
+      setState(EMPTY_LAYOUT_STATE)
       return
     }
 
-    layoutGraph(compiled.spec).then(result => {
-      if (token !== tokenRef.current) return // this run is stale — discard
-      setLayout(result)
-    })
+    setState(current => current.error === null ? current : { ...current, error: null })
+    layoutGraph(compiled.spec).then(
+      result => {
+        if (token !== tokenRef.current) return // this run is stale — discard
+        setState({ layout: result, error: null })
+      },
+      error => {
+        if (token !== tokenRef.current) return // this run is stale — discard
+        setState({
+          layout: EMPTY_LAYOUT,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      },
+    )
 
     return () => {
       // Runs when deps change (a new compile overwrote it) OR on unmount.
@@ -60,5 +77,5 @@ export function useLayout(compiled: Compiled): LayoutResult {
     }
   }, [compiled.revision])
 
-  return layout
+  return state
 }

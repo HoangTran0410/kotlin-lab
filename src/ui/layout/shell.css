@@ -6,7 +6,10 @@
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   min-height: 0;
+  width: 100%;
+  overflow: hidden;
 }
 
 .shell__head {
@@ -162,6 +165,37 @@
   border-right: 1px solid var(--border);
 }
 
+.shell__left { position: relative; }
+
+.shell__center { position: relative; }
+
+.shell__empty {
+  position: absolute;
+  inset: 52px 16px 16px;
+  z-index: 2;
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  background: rgba(13, 17, 23, 0.9);
+  border: 1px dashed var(--k-launch);
+  border-radius: 8px;
+}
+
+.shell__empty p { margin: 0; color: var(--fg-dim); }
+
+.shell__empty button {
+  justify-self: center;
+  border: 1px solid var(--k-launch);
+  border-radius: 6px;
+  padding: 7px 12px;
+  background: rgba(88, 166, 255, 0.14);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+
 /* The right column STACKS two panels: narration (flexible) on top, console
    below. */
 .shell__right {
@@ -231,4 +265,37 @@
 .panel--error .panel__title {
   color: var(--state-cancelled);
   background: rgba(248, 81, 73, 0.08);
+}
+
+@media (max-width: 900px) {
+  .shell__head {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .shell__head h1 { flex: 1 1 180px; }
+  .lesson-nav { order: 4; flex: 1 1 100%; flex-wrap: wrap; }
+  .lesson-nav__open { max-width: none; flex: 1 1 210px; }
+  .shell__panels { order: 2; margin-left: 0; flex-wrap: wrap; }
+  .shell__reset { order: 3; }
+  .sim-notice { padding: 8px 12px; }
+
+  .shell__main {
+    display: block;
+    min-width: 0;
+  }
+
+  .shell__left,
+  .shell__center,
+  .shell__right { display: none; height: 100%; border-right: 0; }
+
+  .shell__main[data-mobile-active='left'] .shell__left { display: block; }
+  .shell__main[data-mobile-active='bottom'] .shell__center { display: block; }
+  .shell__main[data-mobile-active='right'] .shell__right { display: flex; }
+  .splitter { display: none; }
+
+  .shell__empty--code { inset: 12px; }
+
+  .shell__foot { flex: 0 0 min(38dvh, 300px); min-height: 0; }
 }

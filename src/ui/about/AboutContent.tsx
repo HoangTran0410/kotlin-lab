@@ -4,6 +4,16 @@ import { KOTLIN_VERSION } from '../../engine/kotlinVersion'
 import { DISPATCHER_POOL_SIZE } from '../../engine/runtime/dispatcher'
 import { LESSON_IDS_WITH_JVM_FIXTURE, LESSON_LIST } from '../../lessons/registry'
 
+const CAPABILITY_SECTIONS = [
+  { title: 'Core', names: ['launch { }', 'async { } / await()', 'suspend fun'] },
+  { title: 'Context', names: ['withContext(...)', 'withContext(NonCancellable)', 'Dispatchers.Main / Default / IO / Unconfined', 'CoroutineName("...")', 'SupervisorJob() / Job() / operator +', 'CoroutineExceptionHandler'] },
+  { title: 'Flow', names: ['coroutineScope { }', 'delay(ms) / yield()', 'try / catch / finally, throw, error(...)', 'if / when / while / for / repeat', 'val / var, string templates ${...}'] },
+  { title: 'Advanced', names: ['supervisorScope { }', 'CoroutineScope(...) / MainScope()', 'GlobalScope.launch { }', 'withTimeout(...) / withTimeoutOrNull(...)', 'join() / cancel() / cancelAndJoin()', 'isActive / isCancelled / isCompleted', 'ensureActive()'] },
+] as const
+
+const ALL_CAPABILITIES = CAPABILITIES.flatMap(group => group.items)
+const belongsIn = (name: string, group: { names: readonly string[] }): boolean => group.names.includes(name)
+
 /**
  * "What can this tool run?" — the first question anyone opening the app for
  * the first time asks, and until now there was nowhere that answered it.
@@ -50,11 +60,11 @@ export function AboutContent({ onOpenExample }: { onOpenExample: (src: string) =
 
           <section className="about__sec">
             <h3>What runs — click to open straight into the editor</h3>
-            {CAPABILITIES.map(group => (
-              <div key={group.title} className="about__group">
+            {CAPABILITY_SECTIONS.map(group => (
+              <section key={group.title} className="about__group" aria-label={group.title}>
                 <h4>{group.title}</h4>
                 <ul className="mdl__cards">
-                  {group.items.map(k => (
+                  {ALL_CAPABILITIES.filter(k => belongsIn(k.name, group)).map(k => (
                     <li key={k.name} className="mdl__card">
                       <div className="mdl__cardHead">
                         <code className="about__ten">{k.name}</code>
@@ -73,7 +83,7 @@ export function AboutContent({ onOpenExample }: { onOpenExample: (src: string) =
                     </li>
                   ))}
                 </ul>
-              </div>
+              </section>
             ))}
           </section>
 
@@ -104,7 +114,8 @@ export function AboutContent({ onOpenExample }: { onOpenExample: (src: string) =
               </li>
               <li>
                 <strong>Threads are virtual, and fewer than in reality,</strong> to fit the
-                diagram:{' '}
+                diagram. Unconfined's zero means no dedicated pool; its carrier is a deterministic
+                approximation of whichever real thread resumes it:{' '}
                 {Object.entries(DISPATCHER_POOL_SIZE).map(([d, n], i) => (
                   <span key={d}>{i > 0 ? ', ' : ''}<code>{d}</code> {n}</span>
                 ))}.

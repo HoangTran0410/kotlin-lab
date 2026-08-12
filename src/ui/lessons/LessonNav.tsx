@@ -23,11 +23,13 @@ const BLANK_SOURCE = 'import kotlinx.coroutines.*\n\nfun main() = runBlocking {\
  * entry point, and states plainly which lesson is open — information the old
  * chip strip had to convey with the background color of one tiny chip.
  */
-export function LessonNav({ currentLessonId, onOpenLessons, onOpenAbout, setSource }: {
+export function LessonNav({ currentLessonId, onOpenLessons, onOpenAbout, setSource, canRestoreSource, onRestoreSource }: {
   currentLessonId: string | null
   onOpenLessons: () => void
   onOpenAbout: () => void
   setSource: (src: string) => void
+  canRestoreSource?: boolean
+  onRestoreSource?: () => void
 }) {
   const lesson = LESSON_LIST.find(l => l.id === currentLessonId)
 
@@ -46,6 +48,11 @@ export function LessonNav({ currentLessonId, onOpenLessons, onOpenAbout, setSour
       <button type="button" className="lesson-nav__blank" onClick={() => setSource(BLANK_SOURCE)}>
         Start from blank
       </button>
+      {canRestoreSource && onRestoreSource && (
+        <button type="button" className="lesson-nav__restore" onClick={onRestoreSource}>
+          Restore source
+        </button>
+      )}
     </nav>
   )
 }

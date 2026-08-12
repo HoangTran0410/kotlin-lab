@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { SimulationNotice } from '../common/SimulationNotice'
 import { Splitter } from './Splitter'
 import { MAX_LEFT, MAX_RIGHT, MIN_LEFT, MIN_RIGHT, usePanelWidths } from './usePanelWidths'
-import { REGION_LABEL, REGION_TITLE, REGIONS, usePanelVisibility } from './usePanelVisibility'
+import { MOBILE_REGION_LABEL, MOBILE_REGION_TITLE, REGION_LABEL, REGION_TITLE, REGIONS, usePanelVisibility } from './usePanelVisibility'
 import './shell.css'
 
 /**
@@ -24,12 +24,16 @@ import './shell.css'
  * Defaults are exactly what the single toggle used to produce — editor open,
  * the other two closed — so nothing moves for someone who liked the old layout.
  */
-export function Shell({ nav, editor, graph, timeline, side }: {
+export function Shell({ nav, editor, graph, timeline, side, isEmpty, onStartLesson }: {
   nav: ReactNode; editor: ReactNode; graph: ReactNode
   timeline: ReactNode; side: ReactNode
+  isEmpty?: boolean; onStartLesson?: () => void
 }) {
   const { left, right, setLeft, setRight, reset } = usePanelWidths()
-  const { show, toggle } = usePanelVisibility()
+  const { show, toggle, isCompact, mobileRegion } = usePanelVisibility()
+  const labels = isCompact ? MOBILE_REGION_LABEL : REGION_LABEL
+  const titles = isCompact ? MOBILE_REGION_TITLE : REGION_TITLE
+  const panelIsOn = (region: typeof REGIONS[number]): boolean => isCompact ? mobileRegion === region : show[region]
 
   return (
     <div className="shell">
@@ -41,12 +45,12 @@ export function Shell({ nav, editor, graph, timeline, side }: {
             <button
               key={r}
               type="button"
-              className={show[r] ? 'shell__panel shell__panel--on' : 'shell__panel'}
+              className={panelIsOn(r) ? 'shell__panel shell__panel--on' : 'shell__panel'}
               onClick={() => toggle(r)}
-              aria-pressed={show[r]}
-              title={REGION_TITLE[r]}
+              aria-pressed={panelIsOn(r)}
+              title={titles[r]}
             >
-              {REGION_LABEL[r]}
+              {labels[r]}
             </button>
           ))}
         </div>
@@ -69,15 +73,32 @@ export function Shell({ nav, editor, graph, timeline, side }: {
         } as React.CSSProperties}
         data-left={show.left ? 'on' : 'off'}
         data-right={show.right ? 'on' : 'off'}
+        data-mobile-active={mobileRegion}
       >
-        {show.left && (
+        {(show.left || isCompact) && (
           <>
-            <div className="shell__left">{editor}</div>
+            <div className="shell__left" style={{ position: 'relative' }}>
+              {editor}
+              {isCompact && isEmpty && onStartLesson && (
+                <div className="shell__empty shell__empty--code">
+                  <p>See a coroutine run before writing your own.</p>
+                  <button type="button" onClick={onStartLesson}>Start lesson 1</button>
+                </div>
+              )}
+            </div>
             <Splitter label="Code column width" width={left} setWidth={setLeft} min={MIN_LEFT} max={MAX_LEFT} />
           </>
         )}
-        <div className="shell__center">{graph}</div>
-        {show.right && (
+        <div className="shell__center">
+          {graph}
+          {!isCompact && isEmpty && onStartLesson && (
+            <div className="shell__empty">
+              <p>See a coroutine run before writing your own.</p>
+              <button type="button" onClick={onStartLesson}>Start lesson 1</button>
+            </div>
+          )}
+        </div>
+        {(show.right || isCompact) && (
           <>
             <Splitter
               label="Debug column width" width={right} setWidth={setRight}
@@ -87,7 +108,7 @@ export function Shell({ nav, editor, graph, timeline, side }: {
           </>
         )}
       </div>
-      {show.bottom && <footer className="shell__foot">{timeline}</footer>}
+      {!isCompact && show.bottom && <footer className="shell__foot">{timeline}</footer>}
     </div>
   )
 }

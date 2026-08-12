@@ -36,7 +36,7 @@ const POOL_NOTE: Record<string, string> = {
   Main: 'the UI thread — one, and never more',
   Default: 'CPU work — sized to the cores',
   IO: 'blocking I/O — a wider pool, because these threads mostly sit waiting',
-  Unconfined: 'no confinement — resumes on whatever thread freed it',
+  Unconfined: 'no pool — deterministic carrier approximates whichever thread resumes it',
 }
 
 export function ThreadPools({ world }: { world: WorldState }) {
@@ -71,7 +71,9 @@ export function ThreadPools({ world }: { world: WorldState }) {
     <div className="pools" aria-label="Dispatcher thread pools">
       {pools.map(d => {
         const size = DISPATCHER_POOL_SIZE[d] ?? 1
-        const slots = Array.from({ length: size }, (_, i) => `${d}-${i + 1}`)
+        const slots = d === 'Unconfined'
+          ? ['Unconfined-carrier']
+          : Array.from({ length: size }, (_, i) => `${d}-${i + 1}`)
         // Holds no thread but is alive: suspended at delay/join/await. This is
         // the number that explains why a small pool is enough.
         const waiting = jobs.filter(
@@ -82,7 +84,9 @@ export function ThreadPools({ world }: { world: WorldState }) {
           <div className="pools__row" key={d} data-dispatcher={d}>
             <div className="pools__head">
               <span className={`pools__name pools__name--${d}`}>{d}</span>
-              <span className="pools__size">{size} {size === 1 ? 'thread' : 'threads'}</span>
+              <span className="pools__size">
+                {d === 'Unconfined' ? 'no dedicated pool' : `${size} ${size === 1 ? 'thread' : 'threads'}`}
+              </span>
               <span className="pools__note">{POOL_NOTE[d] ?? ''}</span>
             </div>
             <ul className="pools__slots">

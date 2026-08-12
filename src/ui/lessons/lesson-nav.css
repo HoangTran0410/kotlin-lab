@@ -80,3 +80,18 @@
   border-color: var(--fg-dim);
   color: var(--fg);
 }
+
+.lesson-nav__restore {
+  flex: none;
+  background: rgba(63, 185, 80, 0.1);
+  border: 1px solid var(--state-completed);
+  border-radius: 6px;
+  padding: 5px 10px;
+  color: var(--state-completed);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.lesson-nav__restore:hover { background: rgba(63, 185, 80, 0.2); }

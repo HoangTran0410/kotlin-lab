@@ -1,9 +1,11 @@
 import { useEffect, useRef } from 'react'
-import { EditorState, type Extension } from '@codemirror/state'
+import { Annotation, EditorState, type Extension } from '@codemirror/state'
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { kotlinExtensions } from './kotlinLang'
 import { currentLineField, setCurrentLine } from './currentLine'
+
+const externalSource = Annotation.define<boolean>()
 
 export function CodeEditor({ value, onChange, currentLine = null, extraExtensions = [] }: {
   value: string
@@ -33,7 +35,9 @@ export function CodeEditor({ value, onChange, currentLine = null, extraExtension
           // the whole EditorView on every parent re-render, losing the cursor
           // and undo history.
           EditorView.updateListener.of(u => {
-            if (u.docChanged) onChangeRef.current(u.state.doc.toString())
+            if (u.docChanged && !u.transactions.some(t => t.annotation(externalSource))) {
+              onChangeRef.current(u.state.doc.toString())
+            }
           }),
         ],
       }),
@@ -51,7 +55,7 @@ export function CodeEditor({ value, onChange, currentLine = null, extraExtension
   useEffect(() => {
     const v = view.current
     if (!v || v.state.doc.toString() === value) return
-    v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: value } })
+    v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: value }, annotations: externalSource.of(true) })
   }, [value])
 
   // Only dispatches a single StateEffect — doesn't touch selection/focus, so

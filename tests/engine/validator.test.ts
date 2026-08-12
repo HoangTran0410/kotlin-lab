@@ -36,12 +36,13 @@ describe('validator', () => {
   it('recognizes an unsupported Flow operator called member-style', () => {
     // The Member path is the ONLY path that catches buffer/conflate/debounce/
     // combine/zip — 5 of the 13 entries in the catalog. Must be tested with a
-    // name that's REALLY in UNSUPPORTED, asserting on exactly that entry, not
-    // some other entry sneaking in.
+    // name that's REALLY in UNSUPPORTED. flowOf is now also diagnosed so the
+    // whole unsupported chain is reported instead of silently returning Unit.
     const d = check('fun main() {\n  flowOf(1).buffer()\n}')
-    expect(d).toHaveLength(1)
-    expect(d[0]!.message).toContain('buffer')
-    expect(d[0]!.line).toBe(2)
+    expect(d).toHaveLength(2)
+    expect(d.some(x => x.message.includes('buffer'))).toBe(true)
+    expect(d.some(x => x.message.includes('flowOf'))).toBe(true)
+    expect(d.every(x => x.line === 2)).toBe(true)
   })
 
   it('recognizes withLock called member-style, separate from Mutex', () => {
@@ -61,7 +62,6 @@ describe('validator', () => {
     // Task 4 (M3) removed them from UNSUPPORTED and implemented reading the
     // real Job; they have their own test in tests/engine/job-state.test.ts.
     for (const src of [
-      'fun main() = runBlocking {\n  withTimeout(100) { delay(1) }\n}',
       'fun main() = runBlocking {\n  listOf(1).forEach { }\n}',
       'fun main() = runBlocking {\n  println(j.getCompleted())\n}',
       'fun main() = runBlocking {\n  invokeOnCompletion { }\n}',

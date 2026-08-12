@@ -7,6 +7,12 @@ interface LabState {
   compiled: Compiled
   stepIndex: number
   lessonId: string | null
+  /** One source snapshot retained for a direct restore after loading something else. */
+  previousSource: string | null
+  previousLessonId: string | null
+  canRestoreSource: boolean
+  /** Changes only when an external source load must start a fresh editor undo history. */
+  sourceLoadRevision: number
   /**
    * 1-based lines carrying a breakpoint. Sorted, no duplicates.
    *
@@ -21,6 +27,7 @@ interface LabState {
   loadLesson: (id: string) => void
   /** Loads a piece of code that belongs to NO lesson (blank page, an example from the about page). */
   loadSource: (src: string) => void
+  restoreSource: () => void
   toggleBreakpoint: (line: number) => void
   clearBreakpoints: () => void
 }
@@ -43,6 +50,10 @@ export const useLabStore = create<LabState>((set, get) => ({
   compiled: EMPTY_COMPILED,
   stepIndex: 0,
   lessonId: null,
+  previousSource: null,
+  previousLessonId: null,
+  canRestoreSource: false,
+  sourceLoadRevision: 0,
   breakpoints: [],
 
   setSource: src => {
@@ -63,7 +74,12 @@ export const useLabStore = create<LabState>((set, get) => ({
     // keeping them would leave stops in places nobody chose. While editing
     // (`setSource`) they are kept — the lines the user is working on are
     // exactly the ones they still care about.
-    set({ source: src, compiled: compile(src), stepIndex: 0, lessonId: id, breakpoints: [] })
+    const current = get()
+    set({
+      source: src, compiled: compile(src), stepIndex: 0, lessonId: id, breakpoints: [],
+      previousSource: current.source, previousLessonId: current.lessonId, canRestoreSource: true,
+      sourceLoadRevision: current.sourceLoadRevision + 1,
+    })
   },
 
   // Differs from `setSource` in two places, and both are needed: CLEARS
@@ -72,9 +88,24 @@ export const useLabStore = create<LabState>((set, get) => ({
   // completely different code), and RESETS the cursor to 0 (clamping the old
   // cursor like setSource does is right while mid-edit, but jumping into the
   // middle of a program that was just opened makes no sense).
-  loadSource: src => set({
-    source: src, compiled: compile(src), stepIndex: 0, lessonId: null, breakpoints: [],
-  }),
+  loadSource: src => {
+    const current = get()
+    set({
+      source: src, compiled: compile(src), stepIndex: 0, lessonId: null, breakpoints: [],
+      previousSource: current.source, previousLessonId: current.lessonId, canRestoreSource: true,
+      sourceLoadRevision: current.sourceLoadRevision + 1,
+    })
+  },
+
+  restoreSource: () => {
+    const current = get()
+    if (current.previousSource === null) return
+    set({
+      source: current.previousSource, compiled: compile(current.previousSource), stepIndex: 0,
+      lessonId: current.previousLessonId, breakpoints: [], previousSource: null,
+      previousLessonId: null, canRestoreSource: false, sourceLoadRevision: current.sourceLoadRevision + 1,
+    })
+  },
 
   toggleBreakpoint: line => set(st => ({
     breakpoints: st.breakpoints.includes(line)

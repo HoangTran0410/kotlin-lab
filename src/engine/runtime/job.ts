@@ -6,6 +6,8 @@ export interface FailureCause {
   isCancellation: boolean
   /** 1-based line of the `throw` statement that caused this, if the original KotlinThrow carried one. */
   line?: number
+  /** Timeout scope that created this cancellation; prevents an outer OrNull from swallowing it. */
+  timeoutOwnerJobId?: JobId
 }
 
 const ALLOWED: Record<JobState, readonly JobState[]> = {
@@ -101,6 +103,7 @@ export class Job {
     readonly parent: Job | null,
     readonly isSupervisor: boolean,
     isScopeCoroutine = false,
+    readonly isNonCancellable = false,
   ) {
     this.isScopeCoroutine = isScopeCoroutine
   }
