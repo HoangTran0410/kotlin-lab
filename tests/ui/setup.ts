@@ -9,3 +9,15 @@ globalThis.ResizeObserver ??= class {
   unobserve(): void {}
   disconnect(): void {}
 }
+
+// Panel widths AND panel visibility both persist to localStorage, so state
+// leaks between cases in the same file unless it is cleared: measured after
+// visibility became persistent — one case turned the console on, and the next
+// case's click turned it back OFF, so `.shell__right` was null.
+//
+// Cleared BETWEEN tests only, never inside one: `splitter.test.tsx` has a case
+// that unmounts and re-renders on purpose to prove the width survives a
+// reopen, and that has to keep working.
+beforeEach(() => {
+  try { localStorage.clear() } catch { /* private mode */ }
+})

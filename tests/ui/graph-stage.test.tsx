@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { App } from '../../src/ui/App'
 import { useLabStore } from '../../src/state/store'
+import { showPanel } from './helpers/openDebug'
 import { lessonSource } from '../../src/lessons/registry'
 import { narrateTrace } from '../../src/engine/narrate/narrateTrace'
 
@@ -29,12 +30,28 @@ describe('graph stage — understandable without looking anywhere else', () => {
     expect(screen.getByTestId('stage-caption')).toBeInTheDocument()
   })
 
-  it('opening the debug panel shows the console and timeline, closing it makes them disappear', () => {
+  it('each panel toggles on its OWN — timeline without console, and back', () => {
+    // The reason the single "Deep debug" button was split: it opened the
+    // console and the timeline together, and wanting to follow along on the
+    // timeline without the console in the way is the normal case. This asserts
+    // the state that used to be unreachable.
     render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: 'Deep debug' }))
-    expect(screen.getByLabelText('Timeline scrubber')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Close debug panel' }))
     expect(screen.queryByLabelText('Timeline scrubber')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Timeline' }))
+    expect(screen.getByLabelText('Timeline scrubber')).toBeInTheDocument()
+    expect(screen.queryByTestId('splitter-Debug column width'),
+      'turning on the timeline dragged the console along with it').toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Console' }))
+    expect(screen.getByTestId('splitter-Debug column width')).toBeInTheDocument()
+    expect(screen.getByLabelText('Timeline scrubber'),
+      'turning on the console pushed the timeline back out').toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Timeline' }))
+    expect(screen.queryByLabelText('Timeline scrubber')).toBeNull()
+    expect(screen.getByTestId('splitter-Debug column width'),
+      'turning the timeline off took the console with it').toBeInTheDocument()
   })
 
   it('narration CHANGES when scrubbing, and both times have real text', () => {
@@ -104,9 +121,14 @@ describe('graph stage — understandable without looking anywhere else', () => {
     // appears in BOTH the node and the console, and a bare `getByText` would
     // fail red for finding it in multiple places — that fact alone is
     // evidence the feature works.
-    fireEvent.click(screen.getByRole('button', { name: 'Deep debug' }))
-    const console_ = document.querySelector('.console, [data-testid="console"]')
-      ?? screen.getByText('Console').closest('.panel')!
+    fireEvent.click(screen.getByRole('button', { name: 'Console' }))
+    // `showPanel` rather than a bare click: the toggle is a switch, so a blind
+    // click on an already-on panel turns it OFF.
+    showPanel('Console')
+    // Scoped to the right column, not `getByText('Console')`: since the panel
+    // toggles moved into the header there is a BUTTON labelled "Console" too,
+    // and a bare text query now matches both.
+    const console_ = document.querySelector('.shell__right')!
     expect(console_.textContent).toContain('A done')
   })
 })

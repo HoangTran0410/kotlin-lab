@@ -75,11 +75,6 @@ export function App() {
   const handleChange = useDebouncedSetSource()
   // Shared modal for the lesson path + about page. `null` = closed.
   const [tab, setTab] = useState<string | null>(null)
-  // Debug panel (console + diagnostics + full narration + per-event timeline)
-  // defaults to CLOSED: the graph already tells its own story of what's
-  // happening.
-  const [debugOpen, setDebugOpen] = useState(false)
-  const toggleDebug = useCallback(() => setDebugOpen(v => !v), [])
   const editorHost = useRef<HTMLDivElement>(null)
 
   // Task 15: layout runs ONCE per compile (deps = compiled.revision, see
@@ -125,7 +120,6 @@ export function App() {
   return (
     <>
     <Shell
-      debugOpen={debugOpen}
       nav={
         <LessonNav
           currentLessonId={lessonId}
@@ -174,10 +168,9 @@ export function App() {
             stepIndex={stepIndex}
             setStep={setStep}
             total={compiled.events.length}
-            debugOpen={debugOpen}
-            toggleDebug={toggleDebug}
             events={compiled.events}
             source={source}
+            world={world}
           />
         </Panel>
       }

@@ -87,11 +87,17 @@ describe('dragging columns', () => {
     expect(columnWidth()).toBeLessThan(dragged)
   })
 
-  it('the debug column handle only exists while the debug panel is open', () => {
+  it('a column handle only exists next to a panel that is actually shown', () => {
+    // A drag handle for a hidden column is a control that does nothing. Both
+    // sides are checked, because they are now toggled independently.
     render(<App />)
     expect(screen.queryByTestId('splitter-Debug column width')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Deep debug' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Console' }))
     expect(screen.getByTestId('splitter-Debug column width')).toBeInTheDocument()
+
+    expect(screen.getByTestId('splitter-Code column width')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Code' }))
+    expect(screen.queryByTestId('splitter-Code column width')).toBeNull()
   })
 
   it('a drag event missing coordinates does NOT turn the width into NaN', () => {

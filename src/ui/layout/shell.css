@@ -51,14 +51,29 @@
    wide the screen was. */
 .shell__main {
   display: grid;
-  grid-template-columns: var(--w-left) auto minmax(0, 1fr) auto var(--w-right);
   flex: 1;
   min-height: 0;
 }
 
-/* Debug panel closed: no more right splitter or right column. */
-.shell__main[data-debug='closed'] {
+/* Four column layouts, one per combination of the two side panels. SELECTED by
+   data attribute rather than assembled as a string in TSX, so the grid stays
+   defined in exactly one place. A splitter only exists next to a panel that is
+   actually shown — a drag handle for a hidden column is a control that does
+   nothing. */
+.shell__main[data-left='on'][data-right='on'] {
+  grid-template-columns: var(--w-left) auto minmax(0, 1fr) auto var(--w-right);
+}
+
+.shell__main[data-left='on'][data-right='off'] {
   grid-template-columns: var(--w-left) auto minmax(0, 1fr);
+}
+
+.shell__main[data-left='off'][data-right='on'] {
+  grid-template-columns: minmax(0, 1fr) auto var(--w-right);
+}
+
+.shell__main[data-left='off'][data-right='off'] {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .splitter {
@@ -86,8 +101,44 @@
   opacity: 0.6;
 }
 
-.shell__reset {
+/* Panel toggles. `margin-left: auto` sits on this GROUP because it is the
+   first thing in the right-hand cluster — it is what pushes the whole cluster
+   to the end of the header. */
+.shell__panels {
   margin-left: auto;
+  flex: none;
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.shell__panel {
+  background: transparent;
+  border: 0;
+  border-right: 1px solid var(--border);
+  padding: 5px 12px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.shell__panel:last-child { border-right: 0; }
+
+.shell__panel:hover { color: var(--fg); }
+
+/* On/off is carried by background AND text weight, not colour alone — a
+   segmented control that only changes hue is unreadable for anyone who can't
+   separate those two hues. */
+.shell__panel--on {
+  background: rgba(88, 166, 255, 0.16);
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.shell__reset {
   flex: none;
   background: transparent;
   border: 1px solid var(--border);

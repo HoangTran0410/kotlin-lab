@@ -1,9 +1,11 @@
 import { useCallback, useMemo } from 'react'
 import type { NarrationLine } from '../../engine/narrate/narrateTrace'
 import type { Event } from '../../engine/trace/events'
+import type { WorldState } from '../../engine/trace/world'
 import { usePlayback } from '../timeline/usePlayback'
 import { GraphCanvas } from './GraphCanvas'
 import { LeftoverNotice } from './LeftoverNotice'
+import { ThreadPools } from './ThreadPools'
 import type { ReactFlowGraph } from './toReactFlow'
 import './graph-stage.css'
 
@@ -38,17 +40,16 @@ function renderText(text: string): React.ReactNode[] {
  * in the debug panel still moves one event at a time.
  */
 export function GraphStage({
-  graph, narration, stepIndex, setStep, total, debugOpen, toggleDebug, events, source,
+  graph, narration, stepIndex, setStep, total, events, source, world,
 }: {
   graph: ReactFlowGraph
   narration: readonly NarrationLine[]
   stepIndex: number
   setStep: (n: number) => void
   total: number
-  debugOpen: boolean
-  toggleDebug: () => void
   events: readonly Event[]
   source: string
+  world: WorldState
 }) {
   const reached = useMemo(
     () => narration.filter(l => l.index < stepIndex),
@@ -83,6 +84,11 @@ export function GraphStage({
       <div className="k-stage__canvas">
         <GraphCanvas nodes={graph.nodes} edges={graph.edges} />
       </div>
+      {/* Under the canvas, above the caption: it answers a DIFFERENT question
+          from the graph ("which thread is this on right now") rather than
+          another aspect of the same one, so it gets its own band instead of
+          more badges crowding the nodes. */}
+      <ThreadPools world={world} />
 
       <div className="k-stage__bar">
         <div className="k-stage__controls">
@@ -93,7 +99,7 @@ export function GraphStage({
           <button
             type="button" onClick={stepBack}
             disabled={empty || stepIndex === 0} aria-label="Previous step"
-          >◀</button>
+          >|◀</button>
           <button
             type="button" className="k-stage__play"
             onClick={playing ? pause : play} disabled={empty}
@@ -122,15 +128,6 @@ export function GraphStage({
             ? renderText(current.text)
             : <span className="k-stage__hint">Click ▶ or ▶| to step through. Each step is explained right here.</span>}
         </p>
-
-        <button
-          type="button"
-          className="k-stage__debug"
-          onClick={toggleDebug}
-          aria-pressed={debugOpen}
-        >
-          {debugOpen ? 'Close debug panel' : 'Deep debug'}
-        </button>
       </div>
     </div>
   )

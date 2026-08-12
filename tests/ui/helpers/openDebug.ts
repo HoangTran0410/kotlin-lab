@@ -1,15 +1,24 @@
 import { fireEvent, screen } from '@testing-library/react'
 
 /**
- * Opens the debug panel (console + diagnostics + full narration + per-event
- * timeline).
+ * Shows the panels around the graph that a test needs.
  *
- * This panel defaults to CLOSED ever since the graph started carrying its own
- * explanation and scrub control — learners don't have to look at four corners
- * of the screen to understand what's happening. Any test that checks those
- * panels directly has to open it first, and having to call this function is
- * exactly the proof that they no longer show by default.
+ * All three default to the state the old single "Deep debug" button produced —
+ * editor on, timeline and console off — so any test that inspects the console
+ * or the per-event scrubber has to turn it on first. Having to call this at
+ * all is exactly the proof that those panels do not show by default.
+ *
+ * They are now INDEPENDENT toggles: `openDebug()` turns on both (what the old
+ * merged button did), while `showPanel('bottom')` turns on just the timeline —
+ * the case that used to be impossible and is why the button was split.
  */
+export function showPanel(...names: ('Code' | 'Timeline' | 'Console')[]): void {
+  for (const name of names) {
+    const button = screen.getByRole('button', { name })
+    if (button.getAttribute('aria-pressed') !== 'true') fireEvent.click(button)
+  }
+}
+
 export function openDebug(): void {
-  fireEvent.click(screen.getByRole('button', { name: 'Deep debug' }))
+  showPanel('Timeline', 'Console')
 }
