@@ -470,6 +470,42 @@ export class Scheduler {
   }
 
   /**
+   * Job GỐC đại diện cho một `CoroutineScope(ctx)`. Không cha, không thân
+   * generator, không bao giờ vào hàng ready — nó chỉ là điểm neo cấu trúc để
+   * `scope.launch` có cha thật và để SupervisorJob có chỗ mà chặn failure.
+   *
+   * Không tự Completed: trong Kotlin, scope do user tự dựng sống cho tới khi bị
+   * cancel. Nó kết thúc khi `scope.cancel()` được gọi, hoặc không bao giờ.
+   *
+   * KHÁC spawnInline ở hai chỗ, và cả hai đều cố ý:
+   *   - `parent` luôn null. `CoroutineScope(ctx)` KHÔNG treo dưới coroutine bao
+   *     quanh — đó chính là lý do nó thoát khỏi structured concurrency của nơi
+   *     gọi, và là nửa đầu bài học.
+   *   - task mang `finished: true` ngay từ đầu. Không có generator nào để chạy
+   *     nên cũng không có gì để unwind: `unwindCancelled` phải BỎ QUA nó (nếu
+   *     không, `scope.cancel()` sẽ gọi `.throw()` vào một generator rỗng, tốn
+   *     một vòng lặp mà không sinh sự kiện nào), còn `isJobSettled` thì rơi về
+   *     đúng câu hỏi duy nhất có nghĩa với job này: state đã kết thúc chưa.
+   */
+  spawnScopeRoot(ctx: CoroutineContext, isSupervisor: boolean): Job {
+    const id = this.newJobId()
+    const job = new Job(id, ctx.name ?? id, null, isSupervisor)
+    const jobCtx = ctx.withJob(job)
+    this.emitter.emit({
+      k: 'COROUTINE_CREATED', id, parentId: null, builder: 'scope', ctx: jobCtx.summary(),
+    })
+    job.transitionTo('Active')
+    this.emitter.emit({ k: 'JOB_STATE', id, from: 'New', to: 'Active' })
+    const task: Task = {
+      job, ctx: jobCtx, body: (function* (): VoidCoroutineBody { })(), resumeValue: undefined,
+      resumeThrow: undefined, started: true, finished: true,
+    }
+    this.tasks.set(id, task)
+    this.taskOrder.push(task)
+    return job
+  }
+
+  /**
    * Task của scope inline không có generator thật (thân chạy trong task bao
    * ngoài), nên không đường nào đặt `finished` cho nó. Từ khi người chờ hỏi cả
    * `finished` chứ không chỉ state, bỏ sót bước này sẽ làm joinChildren của cha

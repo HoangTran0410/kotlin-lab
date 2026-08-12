@@ -13,7 +13,12 @@ export interface CtxSummary {
 
 export type EventBody =
   | { k: 'COROUTINE_CREATED'; id: JobId; parentId: JobId | null
-      builder: 'launch' | 'async' | 'runBlocking' | 'coroutineScope' | 'supervisorScope' | 'withContext'
+      // 'scope' là Job GỐC của một `CoroutineScope(ctx)` do người học tự dựng:
+      // không cha, không thân, chỉ là điểm neo cấu trúc (xem
+      // Scheduler.spawnScopeRoot). Nó KHÔNG phải một builder trong Kotlin —
+      // nhưng nó là một node có thật trong cây job, nên phải có mặt trên trace.
+      builder: 'launch' | 'async' | 'runBlocking' | 'coroutineScope' | 'supervisorScope'
+        | 'withContext' | 'scope'
       ctx: CtxSummary }
   | { k: 'COROUTINE_STARTED'; id: JobId; threadId: ThreadId }
   | { k: 'COROUTINE_SUSPENDED'; id: JobId; reason: 'delay' | 'await' | 'join' | 'yield' | 'collect' | 'emit' }

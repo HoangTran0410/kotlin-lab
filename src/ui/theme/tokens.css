@@ -4,6 +4,10 @@
   /* accent theo kind của node — dùng lại ở Task 13 */
   --k-runBlocking: #d29922; --k-launch: #58a6ff; --k-async: #bc8cff;
   --k-coroutineScope: #3fb950; --k-supervisorScope: #2ea043; --k-withContext: #79c0ff;
+  /* Task 5 (M3): Job gốc của CoroutineScope(ctx). Xám xanh trung tính, cố ý
+     KHÔNG nằm trong dải màu của sáu builder trên — node này không do người học
+     gõ ra, nó là cái neo cấu trúc mà CoroutineScope(...) dựng ngầm. */
+  --k-scope: #6e7681;
   --state-cancelled: #f85149; --state-completed: #3fb950; --state-active: #58a6ff;
   /* Task 14: màu cạnh cancel. Cố ý KHÔNG dùng lại --k-runBlocking (cũng cam) —
      trùng màu với accent builder sẽ trông như trùng hợp chứ không phải chủ ý,

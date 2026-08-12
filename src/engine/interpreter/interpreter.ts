@@ -497,13 +497,31 @@ export class Interpreter {
       }
     }
     if (calleeName === 'CoroutineScope' || calleeName === 'MainScope') {
-      // MainScope() = Dispatchers.Main + SupervisorJob. Không gắn dispatcher
-      // vào thì nó im lặng thành Default — cùng dạng "sai lặng lẽ" mà receiver
-      // của launch vừa được sửa, chỉ khác chỗ biểu hiện.
+      // MainScope() = SupervisorJob() + Dispatchers.Main (kotlinx: `ContextScope`).
+      // Cả HAI element đều phải có mặt. Thiếu dispatcher thì nó im lặng thành
+      // Default; thiếu SupervisorJob thì Job gốc dựng dưới đây là Job THƯỜNG, và
+      // pattern Android kinh điển nhất lại dạy ngược — một con fail giết cả scope.
       const arg = calleeName === 'MainScope'
-        ? { t: 'obj' as const, className: 'Dispatchers.Main', fields: new Map<string, KValue>() }
+        ? mainScopeCtxValue()
         : e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
-      return { t: 'obj', className: 'CoroutineScope', fields: new Map([['__ctx', arg]]) }
+      // Job GỐC có thật trong cây. Không có nó thì `scope.launch` là job mồ côi:
+      // cờ SupervisorJob() rơi mất, `scope.cancel()` không có gì để huỷ, và
+      // "sibling vẫn sống" trở thành đúng-vì-lý-do-sai (hai coroutine chẳng có
+      // quan hệ nào) thay vì vì supervisor chặn được failure.
+      //
+      // Dựng cho MỌI CoroutineScope(ctx), kể cả khi ctx không có Job: kotlinx
+      // làm đúng thế — `CoroutineScope(ctx) = ContextScope(if (ctx[Job] != null)
+      // ctx else ctx + Job())`. Đã đối chiếu Kotlin thật:
+      // `CoroutineScope(Dispatchers.Default).coroutineContext[Job]` là JobImpl{Active}.
+      const ctx = this.applyCtxValue(CoroutineContext.empty(), arg)
+      const root = this.scheduler.spawnScopeRoot(ctx, ctx.isSupervisor)
+      return {
+        t: 'obj', className: 'CoroutineScope',
+        fields: new Map<string, KValue>([
+          ['__ctx', arg],
+          ['__jobId', { t: 'str', v: root.id }],
+        ]),
+      }
     }
     if (calleeName === 'CoroutineName') {
       const arg = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
@@ -540,9 +558,13 @@ export class Interpreter {
    * scope là CoroutineScope được truyền vào một suspend fun, và của mọi lời gọi
    * không có receiver.
    *
-   * GlobalScope và CoroutineScope(ctx) đều cho parentJobId = null: chúng mang
-   * Job GỐC của riêng mình, KHÔNG treo dưới coroutine bao quanh. Đó chính là
-   * điều làm chúng thoát khỏi structured concurrency.
+   * GlobalScope và CoroutineScope(ctx) đều KHÔNG treo dưới coroutine bao quanh —
+   * đó là điều làm chúng thoát khỏi structured concurrency của nơi gọi. Nhưng
+   * chúng KHÁC nhau ở chỗ ngay bên dưới, và sự khác biệt đó chính là bài học:
+   *   - `CoroutineScope(ctx)` mang một Job GỐC có thật (`__jobId`), nên con của
+   *     nó có cha, chịu `scope.cancel()`, và có ranh giới supervisor để chặn.
+   *   - `GlobalScope` có context RỖNG, không Job nào cả, nên con của nó thật sự
+   *     mồ côi: parentJobId = null. Đây không phải thiếu sót cần "thống nhất".
    */
   protected *scopeReceiver(
     e: Expr & { k: 'Call' }, env: Env,
@@ -556,7 +578,8 @@ export class Interpreter {
     if (target.className === 'CoroutineScope') {
       const raw = target.fields.get('__ctx')
       const ctx = raw ? this.applyCtxValue(CoroutineContext.empty(), raw) : CoroutineContext.empty()
-      return { parentJobId: null, ctx }
+      const id = target.fields.get('__jobId')
+      return { parentJobId: id && id.t === 'str' ? id.v : null, ctx }
     }
     return null
   }
@@ -593,6 +616,31 @@ export class Interpreter {
       return n && n.t === 'str' ? ctx.withName(n.v) : ctx
     }
     if (v.className === 'CoroutineExceptionHandler') return ctx.withHandler('CEH')
+    // Element Job của context. Trước Task 5, cả hai rơi thẳng xuống `return ctx`
+    // và cờ supervisor bị đánh rơi ngay ở bước dựng context: mọi
+    // `CoroutineScope(SupervisorJob())` chạy y hệt `CoroutineScope(Job())`.
+    // `Job()` phải ghi ĐÈ thành false, không phải "không nói gì" — trong
+    // `SupervisorJob() + Job()` thì element phải là element bên phải.
+    if (v.className === 'SupervisorJob') return ctx.withSupervisor(true)
+    if (v.className === 'Job') return ctx.withSupervisor(false)
     return ctx
   }
+}
+
+/**
+ * `SupervisorJob() + Dispatchers.Main` dưới dạng KValue, đúng hình dạng mà
+ * `evalBinary` sinh ra cho phép `+` giữa hai element context — nên nó đi qua
+ * `applyCtxValue` bằng chính con đường mà code người học viết tay đi qua.
+ */
+function mainScopeCtxValue(): KValue {
+  const items: KValue[] = [
+    {
+      t: 'obj', className: 'SupervisorJob',
+      fields: new Map<string, KValue>([['__supervisor', { t: 'bool', v: true }]]),
+    },
+    { t: 'obj', className: 'Dispatchers.Main', fields: new Map<string, KValue>() },
+  ]
+  const fields = new Map<string, KValue>()
+  items.forEach((it, i) => fields.set(String(i), it))
+  return { t: 'obj', className: '__CtxPlus', fields }
 }

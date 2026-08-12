@@ -329,13 +329,25 @@ describe('interpreter — coroutine builder', () => {
   })
 
   it('CoroutineScope(ctx).launch dùng dispatcher của scope, không nuốt mất', () => {
+    // `parentId` từng được khẳng định là null ở đây. SAI so với Kotlin thật, và
+    // Task 5 (M3) sửa: `CoroutineScope(ctx) = ContextScope(if (ctx[Job] != null)
+    // ctx else ctx + Job())` — ngay cả context KHÔNG có Job như
+    // `Dispatchers.Default` cũng được cấp một Job() mới. Đã đối chiếu trên
+    // compiler thật: `CoroutineScope(Dispatchers.Default).coroutineContext[Job]`
+    // in ra `JobImpl{Active}`, và `job.parent === scope.coroutineContext[Job]`
+    // là true. Cha là Job GỐC của scope, không phải null, cũng không phải
+    // runBlocking bao ngoài.
     const e = evs(
       'fun main() = runBlocking {\n' +
       '  val scope = CoroutineScope(Dispatchers.Default)\n' +
       '  scope.launch { delay(1) }\n' +
       '}')
+    const root = e.find(x => x.k === 'COROUTINE_CREATED' && x.builder === 'scope')
+    expect(root).toMatchObject({ parentId: null, ctx: { isSupervisor: false } })
     const launched = e.find(x => x.k === 'COROUTINE_CREATED' && x.builder === 'launch')
-    expect(launched).toMatchObject({ parentId: null, ctx: { dispatcher: 'Default' } })
+    expect(launched).toMatchObject({
+      parentId: (root as { id: string }).id, ctx: { dispatcher: 'Default' },
+    })
   })
 
   it('launch bên trong suspend fun gắn đúng coroutine scope của caller', () => {

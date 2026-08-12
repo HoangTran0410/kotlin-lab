@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { render, screen } from '@testing-library/react'
 import { ReactFlowProvider, type NodeProps } from '@xyflow/react'
 import { JobNode } from '../../src/ui/graph/nodes/JobNode'
@@ -54,6 +56,25 @@ describe('JobNode (Task 13)', () => {
     renderInFlow(<JobNode {...jobNodeProps({ ...BASE_DATA, builder: 'async' })} />)
     expect(screen.getByTestId('job-node')).toHaveStyle({ borderLeftColor: builderAccent('async') })
     expect(builderAccent('launch')).not.toBe(builderAccent('async'))
+  })
+
+  it("builder 'scope' (Task 5, M3) có token riêng — không rơi về --fg-dim, không trùng builder nào", () => {
+    // Job gốc của CoroutineScope(ctx) là một node CÓ THẬT trên đồ thị từ Task 5.
+    // Nếu quên thêm nó vào BUILDER_ACCENT thì builderAccent trả '--fg-dim' —
+    // đúng cái màu dành cho "builder lạ chưa biết", nên node quan trọng nhất của
+    // bài học Android lại hiện ra mờ như một thứ engine không nhận ra.
+    expect(builderAccent('scope')).toBe('var(--k-scope)')
+    expect(builderAccent('scope')).not.toBe('var(--fg-dim)')
+    for (const b of ['runBlocking', 'launch', 'async', 'coroutineScope', 'supervisorScope', 'withContext']) {
+      expect(builderAccent('scope'), `trùng màu với ${b}`).not.toBe(builderAccent(b))
+    }
+    // Và token phải TỒN TẠI. `var(--k-scope)` chưa khai thì trình duyệt bỏ qua
+    // thuộc tính, node mất accent mà không có lỗi nào — sai âm thầm.
+    // Đọc bằng node:fs từ cwd (cùng cách boundary.test.ts dựa vào cwd), KHÔNG
+    // bằng `import ... ?raw`: workspace 'ui' đi qua Vite với css bị tắt, nên
+    // import file .css trả về chuỗi RỖNG — test sẽ xanh/đỏ vì lý do sai.
+    const tokensCss = readFileSync(resolve(process.cwd(), 'src/ui/theme/tokens.css'), 'utf8')
+    expect(tokensCss).toMatch(/--k-scope:\s*#[0-9a-fA-F]{3,8};/)
   })
 
   it('viền đổi theo state', () => {

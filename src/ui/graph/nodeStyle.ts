@@ -36,6 +36,10 @@ const BUILDER_ACCENT: Readonly<Record<string, string>> = {
   coroutineScope: 'var(--k-coroutineScope)',
   supervisorScope: 'var(--k-supervisorScope)',
   withContext: 'var(--k-withContext)',
+  // Job gốc của CoroutineScope(ctx). Cố ý TRUNG TÍNH (xám xanh), khác hẳn sáu
+  // màu builder ở trên: nó không phải một builder mà người học gõ ra, chỉ là
+  // cái neo cấu trúc mà `CoroutineScope(...)` dựng ngầm.
+  scope: 'var(--k-scope)',
 }
 
 /** builder lạ (chưa có token, ví dụ M3 thêm builder mới) → về `--fg-dim`, không ném. */
