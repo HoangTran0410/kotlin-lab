@@ -24,7 +24,7 @@ export function toCause(err: unknown): FailureCause {
   // Scheduler dựng exception giả bằng Object.assign(new Error, { kotlinType }),
   // và Scheduler không có lý do gì phải phụ thuộc vào lớp cụ thể của interpreter.
   if (err && typeof err === 'object' && 'kotlinType' in err) {
-    const e = err as { kotlinType: string; kotlinMessage?: string; message?: string }
+    const e = err as { kotlinType: string; kotlinMessage?: string; message?: string; line?: number }
     return {
       exType: e.kotlinType,
       // Ưu tiên kotlinMessage. Error.message của KotlinThrow được dựng thành
@@ -33,6 +33,10 @@ export function toCause(err: unknown): FailureCause {
       // "RuntimeException: boom" thay vì "boom".
       message: e.kotlinMessage ?? e.message ?? '',
       isCancellation: e.kotlinType === 'CancellationException',
+      // Duck-typed (không instanceof) như phần còn lại của hàm này — test của
+      // Scheduler dựng lỗi giả bằng Object.assign và không mang `line`, nên
+      // đọc optional-chaining ra undefined là đúng, không phải lỗi.
+      line: e.line,
     }
   }
   return { exType: 'Exception', message: String(err), isCancellation: false }
@@ -92,6 +96,7 @@ export class Scheduler {
     builder: 'launch' | 'async' | 'runBlocking' | 'coroutineScope' | 'supervisorScope' | 'withContext',
     ctx: CoroutineContext,
     makeBody: (job: Job) => CoroutineBody,
+    srcLine?: number,
   ): Job {
     const id = this.newJobId()
     const job = new Job(id, ctx.name ?? id, parent, isSupervisor)
@@ -100,7 +105,7 @@ export class Scheduler {
     const jobCtx = ctx.withJob(job)
     this.emitter.emit({
       k: 'COROUTINE_CREATED', id, parentId: parent?.id ?? null, builder, ctx: jobCtx.summary(),
-    })
+    }, srcLine)
 
     const task: Task = {
       job, ctx: jobCtx, body: makeBody(job), resumeValue: undefined, started: false, finished: false,
@@ -288,7 +293,8 @@ export class Scheduler {
       // failure leo lên qua job này.
       if (job.isCompleted) return
       const cause = toCause(err)
-      this.emitter.emit({ k: 'EXCEPTION_THROWN', id: job.id, exType: cause.exType, message: cause.message })
+      this.emitter.emit(
+        { k: 'EXCEPTION_THROWN', id: job.id, exType: cause.exType, message: cause.message }, cause.line)
       reportFailure(job, cause, this.emitter)
       return
     }
@@ -314,7 +320,7 @@ export class Scheduler {
   private suspend(task: Task, s: Suspension): void {
     // 'joinChildren' không có trong schema Event — gom về 'join' khi ghi trace.
     const reason = s.s === 'joinChildren' ? 'join' : s.s
-    this.emitter.emit({ k: 'COROUTINE_SUSPENDED', id: task.job.id, reason })
+    this.emitter.emit({ k: 'COROUTINE_SUSPENDED', id: task.job.id, reason }, s.line)
 
     switch (s.s) {
       case 'delay':
@@ -355,10 +361,11 @@ export class Scheduler {
     ctx: CoroutineContext,
     builder: 'launch' | 'async',
     makeBody: (job: Job) => CoroutineBody,
+    srcLine?: number,
   ): Job {
     const parent = this.jobById(parentJobId)
     const parentCtx = parent ? this.tasks.get(parent.id)!.ctx : CoroutineContext.empty()
-    return this.spawn(parent, false, builder, parentCtx.plus(ctx), makeBody)
+    return this.spawn(parent, false, builder, parentCtx.plus(ctx), makeBody, srcLine)
   }
 
   /**
@@ -432,7 +439,7 @@ export class Scheduler {
     if (job.isCompleted) return
     this.emitter.emit({
       k: 'EXCEPTION_THROWN', id: job.id, exType: cause.exType, message: cause.message,
-    })
+    }, cause.line)
     reportFailure(job, cause, this.emitter)
   }
 

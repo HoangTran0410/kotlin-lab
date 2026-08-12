@@ -1,0 +1,85 @@
+/* Task 16. Timeline nằm ngang hết chiều rộng shell__foot (xem shell.css). */
+
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 16px;
+}
+
+.timeline__track {
+  position: relative;
+}
+
+.timeline__range {
+  width: 100%;
+  display: block;
+  margin: 0;
+}
+
+/* Vạch đánh dấu event đáng chú ý (markers.ts), vẽ ĐÈ lên track — thuần hình
+   ảnh, không có hit-test riêng, không đụng gì tới giá trị của <input range>. */
+.timeline__markers {
+  position: relative;
+  height: 6px;
+  margin: 0 8px;
+}
+
+.timeline-marker {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 6px;
+  transform: translateX(-1px);
+  background: var(--fg-dim);
+  pointer-events: none;
+}
+
+.timeline-marker--coroutine_created { background: var(--k-launch); }
+.timeline-marker--exception_thrown { background: var(--state-cancelled); }
+.timeline-marker--failure_propagated { background: var(--state-cancelled); }
+.timeline-marker--cancel_requested { background: var(--edge-cancel); }
+.timeline-marker--println { background: var(--state-completed); }
+
+.timeline__status {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--fg-dim);
+  font-family: ui-monospace, monospace;
+}
+
+/* Task 17. */
+.playback {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px 8px;
+}
+
+.playback button {
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.playback button:disabled {
+  color: var(--fg-dim);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.playback__speed {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.playback__speed-btn[aria-pressed="true"] {
+  border-color: var(--k-launch);
+  color: var(--k-launch);
+}

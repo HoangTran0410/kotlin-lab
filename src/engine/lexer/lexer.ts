@@ -1,4 +1,15 @@
 import { KEYWORDS, OPERATORS, type StringPart, type Token, type TokenKind } from './token'
+import type { Pos } from '../ast/nodes'
+
+/**
+ * Lỗi lexer PHẢI mang vị trí có cấu trúc. Trước đây bốn chỗ dưới đây ném
+ * `Error` trần với dòng/cột nhét trong chuỗi thông điệp — DiagnosticsPanel
+ * không có gì để nhảy tới, và cách duy nhất lấy lại vị trí là regex ngược
+ * thông điệp tiếng Việt. Kiểu hoá nó, đừng parse chuỗi.
+ */
+export class LexError extends Error {
+  constructor(message: string, readonly pos: Pos) { super(message) }
+}
 
 const SINGLE: Record<string, TokenKind> = {
   '(': 'LPAREN', ')': 'RPAREN', '{': 'LBRACE', '}': 'RBRACE',
@@ -34,7 +45,7 @@ export function tokenize(src: string): Token[] {
       advance(2)
       while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) advance(1)
       if (i >= src.length) {
-        throw new Error(`Lexer: chú thích khối chưa được đóng, bắt đầu ở dòng ${l}, cột ${c}`)
+        throw new LexError(`Lexer: chú thích khối chưa được đóng, bắt đầu ở dòng ${l}, cột ${c}`, { line: l, col: c })
       }
       advance(2)
       continue
@@ -80,7 +91,7 @@ export function tokenize(src: string): Token[] {
               advance(1)
             }
             if (depth > 0) {
-              throw new Error(`Lexer: thiếu '}' đóng cho \${...} bắt đầu ở dòng ${sl}, cột ${sc}`)
+              throw new LexError(`Lexer: thiếu '}' đóng cho \${...} bắt đầu ở dòng ${sl}, cột ${sc}`, { line: sl, col: sc })
             }
             parts.push({ type: 'expr', source: src.slice(start, i), line: sl, col: sc })
             advance(1) // dấu }
@@ -99,7 +110,7 @@ export function tokenize(src: string): Token[] {
         advance(1)
       }
       if (i >= src.length) {
-        throw new Error(`Lexer: chuỗi chưa được đóng, bắt đầu ở dòng ${l}, cột ${c}`)
+        throw new LexError(`Lexer: chuỗi chưa được đóng, bắt đầu ở dòng ${l}, cột ${c}`, { line: l, col: c })
       }
       flush()
       advance(1) // dấu " đóng
@@ -132,7 +143,7 @@ export function tokenize(src: string): Token[] {
     const op = OPERATORS.find(o => src.startsWith(o, i))
     if (op) { push('OP', op); advance(op.length); continue }
 
-    throw new Error(`Lexer: ký tự không nhận diện được '${ch}' tại dòng ${line}, cột ${col}`)
+    throw new LexError(`Lexer: ký tự không nhận diện được '${ch}' tại dòng ${line}, cột ${col}`, { line, col })
   }
 
   push('EOF', '')

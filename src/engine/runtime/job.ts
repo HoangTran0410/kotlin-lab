@@ -4,6 +4,8 @@ export interface FailureCause {
   exType: string
   message: string
   isCancellation: boolean
+  /** Dòng 1-based của câu `throw` gây ra, nếu KotlinThrow gốc mang theo. */
+  line?: number
 }
 
 const ALLOWED: Record<JobState, readonly JobState[]> = {

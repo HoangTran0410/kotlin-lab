@@ -1,5 +1,6 @@
 import type { FunDecl, Lambda } from './ast/nodes'
-import { parseProgram } from './parser/parser'
+import { parseProgram, ParseError } from './parser/parser'
+import { LexError } from './lexer/lexer'
 import { Interpreter } from './interpreter/interpreter'
 import { Scheduler } from './runtime/scheduler'
 import { validate } from './validator/validator'
@@ -73,5 +74,35 @@ export function runSource(src: string): RunResult {
     diagnostics: [],
     events,
     output: events.filter(e => e.k === 'PRINTLN').map(e => (e as { text: string }).text),
+  }
+}
+
+/**
+ * Bọc `runSource` để KHÔNG BAO GIỜ ném. Editor sống gọi hàm này ở mỗi nhịp
+ * gõ phím, mà source lúc đang gõ thì gần như luôn dở dang: `runSource` ném
+ * ParseError/LexError ở phần lớn các trạng thái trung gian đó.
+ *
+ * `runSource` vẫn giữ nguyên hành vi ném — golden test của M1 dựa vào nó, và
+ * ở trong test thì ném là đúng: hỏng thì phải ồn ào.
+ */
+export function runSourceSafe(src: string): RunResult {
+  try {
+    return runSource(src)
+  } catch (err) {
+    return { diagnostics: [toDiagnostic(err)], events: [], output: [] }
+  }
+}
+
+function toDiagnostic(err: unknown): Diagnostic {
+  if (err instanceof ParseError || err instanceof LexError) {
+    return { severity: 'error', message: err.message, line: err.pos.line, col: err.pos.col }
+  }
+  // Lưới an toàn cuối. Nếu tới được đây thì engine có lỗi thật, nhưng UI vẫn
+  // phải sống để user còn sửa được code. Ghi rõ là bất thường.
+  return {
+    severity: 'error',
+    message: `Lỗi không mong đợi trong engine: ${err instanceof Error ? err.message : String(err)}`,
+    line: 1, col: 1,
+    hint: 'Đây có thể là lỗi của công cụ, không phải của code bạn viết.',
   }
 }

@@ -22,17 +22,27 @@ export interface WorldState {
   output: string[]
   /** Edge failure/cancel đang hoạt động tại step này, để UI vẽ token. */
   lastEvent: Event | null
+  /**
+   * Dòng 1-based đang chạy, hoặc null nếu chưa event nào mang dòng.
+   * DÍNH: event không mang `srcLine` KHÔNG xoá giá trị cũ. Nếu xoá, dòng
+   * highlight sẽ nhấp nháy tắt/bật suốt trace, vì các event hạ tầng
+   * (THREAD_STATE, JOB_STATE) xen giữa mọi bước và chúng không thuộc dòng nào.
+   */
+  srcLine: number | null
 }
 
 /** Dựng lại trạng thái bằng cách áp dụng event [0, upTo). Hàm thuần. */
 export function foldTrace(events: readonly Event[], upTo: number): WorldState {
-  const w: WorldState = { t: 0, jobs: new Map(), threads: new Map(), output: [], lastEvent: null }
+  const w: WorldState = {
+    t: 0, jobs: new Map(), threads: new Map(), output: [], lastEvent: null, srcLine: null,
+  }
   const n = Math.max(0, Math.min(upTo, events.length))
 
   for (let i = 0; i < n; i++) {
     const e = events[i]!
     w.t = e.t
     w.lastEvent = e
+    if (e.srcLine !== undefined) w.srcLine = e.srcLine
 
     switch (e.k) {
       case 'COROUTINE_CREATED':

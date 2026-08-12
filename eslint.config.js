@@ -1,6 +1,9 @@
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
+  // Bỏ qua tường minh. eslint 9 flat config KHÔNG tự bỏ qua dist/, và
+  // 'vite build' ghi file vào đó trong lúc lint chạy đã gây đỏ chập chờn.
+  { ignores: ['dist/**', 'coverage/**', 'node_modules/**', '*.timestamp-*'] },
   ...tseslint.configs.recommended,
   {
     files: ['src/engine/**/*.ts'],
@@ -57,6 +60,21 @@ export default tseslint.config(
           message: 'engine phải thuần TypeScript, không phụ thuộc UI',
         },
       ],
+    },
+  },
+  {
+    files: ['src/ui/**/*.{ts,tsx}', 'src/state/**/*.ts', 'src/lessons/registry.ts'],
+    rules: {
+      // Code này chạy trong browser. `src/lessons/index.ts` (node:fs) CỐ Ý
+      // không nằm trong danh sách trên — nó là bản dành cho test Node.
+      'no-restricted-imports': ['error', {
+        patterns: [
+          { group: ['node:*', 'fs', 'path', 'url'],
+            message: 'code UI chạy trong browser, không có Node API' },
+          { group: ['**/lessons/index'],
+            message: 'dùng lessons/registry (browser-safe), không dùng lessons/index (node:fs)' },
+        ],
+      }],
     },
   },
 )
