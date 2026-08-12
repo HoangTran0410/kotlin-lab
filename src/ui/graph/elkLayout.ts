@@ -1,11 +1,23 @@
-import ELK, { type ElkNode } from 'elkjs/lib/elk.bundled.js'
+import type { ELK, ElkNode } from 'elkjs/lib/elk.bundled.js'
 import type { GraphSpec } from '../../engine/trace/graph'
 import { NODE_W, NODE_H, CONTAINER_PADDING } from './dimensions'
 
 export interface Box { x: number; y: number; width: number; height: number }
 export type LayoutResult = ReadonlyMap<string, Box>
 
-const elk = new ELK()
+// elkjs alone renders to ~1.5MB (the single biggest dependency in the app,
+// bigger than React + CodeMirror + React Flow combined) — importing it
+// statically would put its full weight in the bundle the browser must parse
+// before the editor is even interactive. Dynamic import splits it into its
+// own chunk, fetched lazily and cached here after the first layout.
+let elkPromise: Promise<ELK> | undefined
+
+async function getElk(): Promise<ELK> {
+  if (!elkPromise) {
+    elkPromise = import('elkjs/lib/elk.bundled.js').then(({ default: Elk }) => new Elk())
+  }
+  return elkPromise
+}
 
 const OPTS = {
   'elk.algorithm': 'layered',
@@ -59,6 +71,7 @@ export async function layoutGraph(spec: GraphSpec): Promise<LayoutResult> {
       .map(e => ({ id: e.id, sources: [e.source], targets: [e.target] })),
   }
 
+  const elk = await getElk()
   const out = await elk.layout(root)
   const boxes = new Map<string, Box>()
   const walk = (n: ElkNode): void => {

@@ -1,15 +1,20 @@
-import { useCallback, useMemo } from 'react'
+import { lazy, Suspense, useCallback, useMemo } from 'react'
 import type { NarrationLine } from '../../engine/narrate/narrateTrace'
 import type { Event } from '../../engine/trace/events'
 import type { WorldState } from '../../engine/trace/world'
 import { isBreakpointStep, nextBreakpointStep, prevBreakpointStep } from '../../engine/trace/breakpoints'
 import { usePlayback } from '../timeline/usePlayback'
 import { useKeyboardTransport } from '../timeline/useKeyboardTransport'
-import { GraphCanvas } from './GraphCanvas'
 import { LeftoverNotice } from './LeftoverNotice'
 import { ThreadPools } from './ThreadPools'
 import type { ReactFlowGraph } from './toReactFlow'
 import './graph-stage.css'
+
+// @xyflow/react (+ its d3 internals) is ~350KB on its own — split into its own
+// chunk via lazy() instead of a static import, same reasoning as elkLayout.ts's
+// dynamic import of elkjs. The Suspense fallback below covers the one tick
+// this takes; it's already downloading by the time layout/toReactFlow finish.
+const GraphCanvas = lazy(() => import('./GraphCanvas').then(m => ({ default: m.GraphCanvas })))
 
 /** Text inside backticks renders in monospace — same convention as NarrationPanel. */
 function renderText(text: string): React.ReactNode[] {
@@ -138,7 +143,9 @@ export function GraphStage({
     <div className="k-stage">
       <LeftoverNotice events={events} source={source} />
       <div className="k-stage__canvas">
-        <GraphCanvas nodes={graph.nodes} edges={graph.edges} />
+        <Suspense fallback={null}>
+          <GraphCanvas nodes={graph.nodes} edges={graph.edges} />
+        </Suspense>
       </div>
       {/* Under the canvas, above the caption: it answers a DIFFERENT question
           from the graph ("which thread is this on right now") rather than
