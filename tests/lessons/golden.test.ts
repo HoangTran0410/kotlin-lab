@@ -16,8 +16,28 @@ describe('lesson — nghiệm thu M1', () => {
     }
   })
 
-  it('LESSONS xếp theo order', () => {
-    expect(LESSONS.map(l => l.id)).toEqual(['jobtree', 'normalfail', 'supervisor'])
+  it('LESSONS xếp tăng dần theo order, order không trùng', () => {
+    // Không chép lại danh sách id: mỗi lần thêm bài lại phải sửa test là thứ
+    // khiến người ta sửa cho xanh chứ không đọc. Khẳng định cái BẤT BIẾN.
+    const orders = LESSONS.map(l => l.order)
+    expect(orders).toEqual([...orders].sort((a, b) => a - b))
+    expect(new Set(orders).size, 'có hai bài trùng order').toBe(orders.length)
+    expect(new Set(LESSONS.map(l => l.id)).size, 'có hai bài trùng id').toBe(LESSONS.length)
+  })
+
+  it('đủ 9 bài, đúng thứ tự dạy của bản HTML gốc', () => {
+    expect(LESSONS.map(l => l.id)).toEqual([
+      'suspend', 'jobtree', 'exception', 'normalfail', 'supervisor',
+      'launchasync', 'dispatcher', 'scopecompare', 'nestedtrap',
+    ])
+  })
+
+  it('mỗi bài có tiêu đề, tóm tắt và ít nhất hai khái niệm', () => {
+    for (const l of LESSONS) {
+      expect(l.title.length, `${l.id} thiếu title`).toBeGreaterThan(5)
+      expect(l.summary.length, `${l.id} thiếu summary`).toBeGreaterThan(10)
+      expect(l.concepts.length, `${l.id} thiếu concepts`).toBeGreaterThanOrEqual(2)
+    }
   })
 
   describe('jobtree — cancel đi xuống', () => {

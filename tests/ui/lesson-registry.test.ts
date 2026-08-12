@@ -19,7 +19,7 @@ describe('registry lesson — bản browser khớp bản Node', () => {
     expect(lessonSource('khong-co')).toBeNull()
   })
 
-  it('có đúng ba lesson ở M2', () => {
-    expect(LESSON_LIST).toHaveLength(3)
+  it('có đủ 9 lesson', () => {
+    expect(LESSON_LIST).toHaveLength(9)
   })
 })

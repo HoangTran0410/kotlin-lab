@@ -48,8 +48,15 @@ describe('nối dây App -> CodeEditor — highlight đi theo stepIndex thật c
 
     const distinctLines = [...seen].filter((l): l is number => l !== null)
     expect(new Set(distinctLines).size, 'phải thấy nhiều hơn 1 dòng khi tua hết trace').toBeGreaterThan(1)
-    // Khớp với dữ liệu đo được ở trên — nếu wiring đúng, đúng ba dòng này xuất hiện.
-    expect(new Set(distinctLines)).toEqual(new Set([3, 4, 5]))
+    // Suy từ SOURCE thật, không chép số cứng: thêm một dòng `import` vào đầu
+    // lesson là mọi số dòng chép tay lệch đi, và test sẽ đỏ vì lý do chẳng
+    // liên quan gì tới thứ nó canh (wiring highlight <-> stepIndex).
+    const src = lessonSource('supervisor')!.split('\n')
+    const dongLaunch = src
+      .map((l, i) => (l.includes('launch {') ? i + 1 : -1))
+      .filter(n => n > 0)
+    expect(dongLaunch.length, 'lesson supervisor phải có 3 dòng launch').toBe(3)
+    expect(new Set(distinctLines)).toEqual(new Set(dongLaunch))
   })
 
   it('step 0 chưa có event nào thì chưa có gì được tô', () => {

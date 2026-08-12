@@ -1,3 +1,5 @@
+import kotlinx.coroutines.*
+
 fun main() = runBlocking {
     coroutineScope {
         launch { delay(500); println("A xong") }

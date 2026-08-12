@@ -1,3 +1,5 @@
+import kotlinx.coroutines.*
+
 fun main() = runBlocking {
     val parent = launch {
         launch { delay(1000) }

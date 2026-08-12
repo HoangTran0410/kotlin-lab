@@ -1,0 +1,13 @@
+{
+  "id": "dispatcher",
+  "order": 7,
+  "title": "Context và Dispatcher — ai chạy trên thread nào",
+  "summary": "Context cộng bằng +, con thừa kế của cha, withContext đổi thread giữa chừng.",
+  "concepts": [
+    "CoroutineContext",
+    "Dispatchers",
+    "CoroutineName",
+    "withContext",
+    "SupervisorJob"
+  ]
+}

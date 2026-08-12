@@ -1,6 +1,12 @@
 {
   "id": "normalfail",
-  "order": 2,
+  "order": 4,
   "title": "Normal Job — child fail kéo sibling xuống",
-  "summary": "Failure đi lên parent thường, rồi cancellation quay xuống sibling."
+  "summary": "Failure đi lên parent thường, rồi cancellation quay xuống sibling.",
+  "concepts": [
+    "Job thường",
+    "failure đi lên",
+    "fail-fast",
+    "sibling bị huỷ"
+  ]
 }

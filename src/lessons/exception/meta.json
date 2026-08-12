@@ -1,0 +1,12 @@
+{
+  "id": "exception",
+  "order": 3,
+  "title": "Exception vs Failure — không phải một",
+  "summary": "Exception bị bắt thì không có failure. Chỉ exception thoát ra mới làm Job fail.",
+  "concepts": [
+    "exception",
+    "failure",
+    "try/catch",
+    "coroutineScope"
+  ]
+}

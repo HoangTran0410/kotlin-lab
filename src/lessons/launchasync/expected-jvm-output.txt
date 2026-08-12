@@ -1,0 +1,6 @@
+1. launch chạy xong — nó không trả về giá trị nào
+2. join() chỉ CHỜ, không đọc được gì cả
+3. await() vừa chờ vừa trả về giá trị: 42
+4. Deferred đã fail từ lúc nãy, nhưng chưa ai đọc nên chưa ai thấy
+5. await() ném exception ra tại ĐÚNG chỗ gọi await: boom
+6. supervisorScope chặn failure của async, chương trình đi tiếp

@@ -1,0 +1,4 @@
+1. thân coroutine chạy trên pool IO — thừa kế từ context của scope
+2. withContext đổi sang pool Default: vẫn CÙNG coroutine, khác thread
+3. ra khỏi withContext, quay lại pool IO
+4. scope bị cancel — mọi con của nó cũng vậy

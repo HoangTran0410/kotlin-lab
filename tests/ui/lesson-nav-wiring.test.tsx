@@ -23,12 +23,13 @@ describe('nối dây App -> LessonNav — bấm DOM thật lái store thật', (
     useLabStore.getState().setStep(2)
     render(<App />)
 
-    const nav = screen.getByRole('navigation', { name: 'Bài học' })
+    const nav = screen.getByRole('navigation', { name: 'Lộ trình bài học' })
     const items = within(nav).getAllByRole('button').filter(b => b.className.includes('lesson-nav__item'))
-    expect(items, 'phải có đúng ba nút lesson trong nav').toHaveLength(3)
+    expect(items, 'nav phải có đúng một nút cho mỗi bài').toHaveLength(LESSON_LIST.length)
 
     const supervisor = LESSON_LIST.find(l => l.id === 'supervisor')!
-    const target = items.find(b => b.textContent?.includes(supervisor.title))
+    // Chip hiện số + nhãn ngắn; title/summary đầy đủ nằm ở tooltip.
+    const target = items.find(b => b.getAttribute('title')?.includes(supervisor.title))
     if (!target) throw new Error('không tìm thấy nút lesson supervisor')
     fireEvent.click(target)
 
@@ -43,7 +44,7 @@ describe('nối dây App -> LessonNav — bấm DOM thật lái store thật', (
     render(<App />)
 
     const before = useLabStore.getState().source
-    const nav = screen.getByRole('navigation', { name: 'Bài học' })
+    const nav = screen.getByRole('navigation', { name: 'Lộ trình bài học' })
     const blankBtn = within(nav).getByRole('button', { name: 'Bắt đầu từ trang trắng' })
     fireEvent.click(blankBtn)
 

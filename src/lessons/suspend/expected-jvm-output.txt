@@ -1,0 +1,4 @@
+1. coroutine bắt đầu chạy
+2. coroutine đang SUSPENDED, nhưng job.isActive = true
+3. resume — vẫn cùng coroutine đó, chạy tiếp từ đúng chỗ đã dừng
+4. xong rồi: isActive = false, isCompleted = true

@@ -1,6 +1,12 @@
 {
   "id": "supervisor",
-  "order": 3,
+  "order": 5,
   "title": "SupervisorJob — firewall cho child failure",
-  "summary": "Supervisor chặn failure của direct child; sibling sống tiếp."
+  "summary": "Supervisor chặn failure của direct child; sibling sống tiếp.",
+  "concepts": [
+    "SupervisorJob",
+    "supervisor boundary",
+    "direct child",
+    "cô lập failure"
+  ]
 }

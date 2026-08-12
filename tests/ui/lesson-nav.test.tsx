@@ -7,15 +7,23 @@ import { useLabStore } from '../../src/state/store'
 import { lessonSource } from '../../src/lessons/registry'
 
 describe('LessonNav', () => {
-  it('hiện đủ ba bài, đúng thứ tự order, kèm title + summary', () => {
+  it('hiện đủ mọi bài, đúng thứ tự order, số thứ tự và tooltip đầy đủ', () => {
     const { container } = render(
       <LessonNav currentLessonId={null} loadLesson={() => {}} setSource={() => {}} />,
     )
     const items = container.querySelectorAll<HTMLButtonElement>('.lesson-nav__item')
-    expect(items).toHaveLength(3)
-    expect([...items].map(b => b.textContent)).toEqual(
-      LESSON_LIST.map(l => `${l.title}${l.summary}`),
-    )
+    expect(items).toHaveLength(LESSON_LIST.length)
+    expect(LESSON_LIST.length, 'nav phải liệt kê đủ 9 bài').toBe(9)
+    // Chip chỉ hiện SỐ + nhãn ngắn (9 bài không xếp vừa một hàng nếu hiện cả
+    // summary), nhưng title/summary đầy đủ vẫn phải tới được người dùng — qua
+    // tooltip. Canh cả hai: số thứ tự đúng, và không bài nào mất chữ.
+    expect([...items].map(b => b.querySelector('.lesson-nav__num')?.textContent))
+      .toEqual(LESSON_LIST.map(l => String(l.order)))
+    for (const [i, b] of [...items].entries()) {
+      const l = LESSON_LIST[i]!
+      expect(b.getAttribute('title'), `${l.id} mất title/summary trong tooltip`)
+        .toBe(`${l.title}\n${l.summary}`)
+    }
   })
 
   it('bấm vào một bài gọi loadLesson với đúng id', () => {
@@ -38,7 +46,7 @@ describe('LessonNav', () => {
     const active = items.filter(b => b.classList.contains('lesson-nav__item--active'))
     expect(active).toHaveLength(1)
     expect(active[0]!.getAttribute('aria-current')).toBe('true')
-    expect(active[0]!.textContent).toContain(LESSON_LIST[2]!.title)
+    expect(active[0]!.getAttribute('title')).toContain(LESSON_LIST[2]!.title)
   })
 
   it('bấm vào một bài (qua store thật) đưa stepIndex về 0', () => {
