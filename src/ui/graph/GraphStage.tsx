@@ -7,31 +7,35 @@ import { LeftoverNotice } from './LeftoverNotice'
 import type { ReactFlowGraph } from './toReactFlow'
 import './graph-stage.css'
 
-/** Chữ trong backtick in bằng font mã — cùng quy ước với NarrationPanel. */
+/** Text inside backticks renders in monospace — same convention as NarrationPanel. */
 function renderText(text: string): React.ReactNode[] {
-  return text.split('`').map((phần, i) =>
+  return text.split('`').map((part, i) =>
     i % 2 === 1
-      ? <code key={i} className="k-stage__code">{phần}</code>
-      : <span key={i}>{phần}</span>,
+      ? <code key={i} className="k-stage__code">{part}</code>
+      : <span key={i}>{part}</span>,
   )
 }
 
 /**
- * Đồ thị + mọi thứ cần để THEO DÕI nó, gom vào một chỗ.
+ * The graph + everything needed to FOLLOW it, gathered in one place.
  *
- * Bố cục cũ bắt mắt chạy bốn góc: code bên trái, đồ thị ở giữa, giải thích và
- * console bên phải, thanh kéo dưới đáy. Muốn biết "đang xảy ra gì" phải liếc
- * sang phải; muốn tua phải rê xuống đáy; `println` chỉ hiện ở panel bên cạnh
- * nên nhìn đồ thị không biết node nào in. Bốn vùng cho một mạch suy nghĩ.
+ * The old layout made the eye run to four corners: code on the left, graph in
+ * the middle, explanation and console on the right, scrubber at the bottom.
+ * Wanting to know "what's happening" meant glancing right; wanting to scrub
+ * meant dragging down to the bottom; `println` only showed up in the side
+ * panel, so looking at the graph you couldn't tell which node printed. Four
+ * zones for one train of thought.
  *
- * Ở đây: câu diễn giải của bước đang xem nằm NGAY DƯỚI đồ thị, nút tua nằm
- * cạnh nó, `println` hiện trên chính node đã in (xem JobNode). Bảng console và
- * thanh timeline đầy đủ trở thành thứ mở ra khi cần đào sâu, không phải thứ
- * phải nhìn để hiểu chuyện gì đang xảy ra.
+ * Here: the narration for the step being viewed sits RIGHT BELOW the graph,
+ * the scrub buttons sit next to it, `println` shows up right on the node that
+ * printed it (see JobNode). The console panel and the full timeline scrubber
+ * become things you open when you need to dig deeper, not things you have to
+ * look at to understand what's happening.
  *
- * Tua bằng nút ở đây nhảy theo MỐC CÓ DIỄN GIẢI, không phải từng event: hơn
- * nửa số event là hạ tầng (`THREAD_STATE`, `JOB_STATE`) và dừng ở đó thì màn
- * hình không đổi gì. Thanh kéo trong bảng gỡ lỗi vẫn đi từng event một.
+ * Scrubbing with the buttons here jumps by NARRATED STEP, not by individual
+ * event: more than half the events are infrastructure (`THREAD_STATE`,
+ * `JOB_STATE`), and stopping there leaves the screen unchanged. The scrubber
+ * in the debug panel still moves one event at a time.
  */
 export function GraphStage({
   graph, narration, stepIndex, setStep, total, debugOpen, toggleDebug, events, source,
@@ -46,32 +50,32 @@ export function GraphStage({
   events: readonly Event[]
   source: string
 }) {
-  const đãTới = useMemo(
+  const reached = useMemo(
     () => narration.filter(l => l.index < stepIndex),
     [narration, stepIndex],
   )
-  const hiệnTại = đãTới.length > 0 ? đãTới[đãTới.length - 1]! : null
-  const sốMốc = narration.length
-  const mốcHiệnTại = đãTới.length
+  const current = reached.length > 0 ? reached[reached.length - 1]! : null
+  const totalSteps = narration.length
+  const currentStep = reached.length
 
-  const mốcKế = useCallback(
+  const nextStep = useCallback(
     (cur: number) => {
-      const kế = narration.find(l => l.index >= cur)
-      return kế ? kế.index + 1 : total
+      const next = narration.find(l => l.index >= cur)
+      return next ? next.index + 1 : total
     },
     [narration, total],
   )
 
-  const { playing, play, pause } = usePlayback(stepIndex, setStep, total, mốcKế)
+  const { playing, play, pause } = usePlayback(stepIndex, setStep, total, nextStep)
 
-  const lùi = useCallback(() => {
-    const trước = narration.filter(l => l.index < stepIndex - 1)
-    setStep(trước.length > 0 ? trước[trước.length - 1]!.index + 1 : 0)
+  const stepBack = useCallback(() => {
+    const before = narration.filter(l => l.index < stepIndex - 1)
+    setStep(before.length > 0 ? before[before.length - 1]!.index + 1 : 0)
   }, [narration, stepIndex, setStep])
 
-  const tiến = useCallback(() => setStep(mốcKế(stepIndex)), [mốcKế, setStep, stepIndex])
+  const stepForward = useCallback(() => setStep(nextStep(stepIndex)), [nextStep, setStep, stepIndex])
 
-  const trống = total === 0
+  const empty = total === 0
 
   return (
     <div className="k-stage">
@@ -84,38 +88,39 @@ export function GraphStage({
         <div className="k-stage__controls">
           <button
             type="button" onClick={() => setStep(0)}
-            disabled={trống || stepIndex === 0} aria-label="Về đầu"
+            disabled={empty || stepIndex === 0} aria-label="Back to start"
           >⏮</button>
           <button
-            type="button" onClick={lùi}
-            disabled={trống || stepIndex === 0} aria-label="Mốc trước"
+            type="button" onClick={stepBack}
+            disabled={empty || stepIndex === 0} aria-label="Previous step"
           >◀</button>
           <button
             type="button" className="k-stage__play"
-            onClick={playing ? pause : play} disabled={trống}
-            // Tên KHÁC nút phát trong bảng gỡ lỗi, vì hai nút bước theo hai
-            // đơn vị khác nhau: ở đây là mốc có diễn giải, ở kia là từng event.
-            // Trùng tên thì cả trình đọc màn hình lẫn test đều không phân biệt được.
+            onClick={playing ? pause : play} disabled={empty}
+            // Name is DIFFERENT from the play button in the debug panel,
+            // because the two buttons step in different units: here it's a
+            // narrated step, there it's a single event. Same name and neither
+            // a screen reader nor a test can tell them apart.
             aria-pressed={playing}
-            aria-label={playing ? 'Tạm dừng phát theo mốc' : 'Phát theo mốc'}
+            aria-label={playing ? 'Pause step playback' : 'Play by step'}
           >{playing ? '⏸' : '▶'}</button>
           <button
-            type="button" onClick={tiến}
-            disabled={trống || stepIndex >= total} aria-label="Mốc sau"
+            type="button" onClick={stepForward}
+            disabled={empty || stepIndex >= total} aria-label="Next step"
           >▶|</button>
           <span className="k-stage__count" data-testid="stage-count">
-            {mốcHiệnTại}/{sốMốc}
+            {currentStep}/{totalSteps}
           </span>
-          <span className="k-stage__clock">{hiệnTại ? `${hiệnTại.t}ms` : '0ms'}</span>
+          <span className="k-stage__clock">{current ? `${current.t}ms` : '0ms'}</span>
         </div>
 
         <p
-          className={`k-stage__caption k-stage__caption--${hiệnTại?.tone ?? 'normal'}`}
+          className={`k-stage__caption k-stage__caption--${current?.tone ?? 'normal'}`}
           data-testid="stage-caption"
         >
-          {hiệnTại
-            ? renderText(hiệnTại.text)
-            : <span className="k-stage__hint">Bấm ▶ hoặc ▶| để chạy từng bước. Mỗi bước được giải thích ngay tại đây.</span>}
+          {current
+            ? renderText(current.text)
+            : <span className="k-stage__hint">Click ▶ or ▶| to step through. Each step is explained right here.</span>}
         </p>
 
         <button
@@ -124,7 +129,7 @@ export function GraphStage({
           onClick={toggleDebug}
           aria-pressed={debugOpen}
         >
-          {debugOpen ? 'Đóng bảng gỡ lỗi' : 'Gỡ lỗi sâu'}
+          {debugOpen ? 'Close debug panel' : 'Deep debug'}
         </button>
       </div>
     </div>

@@ -14,52 +14,54 @@ function dispatchLine(state: EditorState, line: number | null): EditorState {
 
 const DOC5 = 'line1\nline2\nline3\nline4\nline5'
 
-// Test thuần, không cần render React (brief task 9 step 2). Dựng EditorState
-// trần, dispatch effect, đọc decoration ra qua highlightedLine().
-describe('currentLineField — StateField tô dòng đang chạy', () => {
-  it('srcLine = 3 tô đúng dòng 3', () => {
+// Pure test, no React rendering needed (brief task 9 step 2). Builds a bare
+// EditorState, dispatches an effect, reads the decoration back via
+// highlightedLine().
+describe('currentLineField — StateField highlighting the running line', () => {
+  it('srcLine = 3 highlights exactly line 3', () => {
     const s = dispatchLine(stateWithDoc(DOC5), 3)
     expect(highlightedLine(s)).toBe(3)
   })
 
-  it('srcLine = null không tô gì', () => {
+  it('srcLine = null highlights nothing', () => {
     const s = dispatchLine(stateWithDoc(DOC5), null)
     expect(highlightedLine(s)).toBeNull()
   })
 
-  it('srcLine = 0 không tô, không ném', () => {
+  it("srcLine = 0 highlights nothing, doesn't throw", () => {
     expect(() => dispatchLine(stateWithDoc(DOC5), 0)).not.toThrow()
     const s = dispatchLine(stateWithDoc(DOC5), 0)
     expect(highlightedLine(s)).toBeNull()
   })
 
-  it('srcLine = 9999 (quá số dòng) không tô, không ném', () => {
+  it("srcLine = 9999 (past the line count) highlights nothing, doesn't throw", () => {
     expect(() => dispatchLine(stateWithDoc(DOC5), 9999)).not.toThrow()
     const s = dispatchLine(stateWithDoc(DOC5), 9999)
     expect(highlightedLine(s)).toBeNull()
   })
 
-  it('srcLine = 1 trên doc rỗng không ném', () => {
+  it("srcLine = 1 on an empty doc doesn't throw", () => {
     expect(() => dispatchLine(stateWithDoc(''), 1)).not.toThrow()
-    // Doc rỗng vẫn có đúng 1 dòng logic (dòng 1, nội dung rỗng) — CodeMirror
-    // coi đây là hợp lệ, không phải "quá số dòng".
+    // An empty doc still has exactly 1 logical line (line 1, empty content) —
+    // CodeMirror treats this as valid, not "past the line count".
     const s = dispatchLine(stateWithDoc(''), 1)
     expect(highlightedLine(s)).toBe(1)
   })
 
-  it('đổi từ dòng 3 sang dòng 5 thì dòng 3 hết tô', () => {
+  it('switching from line 3 to line 5 un-highlights line 3', () => {
     let s = dispatchLine(stateWithDoc(DOC5), 3)
     expect(highlightedLine(s)).toBe(3)
     s = dispatchLine(s, 5)
     expect(highlightedLine(s)).toBe(5)
   })
 
-  // Ba test dưới vượt 6 yêu cầu tối thiểu của brief — thêm để khoá đúng
-  // class CSS thật dùng để style, và khoá hành vi "docChanged không kèm
-  // effect mới" mà brief không liệt kê case riêng nhưng đoạn code mẫu
-  // (deco.map ngầm định) và hazard B2 trong prompt đều phụ thuộc vào.
+  // The three tests below go beyond the brief's minimum of 6 — added to lock
+  // down the actual CSS class used for styling, and to lock down the
+  // "docChanged without a new effect" behavior, which the brief doesn't list
+  // as a separate case but which both the sample code (the implicit
+  // deco.map) and hazard B2 in the prompt depend on.
 
-  it('decoration mang đúng class cm-current-line', () => {
+  it('decoration carries the correct cm-current-line class', () => {
     const s = dispatchLine(stateWithDoc(DOC5), 2)
     const deco = s.field(currentLineField)
     let sawClass = false
@@ -70,14 +72,14 @@ describe('currentLineField — StateField tô dòng đang chạy', () => {
     expect(sawClass).toBe(true)
   })
 
-  it('user gõ (docChanged) mà không kèm effect mới thì không ném, deco được map theo thay đổi', () => {
+  it("user typing (docChanged) without a new effect doesn't throw, decoration is mapped through the change", () => {
     let s = dispatchLine(stateWithDoc(DOC5), 3)
-    // Chèn một ký tự vào đầu doc — dòng 3 vẫn còn, chỉ dịch offset.
+    // Insert one character at the start of the doc — line 3 is still there, just shifted.
     s = s.update({ changes: { from: 0, insert: 'X' } }).state
     expect(highlightedLine(s)).toBe(3)
   })
 
-  it('user xoá sạch doc trong lúc đang tô thì deco map an toàn, không ném', () => {
+  it("user clearing the whole doc while it's highlighted maps the decoration safely, doesn't throw", () => {
     let s = dispatchLine(stateWithDoc(DOC5), 3)
     expect(() => {
       s = s.update({ changes: { from: 0, to: s.doc.length, insert: '' } }).state

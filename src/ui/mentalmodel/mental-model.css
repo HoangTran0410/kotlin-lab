@@ -4,8 +4,8 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   margin-bottom: 8px;
-  /* Cao nhất một nửa cột: phần chữ dài không được đẩy editor ra khỏi màn hình.
-     Đọc tới đâu cuộn tới đó, code vẫn luôn nhìn thấy được ở dưới. */
+  /* At most half the column: long text must never push the editor off
+     screen. Scroll as you read, the code stays visible below at all times. */
   display: flex;
   flex-direction: column;
   max-height: 46vh;

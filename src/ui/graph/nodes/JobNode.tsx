@@ -6,24 +6,28 @@ import { NodePorts } from './NodePorts'
 import '../graph.css'
 
 /**
- * Node lá (`launch`/`async`/... không có con). Accent TRÁI theo builder (màu
- * "đây là launch/async/..."), viền THEO STATE (màu "đang ở đâu trong vòng đời
- * job"), huy hiệu suspend khi job đang treo, tên job.
+ * A leaf node (`launch`/`async`/... with no children). LEFT accent by builder
+ * (the color meaning "this is a launch/async/..."), border BY STATE (the
+ * color meaning "where it is in the job lifecycle"), a suspend badge when the
+ * job is suspended, the job name.
  *
- * `unborn` (COROUTINE_CREATED của nó chưa xảy ra ở step đang xem — xem
- * nodeStyle.ts `phase()`): viền đứt + mờ hẳn (graph.css `--unborn`), và ẨN
- * TOÀN BỘ nội dung — kể cả tên, dù `data.name` đã có sẵn từ lúc compile (tên
- * là thuộc tính TĨNH của spec, không phụ thuộc step). Lộ tên sớm sẽ "tiết lộ
- * trước" nội dung của một bước tua chưa tới, đi ngược mục đích của bóng mờ.
+ * `unborn` (its COROUTINE_CREATED hasn't happened at the step being viewed —
+ * see nodeStyle.ts `phase()`): dashed border + fully faded (graph.css
+ * `--unborn`), and ALL content HIDDEN — including the name, even though
+ * `data.name` is already available at compile time (the name is a STATIC
+ * property of the spec, independent of step). Revealing the name early would
+ * "spoil" the content of a step the scrubber hasn't reached yet, defeating
+ * the point of the ghosting.
  */
 export function JobNode({ id, data }: NodeProps<FlowNode>) {
   const unborn = data.phase === 'unborn'
-  // Khoá tồn đọng B4 (xem toReactFlow.ts): data.cause đã được gác cổng ở tầng
-  // dữ liệu (null trừ khi state ∈ {Cancelling, Cancelled}), nhưng JobNode tự
-  // kiểm lại state ở ĐÂY — phòng thủ theo chiều sâu, không dựa hẳn vào upstream.
+  // Locks down backlog item B4 (see toReactFlow.ts): data.cause is already
+  // gated at the data layer (null unless state ∈ {Cancelling, Cancelled}),
+  // but JobNode re-checks state HERE too — defense in depth, not relying
+  // entirely on upstream.
   const showCause = data.cause !== null && (data.state === 'Cancelling' || data.state === 'Cancelled')
   const border = data.state ? stateBorder(data.state) : 'var(--fg-dim)'
-  const nhan = jobLabel({ id, builder: data.builder, name: data.name, varName: data.varName })
+  const label = jobLabel({ id, builder: data.builder, name: data.name, varName: data.varName })
 
   return (
     <div
@@ -32,12 +36,13 @@ export function JobNode({ id, data }: NodeProps<FlowNode>) {
         unborn ? 'k-job-node--unborn' : '',
         data.isCurrent && !unborn ? 'k-job-node--current' : '',
       ].filter(Boolean).join(' ')}
-      // Bốn longhand tường minh, KHÔNG dùng shorthand `borderColor` cùng lúc với
-      // `borderLeftColor`: khi trộn chung trong MỘT style object, một số engine
-      // CSSOM (đo được ở jsdom, dùng cho test) coi bốn cạnh "không đồng nhất"
-      // và bỏ hẳn phần còn lại thay vì tách thành bốn longhand — viền theo
-      // state biến mất khỏi `style` attribute. Viết tường minh tránh phụ thuộc
-      // hành vi ngầm đó.
+      // Four explicit longhands, NOT the `borderColor` shorthand combined with
+      // `borderLeftColor`: when mixed together in ONE style object, some
+      // CSSOM engines (measured in jsdom, used for tests) treat the four
+      // sides as "not uniform" and drop the rest entirely instead of
+      // splitting into four longhands — the state border disappears from the
+      // `style` attribute. Writing it out explicitly avoids depending on that
+      // implicit behavior.
       style={{
         borderTopColor: border, borderRightColor: border, borderBottomColor: border,
         borderLeftColor: builderAccent(data.builder),
@@ -49,35 +54,62 @@ export function JobNode({ id, data }: NodeProps<FlowNode>) {
       {!unborn && (
         <>
           <span className="k-job-node__head">
-            <span className="k-job-node__name">{nhan}</span>
-            {/* Builder vẫn phải đọc được khi nhãn là tên biến: `job` không nói
-                cho ai biết đó là launch hay async, mà khác biệt đó là bài học. */}
-            {nhan !== data.builder && (
+            <span className="k-job-node__name">{label}</span>
+            {/* Builder must still be readable when the label is a variable
+                name: `job` doesn't tell anyone whether it's launch or async,
+                and that difference is the lesson. */}
+            {label !== data.builder && (
               <span className="k-job-node__builder">{data.builder}</span>
             )}
-            {/* Id luôn hiện, kể cả khi đã có CoroutineName. Ba `launch` anh em
-                mà cùng hiện đúng chữ "launch" thì không chỉ được vào cái nào —
-                và phần diễn giải bên dưới đồ thị gọi tên job theo đúng id này,
-                nên bỏ nó đi là cắt đứt cầu nối giữa câu chữ và hình vẽ. */}
+            {/* Id always shown, even once a CoroutineName exists. Three
+                sibling `launch`es all showing the same word "launch" gives no
+                way to tell which is which — and the narration below the
+                graph refers to jobs by exactly this id, so dropping it cuts
+                the bridge between the text and the drawing. */}
             <span className="k-job-node__id">{id}</span>
           </span>
-          {data.suspendReason !== null && <span className="k-job-node__badge">{data.suspendReason}</span>}
-          {/* Message của exception, không chỉ kiểu của nó. `RuntimeException`
-              trần không debug được gì — hai chỗ ném khác nhau trông y hệt nhau.
-              Message chỉ có trong EXCEPTION_THROWN, nên trước đây muốn đọc nó
-              phải tua trúng đúng MỘT event. Job bị huỷ LÂY không có `loi` của
-              riêng nó nên vẫn chỉ hiện kiểu — đúng, nó không ném gì cả. */}
+          <span className="k-job-node__row">
+            {data.suspendReason !== null && <span className="k-job-node__badge">{data.suspendReason}</span>}
+            {/* Which thread this coroutine is on, or which pool it belongs to
+                while it holds none. Before this the whole dispatcher dimension
+                was invisible on the graph — `threadId` was rendered nowhere in
+                the UI at all, so `withContext(Dispatchers.IO)` looked like
+                nothing happened.
+
+                Suspended shows the POOL greyed out, not a blank: "it belongs
+                to IO but is holding no thread right now" is precisely the
+                lesson, and an empty space says nothing at all. */}
+            {data.dispatcher !== null && (
+              <span
+                className={`k-job-node__thread k-job-node__thread--${data.dispatcher}${
+                  data.threadId === null ? ' k-job-node__thread--idle' : ''}`}
+                title={data.threadId !== null
+                  ? `running on thread ${data.threadId}`
+                  : `belongs to ${data.dispatcher}, holding no thread right now`}
+              >
+                {data.threadId ?? `${data.dispatcher} · —`}
+              </span>
+            )}
+          </span>
+          {/* The exception's message, not just its type. A bare
+              `RuntimeException` isn't debuggable — two different throw sites
+              look identical. The message only exists on EXCEPTION_THROWN, so
+              previously reading it meant scrubbing to hit exactly ONE event.
+              A job cancelled by PROPAGATION has no `failure` of its own, so it
+              still only shows the type — correctly, since it didn't throw
+              anything. */}
           {showCause && (
-            <span className="k-job-node__cause" title={data.loi ? `${data.loi.exType}: ${data.loi.message}` : data.cause ?? ''}>
+            <span className="k-job-node__cause" title={data.failure ? `${data.failure.exType}: ${data.failure.message}` : data.cause ?? ''}>
               {data.cause}
-              {data.loi && data.loi.message !== '' && (
-                <span className="k-job-node__msg">: {data.loi.message}</span>
+              {data.failure && data.failure.message !== '' && (
+                <span className="k-job-node__msg">: {data.failure.message}</span>
               )}
             </span>
           )}
-          {/* println hiện NGAY TRÊN node đã in nó. Trước đây chữ chỉ chạy ra
-              panel console bên cạnh, nên nhìn đồ thị không biết node nào in —
-              phải liếc sang chỗ khác rồi tự ghép lại. */}
+          {/* println shows up RIGHT ON the node that printed it. Previously
+              the text only went to the side console panel, so looking at the
+              graph you couldn't tell which node printed — you had to glance
+              elsewhere and piece it together yourself. */}
           {data.lastPrint !== null && (
             <span className="k-job-node__print" title={data.lastPrint}>
               <span className="k-job-node__print-mark">»</span>

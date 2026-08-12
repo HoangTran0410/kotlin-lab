@@ -7,95 +7,102 @@ import { lessonSource } from '../../src/lessons/registry'
 import { openDebug } from './helpers/openDebug'
 
 /**
- * "Nối dây" theo đúng bài học Task 9/13/16: usePlayback.ts được test kỹ ở
- * tầng hook (playback.test.tsx) bằng một store giả tự chế — không thể bắt
- * lỗi kiểu "App quên mount PlaybackControls" hay "App truyền nhầm setStep của
- * một store khác". Test này ghép <App /> thật, bấm nút DOM thật, và xác nhận
- * store Zustand thật (useLabStore) di chuyển theo thời gian giả.
+ * "Wiring" test following the lesson of Task 9/13/16: usePlayback.ts is
+ * tested thoroughly at the hook layer (playback.test.tsx) using a homemade
+ * fake store — it can't catch bugs like "App forgot to mount
+ * PlaybackControls" or "App passed the wrong store's setStep by mistake".
+ * This test assembles the real <App />, clicks real DOM buttons, and confirms
+ * the real Zustand store (useLabStore) moves along with fake time.
  */
-describe('nối dây App -> PlaybackControls — play/pause thật lái store thật', () => {
+describe('wiring App -> PlaybackControls — real play/pause drives the real store', () => {
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })
 
-  it('bấm Phát tiến stepIndex thật của store theo thời gian; bấm Tạm dừng thì đứng', async () => {
+  it("clicking Play advances the store's real stepIndex over time; clicking Pause stops it", async () => {
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource(lessonSource('supervisor')!)
     render(<App />)
     openDebug()
-    // useLayout (Task 15) chạy ELK bất đồng bộ qua Promise thật — Promise
-    // không bị @sinonjs/fake-timers can thiệp (chỉ macrotask timer bị giả),
-    // nên `.then()` của nó resolve như MICROTASK bình thường. `act(fn)` ĐỒNG
-    // BỘ không đợi microtask xả hết trước khi trả về — phải `await act(async
-    // () => {...})` (xem các advanceTimersByTime bên dưới) để React chờ hết
-    // continuation bất đồng bộ trước khi coi act() đã xong, nếu không setState
-    // của useLayout tới muộn NGOÀI act() và React cảnh báo "not wrapped in act".
+    // useLayout (Task 15) runs ELK asynchronously through a real Promise —
+    // Promises aren't intercepted by @sinonjs/fake-timers (only macrotask
+    // timers are faked), so its `.then()` resolves as a normal MICROTASK.
+    // SYNCHRONOUS `act(fn)` doesn't wait for microtasks to drain before
+    // returning — must `await act(async () => {...})` (see the
+    // advanceTimersByTime calls below) so React waits out the async
+    // continuation before considering act() done, otherwise useLayout's
+    // setState arrives late OUTSIDE act() and React warns "not wrapped in
+    // act".
     await act(async () => {})
 
     const total = useLabStore.getState().compiled.events.length
-    expect(total, 'fixture supervisor cần đủ event để test có ý nghĩa').toBeGreaterThan(3)
+    expect(total, 'fixture supervisor needs enough events for the test to be meaningful').toBeGreaterThan(3)
 
-    const playBtn = screen.getByRole('button', { name: 'Phát' })
+    const playBtn = screen.getByRole('button', { name: 'Play' })
     fireEvent.click(playBtn)
-    expect(screen.getByRole('button', { name: 'Tạm dừng' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeInTheDocument()
 
-    await act(async () => { vi.advanceTimersByTime(1040) }) // tốc độ mặc định 1×, dư một khung rAF
+    await act(async () => { vi.advanceTimersByTime(1040) }) // default speed 1×, plus one extra rAF frame
     expect(useLabStore.getState().stepIndex).toBe(1)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Tạm dừng' }))
-    expect(screen.getByRole('button', { name: 'Phát' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Pause' }))
+    expect(screen.getByRole('button', { name: 'Play' })).toBeInTheDocument()
 
     await act(async () => { vi.advanceTimersByTime(5000) })
-    expect(useLabStore.getState().stepIndex).toBe(1) // đứng im sau khi tạm dừng
+    expect(useLabStore.getState().stepIndex).toBe(1) // stays put after pausing
   })
 
-  it('kéo Timeline trong lúc đang phát thì play tự dừng — không giằng co với ngón tay', async () => {
+  it("dragging the Timeline while playing stops playback automatically — no fighting with the user's finger", async () => {
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource(lessonSource('supervisor')!)
     render(<App />)
     openDebug()
-    // useLayout (Task 15) chạy ELK bất đồng bộ qua Promise thật — Promise
-    // không bị @sinonjs/fake-timers can thiệp (chỉ macrotask timer bị giả),
-    // nên `.then()` của nó resolve như MICROTASK bình thường. `act(fn)` ĐỒNG
-    // BỘ không đợi microtask xả hết trước khi trả về — phải `await act(async
-    // () => {...})` (xem các advanceTimersByTime bên dưới) để React chờ hết
-    // continuation bất đồng bộ trước khi coi act() đã xong, nếu không setState
-    // của useLayout tới muộn NGOÀI act() và React cảnh báo "not wrapped in act".
+    // useLayout (Task 15) runs ELK asynchronously through a real Promise —
+    // Promises aren't intercepted by @sinonjs/fake-timers (only macrotask
+    // timers are faked), so its `.then()` resolves as a normal MICROTASK.
+    // SYNCHRONOUS `act(fn)` doesn't wait for microtasks to drain before
+    // returning — must `await act(async () => {...})` (see the
+    // advanceTimersByTime calls below) so React waits out the async
+    // continuation before considering act() done, otherwise useLayout's
+    // setState arrives late OUTSIDE act() and React warns "not wrapped in
+    // act".
     await act(async () => {})
 
-    fireEvent.click(screen.getByRole('button', { name: 'Phát' }))
-    expect(screen.getByRole('button', { name: 'Tạm dừng' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }))
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeInTheDocument()
 
-    const range = screen.getByLabelText('Thanh kéo dòng thời gian') as HTMLInputElement
+    const range = screen.getByLabelText('Timeline scrubber') as HTMLInputElement
     fireEvent.change(range, { target: { value: '20' } })
     expect(useLabStore.getState().stepIndex).toBe(20)
 
-    // Nút phải quay lại "Phát" — play đã dừng vì user tự kéo.
-    expect(screen.getByRole('button', { name: 'Phát' })).toBeInTheDocument()
+    // The button must go back to "Play" — playback stopped because the user dragged.
+    expect(screen.getByRole('button', { name: 'Play' })).toBeInTheDocument()
 
     await act(async () => { vi.advanceTimersByTime(5000) })
-    expect(useLabStore.getState().stepIndex).toBe(20) // không tự tiến tiếp
+    expect(useLabStore.getState().stepIndex).toBe(20) // doesn't keep auto-advancing
   })
 
-  it('bước Tiến/Lùi thủ công gọi đúng setStep của store thật', async () => {
+  it("manual Step forward/back calls the real store's setStep correctly", async () => {
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource(lessonSource('supervisor')!)
     render(<App />)
     openDebug()
-    // useLayout (Task 15) chạy ELK bất đồng bộ qua Promise thật — Promise
-    // không bị @sinonjs/fake-timers can thiệp (chỉ macrotask timer bị giả),
-    // nên `.then()` của nó resolve như MICROTASK bình thường. `act(fn)` ĐỒNG
-    // BỘ không đợi microtask xả hết trước khi trả về — phải `await act(async
-    // () => {...})` (xem các advanceTimersByTime bên dưới) để React chờ hết
-    // continuation bất đồng bộ trước khi coi act() đã xong, nếu không setState
-    // của useLayout tới muộn NGOÀI act() và React cảnh báo "not wrapped in act".
+    // useLayout (Task 15) runs ELK asynchronously through a real Promise —
+    // Promises aren't intercepted by @sinonjs/fake-timers (only macrotask
+    // timers are faked), so its `.then()` resolves as a normal MICROTASK.
+    // SYNCHRONOUS `act(fn)` doesn't wait for microtasks to drain before
+    // returning — must `await act(async () => {...})` (see the
+    // advanceTimersByTime calls below) so React waits out the async
+    // continuation before considering act() done, otherwise useLayout's
+    // setState arrives late OUTSIDE act() and React warns "not wrapped in
+    // act".
     await act(async () => {})
     act(() => { useLabStore.getState().setStep(5) })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Tiến một bước' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Step forward' }))
     expect(useLabStore.getState().stepIndex).toBe(6)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Lùi một bước' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Lùi một bước' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Step back' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Step back' }))
     expect(useLabStore.getState().stepIndex).toBe(4)
   })
 })

@@ -7,113 +7,116 @@ import { lessonSource } from '../../src/lessons/registry'
 import { MAX_LEFT, MIN_LEFT } from '../../src/ui/layout/usePanelWidths'
 
 /**
- * jsdom KHÔNG cài `PointerEvent`, nên `fireEvent.pointerMove(el, { clientX })`
- * tạo ra một Event trơn và `clientX` không bao giờ tới được handler (đã đo:
- * `clientX = undefined`). Dựng `MouseEvent` — jsdom có, và nó mang clientX
- * thật — rồi phát dưới đúng tên sự kiện mà React đang nghe.
+ * jsdom does NOT install `PointerEvent`, so `fireEvent.pointerMove(el, { clientX })`
+ * produces a plain Event and `clientX` never reaches the handler (measured:
+ * `clientX = undefined`). Build a `MouseEvent` instead — jsdom has it, and it
+ * carries a real clientX — then fire it under the exact event name React is
+ * listening for.
  */
-function keo(el: Element, ten: string, clientX: number): void {
-  // Bọc `act`: `dispatchEvent` trần KHÔNG được React gói lại như `fireEvent`,
-  // nên setState trong handler chưa được flush trước lúc assert — đo được là
-  // bề rộng vẫn ở giá trị cũ dù handler đã chạy đúng.
-  act(() => { el.dispatchEvent(new MouseEvent(ten, { clientX, bubbles: true })) })
+function drag(el: Element, name: string, clientX: number): void {
+  // Wrapped in `act`: a raw `dispatchEvent` is NOT wrapped by React the way
+  // `fireEvent` is, so setState inside the handler hasn't been flushed before
+  // the assertion — measured as: the width still holds the old value even
+  // though the handler ran correctly.
+  act(() => { el.dispatchEvent(new MouseEvent(name, { clientX, bubbles: true })) })
 }
 
-const beRongCot = (): number => {
+const columnWidth = (): number => {
   const main = document.querySelector('.shell__main') as HTMLElement
   return parseInt(main.style.getPropertyValue('--w-left'), 10)
 }
 
-describe('kéo giãn cột', () => {
+describe('dragging columns', () => {
   beforeEach(() => {
     localStorage.clear()
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource(lessonSource('supervisor')!)
   })
 
-  it('kéo thanh giữa làm cột mã rộng ra đúng khoảng đã kéo', () => {
+  it('dragging the middle handle widens the code column by exactly the dragged amount', () => {
     render(<App />)
-    const thanh = screen.getByTestId('splitter-Bề rộng cột mã')
-    const truoc = beRongCot()
+    const handle = screen.getByTestId('splitter-Code column width')
+    const before = columnWidth()
 
-    keo(thanh, 'pointerdown', 500)
-    keo(thanh, 'pointermove', 620)
-    keo(thanh, 'pointerup', 620)
+    drag(handle, 'pointerdown', 500)
+    drag(handle, 'pointermove', 620)
+    drag(handle, 'pointerup', 620)
 
-    expect(beRongCot()).toBe(truoc + 120)
+    expect(columnWidth()).toBe(before + 120)
   })
 
-  it('kéo quá mức bị kẹp vào biên, không cho cột biến mất hay nuốt cả màn hình', () => {
+  it('dragging past the limit clamps at the bound, never lets the column vanish or swallow the whole screen', () => {
     render(<App />)
-    const thanh = screen.getByTestId('splitter-Bề rộng cột mã')
+    const handle = screen.getByTestId('splitter-Code column width')
 
-    keo(thanh, 'pointerdown', 500)
-    keo(thanh, 'pointermove', -5000)
-    expect(beRongCot()).toBe(MIN_LEFT)
-    keo(thanh, 'pointermove', 5000)
-    expect(beRongCot()).toBe(MAX_LEFT)
-    keo(thanh, 'pointerup', 5000)
+    drag(handle, 'pointerdown', 500)
+    drag(handle, 'pointermove', -5000)
+    expect(columnWidth()).toBe(MIN_LEFT)
+    drag(handle, 'pointermove', 5000)
+    expect(columnWidth()).toBe(MAX_LEFT)
+    drag(handle, 'pointerup', 5000)
   })
 
-  it('mũi tên trái/phải cũng kéo được — không bỏ rơi người dùng bàn phím', () => {
+  it('left/right arrow keys drag it too — keyboard users are not left behind', () => {
     render(<App />)
-    const thanh = screen.getByTestId('splitter-Bề rộng cột mã')
-    const truoc = beRongCot()
-    fireEvent.keyDown(thanh, { key: 'ArrowRight' })
-    expect(beRongCot()).toBeGreaterThan(truoc)
-    fireEvent.keyDown(thanh, { key: 'ArrowLeft' })
-    expect(beRongCot()).toBe(truoc)
+    const handle = screen.getByTestId('splitter-Code column width')
+    const before = columnWidth()
+    fireEvent.keyDown(handle, { key: 'ArrowRight' })
+    expect(columnWidth()).toBeGreaterThan(before)
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' })
+    expect(columnWidth()).toBe(before)
   })
 
-  it('nhớ bề rộng qua lần mở sau', () => {
+  it('remembers the width across the next session', () => {
     const { unmount } = render(<App />)
-    const thanh = screen.getByTestId('splitter-Bề rộng cột mã')
-    fireEvent.keyDown(thanh, { key: 'ArrowRight', shiftKey: true })
-    const daKeo = beRongCot()
+    const handle = screen.getByTestId('splitter-Code column width')
+    fireEvent.keyDown(handle, { key: 'ArrowRight', shiftKey: true })
+    const dragged = columnWidth()
     unmount()
 
     render(<App />)
-    expect(beRongCot(), 'mở lại mà bề rộng về mặc định').toBe(daKeo)
+    expect(columnWidth(), 'reopening reset the width to the default').toBe(dragged)
   })
 
-  it('"Bố cục mặc định" đưa về mức ban đầu', () => {
+  it('"Reset layout" returns to the initial size', () => {
     render(<App />)
-    const thanh = screen.getByTestId('splitter-Bề rộng cột mã')
-    fireEvent.keyDown(thanh, { key: 'ArrowRight', shiftKey: true })
-    const daKeo = beRongCot()
-    fireEvent.click(screen.getByRole('button', { name: 'Bố cục mặc định' }))
-    expect(beRongCot()).toBeLessThan(daKeo)
+    const handle = screen.getByTestId('splitter-Code column width')
+    fireEvent.keyDown(handle, { key: 'ArrowRight', shiftKey: true })
+    const dragged = columnWidth()
+    fireEvent.click(screen.getByRole('button', { name: 'Reset layout' }))
+    expect(columnWidth()).toBeLessThan(dragged)
   })
 
-  it('thanh kéo cột gỡ lỗi chỉ có mặt khi bảng gỡ lỗi đang mở', () => {
+  it('the debug column handle only exists while the debug panel is open', () => {
     render(<App />)
-    expect(screen.queryByTestId('splitter-Bề rộng cột gỡ lỗi')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Gỡ lỗi sâu' }))
-    expect(screen.getByTestId('splitter-Bề rộng cột gỡ lỗi')).toBeInTheDocument()
+    expect(screen.queryByTestId('splitter-Debug column width')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Deep debug' }))
+    expect(screen.getByTestId('splitter-Debug column width')).toBeInTheDocument()
   })
 
-  it('event kéo thiếu toạ độ KHÔNG làm bề rộng thành NaN', () => {
-    // Chính là ca đã lộ ra khi viết test này: thiếu chặn thì `--w-left: NaNpx`
-    // và cả lưới sụp.
+  it('a drag event missing coordinates does NOT turn the width into NaN', () => {
+    // This is exactly the case that surfaced while writing this test: without
+    // the guard, `--w-left: NaNpx` collapses the whole grid.
     //
-    // Phạm vi canh gác, đã đo bằng cách phá thật: Splitter có HAI chỗ chặn
-    // (bỏ qua pointerdown thiếu toạ độ, và `kep` trả về giá trị cũ khi gặp
-    // NaN), mỗi chỗ TỰ NÓ đã đủ — gỡ một chỗ thì ca này vẫn xanh, gỡ cả hai
-    // mới đỏ. Vậy nó canh TÍNH CHẤT "bề rộng luôn là số hữu hạn", không phải
-    // sự tồn tại của một dòng cụ thể. Ghi rõ ở đây để người sau không tưởng
-    // nó bảo vệ nhiều hơn thực tế.
+    // Scope of this guard, measured by actually breaking it: Splitter has TWO
+    // guard points (skipping pointerdown with no coordinates, and `clamp`
+    // returning the old value on NaN), and EITHER ONE alone is enough — remove
+    // one and this case still stays green, remove both and it goes red. So
+    // this guards the PROPERTY "width is always a finite number", not the
+    // existence of one specific line. Noted here explicitly so nobody later
+    // assumes it protects more than it actually does.
     render(<App />)
-    const thanh = screen.getByTestId('splitter-Bề rộng cột mã')
-    const truoc = beRongCot()
-    fireEvent.pointerDown(thanh, { pointerId: 1 })
-    fireEvent.pointerMove(thanh, { pointerId: 1 })
-    expect(Number.isFinite(beRongCot())).toBe(true)
-    expect(beRongCot()).toBe(truoc)
+    const handle = screen.getByTestId('splitter-Code column width')
+    const before = columnWidth()
+    fireEvent.pointerDown(handle, { pointerId: 1 })
+    fireEvent.pointerMove(handle, { pointerId: 1 })
+    expect(Number.isFinite(columnWidth())).toBe(true)
+    expect(columnWidth()).toBe(before)
   })
 
-  it('dữ liệu hỏng trong localStorage không làm vỡ app', () => {
-    localStorage.setItem('kcl.panels.v1', 'không phải json')
+  it('corrupted localStorage data does not break the app', () => {
+    localStorage.setItem('kcl.panels.v1', 'not json')
     render(<App />)
-    expect(beRongCot()).toBeGreaterThanOrEqual(MIN_LEFT)
+    expect(columnWidth()).toBeGreaterThanOrEqual(MIN_LEFT)
   })
 })

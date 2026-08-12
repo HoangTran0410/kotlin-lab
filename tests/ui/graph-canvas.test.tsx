@@ -4,36 +4,40 @@ import { GraphCanvas } from '../../src/ui/graph/GraphCanvas'
 import type { FlowNode } from '../../src/ui/graph/toReactFlow'
 
 /**
- * GraphCanvas KHÔNG có test riêng nào trong brief Task 13 (brief chỉ đòi 6
- * test render node lẻ, "không mount cả React Flow") — nhưng đây chính là
- * tầng DUY NHẤT thật sự mount `<ReactFlow>`, và là chỗ một lỗi "tính lại vị
- * trí theo step" (điều Quyết định 2, Task 11/12 cấm) có thể lọt vào mà không
- * ai bắt được, vì `toReactFlow` (Task 12) chỉ khoá bất biến ở ĐẦU RA của
- * chính nó — không khoá được việc tầng SAU (đây) có tôn trọng đầu ra đó hay
- * không. Test dưới đây mount GraphCanvas THẬT để khoá đúng chỗ đó.
+ * GraphCanvas has no dedicated test in the Task 13 brief (the brief only
+ * asks for 6 tests rendering individual nodes, "without mounting the whole
+ * React Flow") — but this is the ONLY layer that actually mounts
+ * `<ReactFlow>`, and it's where a "recompute position per step" bug (the
+ * thing Decision 2, Task 11/12, forbids) could slip in unnoticed, because
+ * `toReactFlow` (Task 12) only locks down the invariant at its OWN OUTPUT —
+ * it can't lock down whether the layer AFTER it (here) respects that output
+ * or not. The tests below mount GraphCanvas FOR REAL to lock down exactly
+ * that spot.
  *
- * Không kiểm màu/nét của cạnh ở đây: @xyflow/react đo vị trí handle bằng
- * getBoundingClientRect thật, jsdom không layout nên handle bounds không bao
- * giờ khởi tạo và cạnh không render — đúng ranh giới mà tests/ui/setup.ts đã
- * ghi chú (layout thật kiểm ở Task 20, Playwright). `edgeStyle()` bản thân nó
- * đã được khoá đầy đủ, thuần, ở tests/ui/edge-style.test.ts.
+ * Edge color/stroke isn't checked here: @xyflow/react measures handle
+ * position with a real getBoundingClientRect, jsdom doesn't do layout so
+ * handle bounds never initialize and edges don't render — exactly the
+ * boundary tests/ui/setup.ts already notes (real layout is checked in Task
+ * 20, Playwright). `edgeStyle()` itself is already fully, purely locked down
+ * in tests/ui/edge-style.test.ts.
  */
 function job(id: string, x: number, y: number): FlowNode {
   return {
     id, type: 'job', position: { x, y }, width: 200, height: 68,
     data: {
       name: id, builder: 'launch', isSupervisor: false, phase: 'live',
-      state: 'Active', cause: null, varName: null, suspendReason: null, lastPrint: null, printCount: 0, loi: null, isCurrent: false,
+      state: 'Active', cause: null, varName: null, suspendReason: null, lastPrint: null, printCount: 0, failure: null, dispatcher: 'Main', threadId: null, isCurrent: false,
     },
   }
 }
 
-describe('GraphCanvas (Task 13) — nơi React Flow thật được mount', () => {
-  it('vị trí render RA ĐÚNG position được truyền vào — không tính lại (khoá Quyết định 2 ở tầng mount)', () => {
+describe('GraphCanvas (Task 13) — where the real React Flow gets mounted', () => {
+  it('rendered position MATCHES the position passed in — no recomputation (locks down Decision 2 at the mount layer)', () => {
     const nodes = [job('a', 10, 20), job('b', 240, 88)]
-    // Cạnh KHÔNG rỗng — nếu để rỗng, một phép biến đổi position ẩn phụ thuộc
-    // edges.length (như sabotage đã đo ở trên) sẽ vô tình ra 0 và test này
-    // xanh giả, không thật sự canh được điều nó tuyên bố canh.
+    // Edges are NOT empty — if left empty, a hidden position transform that
+    // depends on edges.length (as sabotage measured above) would accidentally
+    // come out as 0 and this test would go green for the wrong reason,
+    // without actually locking down what it claims to.
     const edges = [
       { id: 'e1', source: 'a', target: 'b', data: { kind: 'child' as const, blocked: false, opacity: 1 } },
     ]
@@ -45,7 +49,7 @@ describe('GraphCanvas (Task 13) — nơi React Flow thật được mount', () =
     expect(b?.style.transform).toBe('translate(240px,88px)')
   })
 
-  it('vị trí không đổi giữa hai lần render với cùng input — không có phép biến đổi ẩn theo edges', () => {
+  it("position doesn't change between two renders with the same input — no hidden transform keyed on edges", () => {
     const nodes = [job('a', 5, 5)]
     const { container: c1 } = render(<GraphCanvas nodes={nodes} edges={[]} />)
     const { container: c2 } = render(
@@ -63,7 +67,7 @@ describe('GraphCanvas (Task 13) — nơi React Flow thật được mount', () =
     expect(t2).toBe(t1)
   })
 
-  it('node type "job" render bằng JobNode, "scope" render bằng ScopeNode — đúng nodeTypes', () => {
+  it('node type "job" renders via JobNode, "scope" renders via ScopeNode — correct nodeTypes', () => {
     const scope: FlowNode = { ...job('s', 0, 0), type: 'scope' }
     const { container } = render(<GraphCanvas nodes={[job('a', 0, 0), scope]} edges={[]} />)
 

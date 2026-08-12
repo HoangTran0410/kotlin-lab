@@ -9,12 +9,13 @@ export interface LessonMeta {
 const here = dirname(fileURLToPath(import.meta.url))
 
 /**
- * Suy từ THƯ MỤC, không phải từ một mảng viết tay.
+ * Derived from the DIRECTORY, not from a hand-written array.
  *
- * Danh sách cứng trước đây bị chép ra bốn chỗ (file này + ba file test), nên
- * thêm một bài là phải nhớ sửa cả bốn — và quên chỗ nào thì bài mới lặng lẽ
- * không được kiểm. Bản browser (`registry.ts`) vốn đã tự phát hiện qua
- * `import.meta.glob`; giờ hai đường cùng suy từ một nguồn.
+ * The hard-coded list used to be copied out to four places (this file plus
+ * three test files), so adding a lesson meant remembering to fix all four — and
+ * whichever one got missed left the new lesson silently untested. The browser
+ * version (`registry.ts`) already discovers lessons automatically via
+ * `import.meta.glob`; now both paths derive from the same source.
  */
 export const LESSONS: LessonMeta[] = readdirSync(here, { withFileTypes: true })
   .filter(d => d.isDirectory())

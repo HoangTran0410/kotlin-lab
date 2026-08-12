@@ -1,28 +1,32 @@
-## Mô hình tư duy
+## Mental model
 
-Nửa còn lại của câu ở bài *Job Tree*: **failure đi LÊN**.
+The other half of the sentence from the *Job Tree* lesson: **failure goes UP**.
 
-Một con fail → cha (Job thường) coi như chính nó hỏng → và vì nó hỏng, nó **huỷ mọi
-con còn lại** của mình. Nên đường đi thật sự là một chữ V: lên một nấc, rồi toả
-xuống tất cả anh em.
+A child fails → the parent (a regular Job) treats that as itself failing → and
+because it's failing, it **cancels all its remaining children**. So the real path
+is a letter V: up one level, then fanning back down to all the siblings.
 
-Anh em không chết vì lỗi của nhau. Chúng chết vì **cha** đã chết.
+Siblings don't die from each other's error. They die because their **parent**
+died.
 
-## Vì sao Kotlin làm thế
+## Why Kotlin works this way
 
-Gọi là **fail-fast**. Nếu bạn phóng ra ba tác vụ để cùng dựng một kết quả, và một
-cái hỏng, thì hai cái kia đang làm việc vô ích — tốn thời gian, tốn pin, và có thể
-ghi ra dữ liệu nửa vời. Dừng cả nhóm là mặc định an toàn.
+This is called **fail-fast**. If you launch three tasks to build one combined
+result, and one of them breaks, the other two are now doing wasted work — burning
+time, burning battery, and possibly writing out half-finished data. Stopping the
+whole group is the safe default.
 
-Khi *không* muốn thế thì mới dùng supervisor — đó là bài kế tiếp.
+When you *don't* want that, that's when you reach for a supervisor — that's the
+next lesson.
 
-## Chỗ hay sai
+## Where people get it wrong
 
-- Tưởng chỉ coroutine hỏng mới dừng. Không: cả nhóm dừng.
-- Tưởng có thể `try/catch` quanh `launch` để giữ anh em sống. Không được — muốn cô
-  lập thì phải đổi **cấu trúc** (supervisor), không phải đổi chỗ đặt `catch`.
+- Assuming only the failed coroutine stops. It doesn't: the whole group stops.
+- Assuming you can wrap `try/catch` around `launch` to keep the siblings alive.
+  You can't — isolating them requires changing the **structure** (a supervisor),
+  not moving where the `catch` sits.
 
-## Nhìn gì trên đồ thị
+## What to look for on the graph
 
-Một cạnh failure đỏ đi lên, rồi hai cạnh cancel cam đi xuống hai anh em. Chữ V đó
-là toàn bộ bài học.
+One red failure edge going up, then two orange cancel edges going down to the two
+siblings. That letter V is the whole lesson.

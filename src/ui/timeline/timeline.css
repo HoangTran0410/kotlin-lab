@@ -1,4 +1,4 @@
-/* Task 16. Timeline nằm ngang hết chiều rộng shell__foot (xem shell.css). */
+/* Task 16. Timeline spans the full width of shell__foot (see shell.css). */
 
 .timeline {
   display: flex;
@@ -17,8 +17,9 @@
   margin: 0;
 }
 
-/* Vạch đánh dấu event đáng chú ý (markers.ts), vẽ ĐÈ lên track — thuần hình
-   ảnh, không có hit-test riêng, không đụng gì tới giá trị của <input range>. */
+/* Marks for notable events (markers.ts), drawn OVER the track — purely
+   visual, no hit-testing of its own, doesn't touch the <input range>'s value
+   at all. */
 .timeline__markers {
   position: relative;
   height: 6px;

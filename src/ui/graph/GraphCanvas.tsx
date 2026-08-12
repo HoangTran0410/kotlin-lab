@@ -11,11 +11,11 @@ import { FailureEdge } from './edges/FailureEdge'
 import { edgeStyle } from './edges/edgeStyle'
 import './graph.css'
 
-// HẰNG SỐ NGOÀI component (brief Task 13 bước 3): để nodeTypes/edgeTypes là
-// literal khai trong JSX thì React Flow coi đó là một "loại" mới ở MỖI lần
-// render (so sánh tham chiếu) và gắn lại (remount) toàn bộ node/cạnh — đúng
-// kiểu rung mà toàn bộ Quyết định 2 (Task 11/12) tồn tại để chặn, chỉ là ở
-// tầng React Flow's node-identity thay vì ở toạ độ.
+// CONSTANTS OUTSIDE the component (brief Task 13 step 3): if nodeTypes/edgeTypes
+// were literals declared inline in JSX, React Flow would treat that as a new
+// "type" on EVERY render (reference comparison) and remount the entire node/edge
+// tree — exactly the kind of jitter Decision 2 (Task 11/12) exists to block,
+// just at the React Flow node-identity layer instead of at coordinates.
 const NODE_TYPES: NodeTypes = { job: JobNode, scope: ScopeNode }
 const EDGE_TYPES: EdgeTypes = { failure: FailureEdge }
 
@@ -23,35 +23,37 @@ const FALLBACK_EDGE_DATA: FlowEdgeData = { kind: 'child', blocked: false, opacit
 const FIT_VIEW = { padding: 0.18, maxZoom: 1 }
 
 /**
- * Mount `<ReactFlow>` thật. `nodes`/`edges` tới thẳng từ `toReactFlow` (Task
- * 12) — hàm THUẦN không phụ thuộc runtime @xyflow/react — nên component này
- * không được TÍNH LẠI `position` dưới bất kỳ hình thức nào; `nodes` chuyển
- * tiếp NGUYÊN XI.
+ * Mounts the real `<ReactFlow>`. `nodes`/`edges` come straight from
+ * `toReactFlow` (Task 12) — a PURE function with no dependency on the
+ * @xyflow/react runtime — so this component must NOT RECOMPUTE `position` in
+ * any form; `nodes` are passed through UNCHANGED.
  *
- * `edges` thì được gắn thêm hình dáng hiển thị (Task 14): `toReactFlow` trả
- * cạnh THUẦN (chỉ `data.kind`/`data.blocked`/`data.opacity`), không mang
- * style riêng của React Flow (markerEnd, stroke...) — việc đó là của TẦNG
- * HIỂN THỊ này, qua `edgeStyle()`, để `toReactFlow` giữ được là hàm thuần
- * không phụ thuộc runtime @xyflow/react. Chỉ cạnh 'failure' cần component
- * riêng (FailureEdge, để vẽ dấu chặn khi `blockedBySupervisor`); 'child' và
- * 'cancel' dùng edge mặc định của React Flow với style/markerEnd đặt thẳng
- * trên object Edge.
+ * `edges`, though, get their display shape attached here (Task 14):
+ * `toReactFlow` returns PURE edges (only `data.kind`/`data.blocked`/
+ * `data.opacity`), carrying none of React Flow's own style (markerEnd,
+ * stroke...) — that's this DISPLAY LAYER's job, via `edgeStyle()`, so that
+ * `toReactFlow` stays a pure function with no dependency on the @xyflow/react
+ * runtime. Only the 'failure' edge needs its own component (FailureEdge, to
+ * draw the block mark when `blockedBySupervisor`); 'child' and 'cancel' use
+ * React Flow's default edge with style/markerEnd set directly on the Edge
+ * object.
  */
 export function GraphCanvas({ nodes, edges }: ReactFlowGraph) {
   const rfEdges = useMemo<Edge[]>(() => edges.map(e => {
     const d = e.data ?? FALLBACK_EDGE_DATA
     const visual = edgeStyle(d.kind, d.blocked)
-    // Hai làn tách hẳn nhau (xem NodePorts.tsx): failure leo mép PHẢI, cancel
-    // đổ mép TRÁI. Nhờ vậy hai hướng lan truyền không bao giờ chạy chồng lên
-    // nhau, và không cắt qua cột node ở giữa.
+    // Two lanes kept fully separate (see NodePorts.tsx): failure climbs the
+    // RIGHT edge, cancel runs down the LEFT edge. This keeps the two
+    // propagation directions from ever overlapping, and from cutting through
+    // the node column in the middle.
     const right = d.kind === 'failure'
     return {
       ...e,
       type: d.kind === 'failure' ? 'failure' : 'smoothstep',
       sourceHandle: right ? 'fail-out' : 'cancel-out',
       targetHandle: right ? 'fail-in' : 'cancel-in',
-      // Khuỷu đẩy ra xa hộp: đường đi vòng hẳn ra ngoài mép thay vì bám sát
-      // viền rồi cắt vào node kế bên.
+      // Elbow pushed away from the box: the loop runs well outside the edge
+      // instead of hugging the border and cutting into the neighboring node.
       pathOptions: { offset: 28, borderRadius: 10 },
       style: {
         stroke: visual.stroke,
@@ -70,8 +72,8 @@ export function GraphCanvas({ nodes, edges }: ReactFlowGraph) {
       nodeTypes={NODE_TYPES}
       edgeTypes={EDGE_TYPES}
       nodesDraggable={false}
-      // Chừa lề quanh đồ thị khi tự căn khung: fitView sát mép làm nhãn và
-      // đường vòng hai bên bị cắt cụt ở rìa canvas.
+      // Leave a margin around the graph when auto-fitting: fitView flush to
+      // the edge clips labels and the two side loops at the canvas rim.
       fitView
       fitViewOptions={FIT_VIEW}
       minZoom={0.2}

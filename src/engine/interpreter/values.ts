@@ -13,12 +13,13 @@ export type KValue =
 
 export const UNIT: KValue = { t: 'unit' }
 
-/** Exception của Kotlin, ném xuyên qua generator bằng cơ chế throw của JS. */
+/** A Kotlin exception, thrown across the generator using JS's throw mechanism. */
 export class KotlinThrow extends Error {
   /**
-   * `line` là dòng 1-based của câu `throw` gây ra exception này. Optional vì
-   * nhiều KotlinThrow là nội bộ (vòng lặp quá dài, tái ném CancellationException
-   * tổng hợp lúc unwind) — không gắn với một dòng code cụ thể nào của user.
+   * `line` is the 1-based line of the `throw` statement that caused this
+   * exception. Optional because many KotlinThrows are internal (loop ran too
+   * long, a synthetic re-throw of CancellationException while unwinding) — not
+   * tied to any specific line of user code.
    */
   constructor(readonly kotlinType: string, readonly kotlinMessage: string, readonly line?: number) {
     super(`${kotlinType}: ${kotlinMessage}`)
@@ -26,9 +27,9 @@ export class KotlinThrow extends Error {
 }
 
 /**
- * Giá trị scheduler trả vào generator lúc resume có kiểu `unknown` — nó không
- * biết gì về KValue. Chỗ duy nhất cần thu hẹp lại là `await`, nơi kết quả của
- * Deferred quay về interpreter.
+ * The value the scheduler passes back into the generator on resume has type
+ * `unknown` — it knows nothing about KValue. The only place that needs to
+ * narrow it is `await`, where a Deferred's result flows back into the interpreter.
  */
 export function isKValue(v: unknown): v is KValue {
   return typeof v === 'object' && v !== null && 't' in v

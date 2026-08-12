@@ -4,26 +4,26 @@ fun main() = runBlocking {
     supervisorScope {
         val j = launch {
             delay(100)
-            println("1. launch chạy xong — nó không trả về giá trị nào")
+            println("1. launch finished — it doesn't return any value")
         }
         j.join()
-        println("2. join() chỉ CHỜ, không đọc được gì cả")
+        println("2. join() only WAITS, it can't read anything")
 
         val d = async {
             delay(100)
             42
         }
-        println("3. await() vừa chờ vừa trả về giá trị: " + d.await())
+        println("3. await() both waits and returns a value: " + d.await())
 
-        val hong = async { throw RuntimeException("boom") }
+        val broken = async { throw RuntimeException("boom") }
         delay(50)
-        println("4. Deferred đã fail từ lúc nãy, nhưng chưa ai đọc nên chưa ai thấy")
+        println("4. the Deferred already failed a while ago, but nobody has read it yet so nobody has seen it")
         try {
-            hong.await()
-            println("dòng này không bao giờ chạy")
+            broken.await()
+            println("this line never runs")
         } catch (e: RuntimeException) {
-            println("5. await() ném exception ra tại ĐÚNG chỗ gọi await: " + e.message)
+            println("5. await() throws the exception at the EXACT spot await is called: " + e.message)
         }
     }
-    println("6. supervisorScope chặn failure của async, chương trình đi tiếp")
+    println("6. supervisorScope blocks the async's failure, the program continues")
 }

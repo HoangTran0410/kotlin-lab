@@ -2,8 +2,9 @@ import { defineWorkspace } from 'vitest/config'
 
 export default defineWorkspace([
   {
-    // Engine + lessons: THUẦN Node. Không có DOM global ở đây, cố ý.
-    // Nếu engine lỡ chạm window/document, test phải VỠ chứ không im lặng chạy được.
+    // Engine + lessons: PURE Node. No DOM globals here, deliberately.
+    // If the engine ever touches window/document, the tests must BREAK rather
+    // than quietly keep working.
     test: {
       name: 'engine',
       globals: true,

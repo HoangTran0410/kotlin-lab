@@ -13,17 +13,18 @@ export interface CtxSummary {
 
 export type EventBody =
   /**
-   * `varName` — tên BIẾN mà người học gán coroutine này vào (`val job = launch {}`
-   * -> "job"). Cố ý TÁCH khỏi `ctx.name` (`CoroutineName(...)`): cái sau là một
-   * khái niệm Kotlin thật, hiện trong context và có thể được kế thừa; cái này chỉ
-   * là nhãn để nhìn trên đồ thị. Gộp hai thứ vào một trường sẽ khiến bài
-   * `dispatcher` — nơi dạy chính `CoroutineName` — nói dối.
+   * `varName` — the VARIABLE name the learner assigns this coroutine to
+   * (`val job = launch {}` -> "job"). Deliberately SEPARATE from `ctx.name`
+   * (`CoroutineName(...)`): the latter is a real Kotlin concept, present in
+   * the context and inheritable; this one is just a label for the graph.
+   * Merging the two into one field would make the `dispatcher` lesson — the
+   * one that teaches `CoroutineName` itself — lie.
    */
   | { k: 'COROUTINE_CREATED'; id: JobId; parentId: JobId | null; varName?: string
-      // 'scope' là Job GỐC của một `CoroutineScope(ctx)` do người học tự dựng:
-      // không cha, không thân, chỉ là điểm neo cấu trúc (xem
-      // Scheduler.spawnScopeRoot). Nó KHÔNG phải một builder trong Kotlin —
-      // nhưng nó là một node có thật trong cây job, nên phải có mặt trên trace.
+      // 'scope' is the ROOT Job of a `CoroutineScope(ctx)` the learner builds
+      // themselves: no parent, no body, just a structural anchor (see
+      // Scheduler.spawnScopeRoot). It is NOT a builder in Kotlin — but it is
+      // a real node in the job tree, so it has to be present on the trace.
       builder: 'launch' | 'async' | 'runBlocking' | 'coroutineScope' | 'supervisorScope'
         | 'withContext' | 'scope'
       ctx: CtxSummary }

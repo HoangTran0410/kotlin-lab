@@ -12,94 +12,104 @@ interface Task {
   job: Job
   ctx: CoroutineContext
   body: CoroutineBody
-  /** Giá trị trả vào .next() ở lần resume tới. */
+  /** Value passed into .next() on the next resume. */
   resumeValue: unknown
   /**
-   * Khi khác undefined: lần resume tới phải NÉM vào generator thay vì next().
-   * Đường thứ hai này tồn tại cho `await` trên một Deferred đã fail — exception
-   * phải xuất hiện tại chính điểm await, kể cả khi supervisor đã chặn không cho
-   * failure ấy ảnh hưởng tới scope.
+   * When not undefined: the next resume must THROW into the generator
+   * instead of calling next(). This second path exists for `await` on a
+   * Deferred that already failed — the exception must appear at the exact
+   * await point, even when a supervisor has blocked that failure from
+   * affecting the scope.
    */
   resumeThrow: unknown
   started: boolean
   /**
-   * Dòng để gắn cho `COROUTINE_STARTED` — dòng ĐẦU TIÊN trong thân coroutine,
-   * tức chỗ nó thật sự bắt đầu chạy, chứ không phải dòng viết `launch`.
+   * The line to tag `COROUTINE_STARTED` with — the FIRST line inside the
+   * coroutine body, i.e. where it actually starts running, not the line that
+   * wrote `launch`.
    */
   startLine: number | undefined
   /**
-   * Dòng của điểm suspend đang treo. `COROUTINE_RESUMED` gắn dòng này, vì
-   * resume nghĩa là chạy tiếp TỪ ĐÓ. Không có nó thì mọi RESUMED không mang
-   * dòng nào, và con trỏ trong editor đứng im suốt những đoạn dài — đo được
-   * 16 step liên tiếp không đổi dòng trên lesson scopecompare.
+   * The line of the suspend point currently pending. `COROUTINE_RESUMED`
+   * tags this line, because resuming means running on FROM THERE. Without
+   * it, every RESUMED carries no line at all, and the cursor in the editor
+   * sits frozen through long stretches — measured 16 consecutive steps with
+   * no line change on the scopecompare lesson.
    */
   resumeLine: number | undefined
-  /** Đã chạy xong hoặc đã unwind — không được đụng tới generator nữa. */
+  /** Has finished running or has unwound — the generator must not be touched again. */
   finished: boolean
   /**
-   * Đã ném tín hiệu huỷ vào generator này rồi, mà nó CHƯA chạy hết.
+   * The cancellation signal has already been thrown into this generator, but
+   * it has NOT finished running yet.
    *
-   * Tồn tại vì unwind không còn luôn đồng bộ: generator có thể BẮT được tín
-   * hiệu huỷ rồi treo lại ở một điểm suspend khác — `runInlineBody` bắt xong
-   * là `yield joinChildren` để chờ con của scope chạy hết `finally` — nên
-   * `body.throw()` TRẢ VỀ một IteratorResult thay vì ném ra, và task còn phải
-   * được chạy tiếp.
+   * Exists because unwinding is no longer always synchronous: a generator
+   * can CATCH the cancellation signal and then suspend again at a different
+   * point — `runInlineBody` catches it and then does `yield joinChildren` to
+   * wait for the scope's children to finish running their `finally` — so
+   * `body.throw()` RETURNS an IteratorResult instead of throwing, and the
+   * task still needs to keep running.
    *
-   * Dùng ĐÚNG MỘT việc: mở chốt `job.isCompleted` ở đầu `step()`. Job đã
-   * Cancelled từ trước khi tín hiệu được ném vào, nên nếu không có cờ này thì
-   * lượt resume kế tiếp bị chốt ấy chặn, generator bị bỏ rơi giữa chừng,
-   * `finished` không bao giờ được đặt và người `join()` nó treo vĩnh viễn.
+   * Used for EXACTLY ONE purpose: opening the `job.isCompleted` gate at the
+   * top of `step()`. The job was already Cancelled before the signal was
+   * thrown in, so without this flag the next resume would be blocked by that
+   * gate, the generator would be abandoned mid-flight, `finished` would
+   * never be set, and whoever `join()`s it would hang forever.
    *
-   * CỐ Ý KHÔNG dùng nó để chống ném hai lần: Kotlin ném CancellationException ở
-   * MỌI điểm suspend của một coroutine đã huỷ, không phải chỉ điểm đầu tiên.
-   * Việc chống ném hai lần chỉ áp cho `joinChildren` của scope inline — xem
-   * `đangChờConCủaScope`.
+   * DELIBERATELY NOT used to guard against throwing twice: Kotlin throws
+   * CancellationException at EVERY suspend point of a cancelled coroutine,
+   * not just the first one. The guard against throwing twice applies only to
+   * an inline scope's `joinChildren` — see `isWaitingForScopeChildren`.
    */
   unwinding: boolean
   /**
-   * Các scope inline (runBlocking/coroutineScope/supervisorScope/withContext)
-   * chạy trong generator của task NGOÀI, nên `currentJob` — vốn được gán từ
-   * task.job ở đầu mỗi step() — không phải job đang thật sự thực thi. Ngăn xếp
-   * này giữ job inline trong cùng CỦA RIÊNG TASK NÀY, và mọi event phát ra nhân
-   * danh "job hiện tại" phải đọc qua đây.
+   * Inline scopes (runBlocking/coroutineScope/supervisorScope/withContext)
+   * run inside the OUTER task's generator, so `currentJob` — which is
+   * assigned from task.job at the top of every step() — is not the job
+   * actually executing. This stack holds the inline job scoped to THIS TASK
+   * ALONE, and every event emitted on behalf of "the current job" must read
+   * through here.
    *
-   * Trên Task chứ không trên Scheduler: task có thể treo giữa thân một scope
-   * inline (`coroutineScope { delay(100) }`) trong khi task khác chạy. Ngăn xếp
-   * dùng chung ở mức Scheduler sẽ gán job inline của task đang treo cho
-   * `println` của task đang chạy — sai âm thầm, và chỉ hiện ra khi có hai
-   * coroutine xen kẽ.
+   * Kept on Task, not on Scheduler: a task can be suspended in the middle of
+   * an inline scope's body (`coroutineScope { delay(100) }`) while another
+   * task runs. A stack shared at the Scheduler level would assign the
+   * suspended task's inline job to the running task's `println` — a silent
+   * bug that only shows up once two coroutines interleave.
    */
   inlineStack: Job[]
   /**
-   * Dispatcher của cha TẠI LÚC TẠO, hoặc null nếu không có cha.
+   * The parent's dispatcher AT CREATION TIME, or null if there is no parent.
    *
-   * Chụp lại thay vì đọc `ctx` của task cha khi cần: từ khi có `switchContext`,
-   * `task.ctx` là dữ liệu THAY ĐỔI ĐƯỢC — cha có thể đang ở giữa một
-   * `withContext(IO)` khi con lần đầu được chạy, và lúc đó so với ctx hiện thời
-   * của cha sẽ nuốt mất một DISPATCH có thật. Kotlin dispatch continuation đầu
-   * tiên của con ngay tại chỗ `launch` (CoroutineStart.DEFAULT), nên mốc so
-   * sánh đúng là dispatcher lúc TẠO.
+   * Captured instead of reading the parent task's `ctx` when needed: since
+   * `switchContext` exists, `task.ctx` is MUTABLE data — the parent could be
+   * in the middle of a `withContext(IO)` by the time the child first runs,
+   * and comparing against the parent's current ctx at that point would
+   * swallow a real DISPATCH. Kotlin dispatches the child's first
+   * continuation right at the `launch` call site (CoroutineStart.DEFAULT),
+   * so the correct baseline for comparison is the dispatcher AT CREATION.
    */
   parentDispatcher: string | null
 }
 
 export function toCause(err: unknown): FailureCause {
-  // Nhận dạng theo hình dạng chứ không phải `instanceof KotlinThrow`: test của
-  // Scheduler dựng exception giả bằng Object.assign(new Error, { kotlinType }),
-  // và Scheduler không có lý do gì phải phụ thuộc vào lớp cụ thể của interpreter.
+  // Identified by shape, not `instanceof KotlinThrow`: the Scheduler's tests
+  // build fake exceptions with Object.assign(new Error, { kotlinType }), and
+  // the Scheduler has no reason to depend on the interpreter's concrete
+  // class.
   if (err && typeof err === 'object' && 'kotlinType' in err) {
     const e = err as { kotlinType: string; kotlinMessage?: string; message?: string; line?: number }
     return {
       exType: e.kotlinType,
-      // Ưu tiên kotlinMessage. Error.message của KotlinThrow được dựng thành
-      // `${kotlinType}: ${kotlinMessage}`, nên đọc nhầm sẽ nhân đôi tên kiểu:
-      // `catch (e: RuntimeException) { println(e.message) }` in ra
-      // "RuntimeException: boom" thay vì "boom".
+      // Prefer kotlinMessage. KotlinThrow's Error.message is built as
+      // `${kotlinType}: ${kotlinMessage}`, so reading the wrong one doubles
+      // up the type name: `catch (e: RuntimeException) { println(e.message) }`
+      // would print "RuntimeException: boom" instead of "boom".
       message: e.kotlinMessage ?? e.message ?? '',
       isCancellation: e.kotlinType === 'CancellationException',
-      // Duck-typed (không instanceof) như phần còn lại của hàm này — test của
-      // Scheduler dựng lỗi giả bằng Object.assign và không mang `line`, nên
-      // đọc optional-chaining ra undefined là đúng, không phải lỗi.
+      // Duck-typed (not instanceof), same as the rest of this function — the
+      // Scheduler's tests build fake errors with Object.assign and don't
+      // carry a `line`, so reading undefined via optional chaining is
+      // correct, not a bug.
       line: e.line,
     }
   }
@@ -107,16 +117,17 @@ export function toCause(err: unknown): FailureCause {
 }
 
 /**
- * Lỗi của ENGINE, không phải exception của chương trình Kotlin đang chạy: một
- * bất biến đã vỡ và không có nghĩa nào để "chạy tiếp".
+ * An ENGINE error, not an exception from the Kotlin program being run: an
+ * invariant has broken and there is no sensible way to "keep going".
  *
- * Nhận dạng theo hình dạng chứ không `instanceof KotlinThrow`, đúng cùng lý do
- * (và cùng cách) như `toCause`: test của Scheduler dựng exception Kotlin giả
- * bằng `Object.assign(new Error, { kotlinType })`, và những cái đó phải được coi
- * là exception của chương trình.
+ * Identified by shape, not `instanceof KotlinThrow`, for exactly the same
+ * reason (and the same technique) as `toCause`: the Scheduler's tests build
+ * fake Kotlin exceptions with `Object.assign(new Error, { kotlinType })`, and
+ * those must be treated as exceptions from the program.
  *
- * `ReturnSignal` của interpreter KHÔNG phải Error nên không lọt vào đây — nó là
- * tín hiệu điều khiển nội bộ, giữ nguyên đường xử lý cũ.
+ * The interpreter's `ReturnSignal` is NOT an Error, so it never reaches this
+ * check — it's an internal control signal and keeps its existing handling
+ * path.
  */
 function isEngineError(err: unknown): boolean {
   return err instanceof Error && !('kotlinType' in err)
@@ -130,62 +141,69 @@ export class Scheduler {
   private nextJobId = 1
   private readonly ready: Task[] = []
   private readonly tasks = new Map<JobId, Task>()
-  /** Mảng song song với `tasks`, để duyệt theo đúng thứ tự tạo. */
+  /** Parallel array to `tasks`, to iterate in creation order. */
   private readonly taskOrder: Task[] = []
   private currentJob: Job | null = null
   /**
-   * Task đang chạy generator NGAY LÚC NÀY. Đi kèm `currentJob` và luôn được đặt/
-   * xoá cùng lúc với nó; tách ra vì ngăn xếp scope inline nằm trên Task.
+   * The task whose generator is running RIGHT NOW. Travels together with
+   * `currentJob` and is always set/cleared at the same time as it; kept
+   * separate because the inline scope stack lives on Task.
    */
   private currentTask: Task | null = null
-  /** Coroutine gốc. Chương trình kết thúc khi nó kết thúc — xem runToCompletion. */
+  /** The root coroutine. The program ends when it ends — see runToCompletion. */
   private rootJobId: JobId | null = null
   /**
-   * Task vừa đi qua `switchContext` và đang chờ được chạy lại trên dispatcher
-   * mới, kèm job đứng tên DISPATCH và dòng gây ra. Không thể phát DISPATCH ngay
-   * trong `suspend()`: threadId chỉ biết được sau khi `acquire` ở step kế.
+   * A task that just went through `switchContext` and is waiting to be run
+   * again on the new dispatcher, along with the job that should be named in
+   * the DISPATCH event and the line that caused it. DISPATCH can't be
+   * emitted right inside `suspend()`: the threadId is only known after
+   * `acquire` on the next step.
    */
   private readonly pendingDispatch = new Map<Task, { jobId: JobId; line?: number }>()
 
   /**
-   * Task đang chờ một job khác kết thúc. Mảng, không phải Map lồng, để thứ tự
-   * đánh thức ổn định — đây là điều kiện cho trace deterministic.
+   * Tasks waiting for another job to finish. An array, not a nested Map, so
+   * wake-up order stays stable — that is a precondition for a deterministic
+   * trace.
    *
-   * KHÔNG được cài chờ bằng cách tự lên lịch lại ở cùng mốc thời gian: làm vậy
-   * thì `ready` không bao giờ rỗng, đồng hồ ảo không bao giờ nhảy, và mọi thứ
-   * đứng hình. Waiter phải nằm NGOÀI `ready` cho tới khi điều kiện thoả.
+   * MUST NOT be implemented as waiting by re-scheduling itself at the same
+   * point in time: doing so would mean `ready` is never empty, the virtual
+   * clock never advances, and everything freezes. A waiter must sit OUTSIDE
+   * `ready` until its condition is met.
    */
   private waiters: { task: Task; kind: 'join' | 'await' | 'children'; targetId: JobId }[] = []
 
   private newJobId(): JobId { return `j${this.nextJobId++}` }
 
   /**
-   * Job mà code đang chạy THUỘC VỀ, khác với `currentJob` (job của task).
-   * Trong `withContext(Dispatchers.IO) { println("x") }`, task đang chạy vẫn là
-   * task của runBlocking, nhưng dòng println đó thuộc về job withContext — đó
-   * là thứ đồ thị phải highlight. Mọi event phát ra nhân danh "job hiện tại"
-   * phải đọc qua đây, đừng đọc `currentJob`.
+   * The job that the currently running code BELONGS TO, which differs from
+   * `currentJob` (the task's job). In `withContext(Dispatchers.IO) { println("x") }`,
+   * the task that's running is still runBlocking's task, but that println
+   * line belongs to the withContext job — that's what the graph must
+   * highlight. Every event emitted on behalf of "the current job" must read
+   * through here, not through `currentJob`.
    */
   private get currentInlineJob(): Job | null {
     const t = this.currentTask
     return t ? (t.inlineStack[t.inlineStack.length - 1] ?? t.job) : this.currentJob
   }
 
-  /** Dispatcher THẬT của task đang chạy — đã tính cả các withContext lồng nhau. */
+  /** The REAL dispatcher of the running task — accounting for nested withContext calls. */
   currentDispatcher(): string {
     if (!this.currentTask) {
-      // Không có task nào đang chạy thì không có dispatcher nào "đang hiệu lực".
-      // Trả bừa 'Default' ở đây sẽ làm interpreter tưởng đang đổi dispatcher và
-      // phát DISPATCH rác; chết ngay còn hơn dựng trace sai.
-      throw new Error('Scheduler: currentDispatcher() được gọi ngoài lúc chạy một task')
+      // No task running means no dispatcher is "in effect". Returning some
+      // arbitrary 'Default' here would make the interpreter think a
+      // dispatcher switch happened and emit a bogus DISPATCH; better to die
+      // immediately than build a wrong trace.
+      throw new Error('Scheduler: currentDispatcher() called outside of running a task')
     }
     return this.currentTask.ctx.dispatcher
   }
 
-  /** Dispatcher hiệu lực của một job đã tồn tại (ctx của nó đã merge với cha). */
+  /** The effective dispatcher of an existing job (its ctx already merged with its parent's). */
   dispatcherOf(jobId: JobId): string {
     const task = this.tasks.get(jobId)
-    if (!task) throw new Error(`Scheduler: không có task nào cho job ${jobId}`)
+    if (!task) throw new Error(`Scheduler: no task for job ${jobId}`)
     return task.ctx.dispatcher
   }
 
@@ -194,13 +212,15 @@ export class Scheduler {
   }
 
   /**
-   * Một `catch` vừa khớp. Phát từ interpreter, cùng đường với `println`.
+   * A `catch` just matched. Emitted by the interpreter, same path as `println`.
    *
-   * EXCEPTION_CAUGHT có trong events.ts và có câu diễn giải từ M1, nhưng KHÔNG
-   * ai phát nó — nên hai bài học sống bằng chính khoảnh khắc này (`exception`:
-   * bắt được thì job không fail; `swallow`: catch rộng nuốt luôn tín hiệu huỷ)
-   * chỉ hiện ra một EXCEPTION_THROWN rồi im, không có gì trên đồ thị nói rằng
-   * nó đã được xử lý. Người học phải tự suy ra từ việc "không thấy job đỏ".
+   * EXCEPTION_CAUGHT exists in events.ts and has had a narration string
+   * since M1, but NOTHING was emitting it — so the two lessons that live off
+   * this exact moment (`exception`: catching it means the job doesn't fail;
+   * `swallow`: a broad catch also swallows the cancellation signal) only ever
+   * showed an EXCEPTION_THROWN and then went silent, with nothing on the
+   * graph saying it had been handled. The learner had to infer it purely
+   * from "the job isn't red".
    */
   exceptionCaught(exType: string, srcLine?: number): void {
     this.emitter.emit(
@@ -214,7 +234,7 @@ export class Scheduler {
     return job
   }
 
-  /** Tiện ích cho unit test của Scheduler; interpreter dùng spawnChildOf. */
+  /** Convenience for the Scheduler's own unit tests; the interpreter uses spawnChildOf. */
   spawnChild(makeBody: (job: Job) => CoroutineBody, builder: 'launch' | 'async' = 'launch'): Job {
     const parent = this.currentJob
     const ctx = parent ? this.tasks.get(parent.id)!.ctx : CoroutineContext.empty()
@@ -222,8 +242,9 @@ export class Scheduler {
   }
 
   /**
-   * `makeBody` nhận chính Job vừa tạo, để thân coroutine biết jobId của mình
-   * mà không cần biến trung gian (Task 16 dùng nó dựng Env con đúng scope).
+   * `makeBody` receives the Job that was just created, so the coroutine body
+   * knows its own jobId without needing an intermediate variable (Task 16
+   * uses this to build a child Env scoped correctly).
    */
   spawn(
     parent: Job | null,
@@ -244,12 +265,13 @@ export class Scheduler {
       k: 'COROUTINE_CREATED', id, parentId: parent?.id ?? null, builder, ctx: jobCtx.summary(),
       ...(varName === undefined ? {} : { varName }),
     }, srcLine)
-    // CoroutineStart.DEFAULT (đường DUY NHẤT subset này hỗ trợ, xem spec §4.1):
-    // Kotlin thật coi coroutine vừa tạo là Active NGAY LẬP TỨC — `New` chỉ tồn
-    // tại với CoroutineStart.LAZY, ngoài subset. `launch`/`async` trả về đồng
-    // bộ, nên mọi câu lệnh đứng giữa lời gọi và điểm suspend kế tiếp phải thấy
-    // Active, không phải New. Đối chiếu Kotlin thật (api.kotlinlang.org 2.1.20):
-    // `val job = launch { delay(10) }; println(job.isActive)` in "true".
+    // CoroutineStart.DEFAULT (the ONE path this subset supports, see spec
+    // §4.1): real Kotlin treats a freshly created coroutine as Active
+    // IMMEDIATELY — `New` only exists for CoroutineStart.LAZY, outside this
+    // subset. `launch`/`async` return synchronously, so any statement
+    // between the call and the next suspend point must see Active, not New.
+    // Verified against real Kotlin (api.kotlinlang.org 2.1.20):
+    // `val job = launch { delay(10) }; println(job.isActive)` prints "true".
     job.transitionTo('Active')
     this.emitter.emit({ k: 'JOB_STATE', id, from: 'New', to: 'Active' })
 
@@ -270,19 +292,21 @@ export class Scheduler {
   }
 
   /**
-   * "Xong" theo nghĩa mà người CHỜ quan tâm: state đã kết thúc VÀ thân coroutine
-   * đã unwind xong.
+   * "Done" in the sense that a WAITER cares about: the state has reached an
+   * end state AND the coroutine body has finished unwinding.
    *
-   * Chỉ hỏi `job.isCompleted` là chưa đủ. cancelJob lật thẳng
-   * Active->Cancelling->Cancelled trong MỘT lời gọi đồng bộ, nên không job nào
-   * bao giờ NGHỈ ở Cancelling: ngay sau `j.cancel()` thì j đã isCompleted trong
-   * khi generator của nó còn treo ở điểm suspend và khối `finally` chưa hề chạy.
-   * Đánh thức người chờ lúc đó là để `j.join()` trả về TRƯỚC khi j kịp dọn dẹp —
-   * Kotlin cho ["cleanup", "done"], engine cũ cho ["done", "cleanup"].
+   * Checking `job.isCompleted` alone is not enough. cancelJob flips
+   * Active->Cancelling->Cancelled straight through in ONE synchronous call,
+   * so no job ever REMAINS at Cancelling: right after `j.cancel()`, j is
+   * already isCompleted while its generator is still suspended at a suspend
+   * point and its `finally` block hasn't run yet. Waking a waiter at that
+   * point would let `j.join()` return BEFORE j finishes cleaning up — Kotlin
+   * gives ["cleanup", "done"], the old engine gave ["done", "cleanup"].
    *
-   * `!task.started` là ca huỷ-trước-khi-chạy: không có gì để unwind, nên xong
-   * ngay. Không có nhánh này thì unwindCancelled (vốn bỏ qua task chưa start)
-   * sẽ không bao giờ đặt `finished`, và người chờ treo vĩnh viễn.
+   * `!task.started` is the cancelled-before-it-ran case: there's nothing to
+   * unwind, so it's done immediately. Without this branch, unwindCancelled
+   * (which skips tasks that never started) would never set `finished`, and a
+   * waiter would hang forever.
    */
   private isJobSettled(id: JobId): boolean {
     const task = this.tasks.get(id)
@@ -292,8 +316,8 @@ export class Scheduler {
   }
 
   /**
-   * Đánh thức waiter có điều kiện đã thoả. Giữ nguyên thứ tự đăng ký.
-   * Trả true nếu có waiter được đưa vào ready.
+   * Wake any waiter whose condition is now satisfied. Preserves registration order.
+   * Returns true if any waiter was moved into ready.
    */
   private sweepWaiters(): boolean {
     const still: typeof this.waiters = []
@@ -303,9 +327,10 @@ export class Scheduler {
         ? (this.tasks.get(w.targetId)?.job.children.every(c => this.isJobSettled(c.id)) ?? true)
         : this.isJobSettled(w.targetId)
       if (!done) { still.push(w); continue }
-      // Dùng CHUNG wakeAwaiter với nhánh isJobSettled trong suspend(). Nếu hai
-      // chỗ lệch nhau thì "await có ném không" sẽ phụ thuộc vào việc Deferred
-      // settled trước hay sau lúc gọi await — sai theo kiểu ngẫu nhiên.
+      // Shares wakeAwaiter with the isJobSettled branch in suspend(). If the
+      // two ever drift apart, "does await throw or not" would depend on
+      // whether the Deferred settled before or after await was called —
+      // wrong in a randomly-timed way.
       if (w.kind === 'await') this.wakeAwaiter(w.task, w.targetId)
       else this.ready.push(w.task)
       woke = true
@@ -315,33 +340,37 @@ export class Scheduler {
   }
 
   /**
-   * Đánh thức một task đang chờ `await` trên `targetId`.
+   * Wake a task that's waiting on `await` for `targetId`.
    *
-   * `join` và `await` khác nhau đúng ở đây: join chỉ chờ, await ĐỌC kết quả —
-   * nên await phải ném lại failure của Deferred tại chính điểm await, kể cả khi
-   * supervisor đã chặn failure đó không cho ảnh hưởng tới scope. Đó là lý do
-   * `join()` trên một Deferred đã fail im lặng chạy tiếp, còn `await()` thì ném.
+   * `join` and `await` differ EXACTLY here: join just waits, await READS the
+   * result — so await must re-throw the Deferred's failure at the exact
+   * await point, even when a supervisor has already blocked that failure
+   * from affecting the scope. That's why `join()` on an already-failed
+   * Deferred silently continues, while `await()` throws.
    *
-   * Hai đường ném, đúng như kotlinx:
-   *   - Deferred FAIL  -> ném lại ĐÚNG exception gốc (`failure`).
-   *   - Deferred bị CANCEL từ ngoài -> `failure` là null nhưng await vẫn phải
-   *     ném CancellationException. Đã đối chiếu Kotlin thật: `d.cancel()` rồi
-   *     `d.await()` in "DeferredCoroutine was cancelled", KHÔNG trả Unit. Thiếu
-   *     nhánh này thì `println(d.await())` trên Deferred đã huỷ in "kotlin.Unit"
-   *     và chương trình chạy tiếp — sai âm thầm, đúng loại lỗi task này sửa.
-   * Chỉ khi Deferred kết thúc BÌNH THƯỜNG mới trả giá trị.
+   * Two throw paths, matching kotlinx:
+   *   - Deferred FAILED    -> re-throw the EXACT original exception (`failure`).
+   *   - Deferred CANCELLED from outside -> `failure` is null but await must
+   *     still throw CancellationException. Verified against real Kotlin:
+   *     `d.cancel()` then `d.await()` prints "DeferredCoroutine was cancelled",
+   *     NOT Unit. Without this branch, `println(d.await())` on a cancelled
+   *     Deferred prints "kotlin.Unit" and the program keeps going — a silent
+   *     bug, exactly the class of bug this task fixes.
+   * Only when the Deferred finishes NORMALLY does it return a value.
    */
   private wakeAwaiter(task: Task, targetId: JobId): void {
     const target = this.tasks.get(targetId)?.job ?? null
-    // `cause` chỉ được đọc khi job đã bị huỷ: job chạy xong bình thường không
-    // có cause, còn job bị kéo theo vì anh em fail thì cause là exception của
-    // kẻ khác — nhưng nó ĐÃ bị cancel, nên vẫn phải ném, không trả giá trị.
+    // `cause` is only read once the job has actually been cancelled: a job
+    // that finished normally has no cause, and a job dragged down because a
+    // sibling failed has a cause that's someone else's exception — but it
+    // WAS cancelled, so it still must throw rather than return a value.
     const thrown = target?.failure ?? (target?.isCancelled ? target.cause : null)
     if (thrown) {
       task.resumeThrow = new KotlinThrow(thrown.exType, thrown.message)
     } else if (target?.isCancelled) {
-      // Bị huỷ nhưng không ai ghi cause (huỷ trước khi kịp chạy chẳng hạn).
-      // Cùng exception tổng hợp mà unwindCancelled dùng, để hai đường thống nhất.
+      // Cancelled but nobody recorded a cause (cancelled before it got a
+      // chance to run, for instance). Same synthetic exception unwindCancelled
+      // uses, so the two paths stay consistent.
       task.resumeThrow = new KotlinThrow('CancellationException', 'Job was cancelled')
     } else {
       task.resumeValue = target?.result
@@ -349,112 +378,123 @@ export class Scheduler {
     this.ready.push(task)
   }
 
-  /** Chạy cho tới khi không còn task ready, không còn waiter thoả, không còn timer. */
+  /** Run until no task is ready, no waiter is satisfied, and no timer remains. */
   runToCompletion(): void {
     let guard = 0
     for (;;) {
-      // Đếm ở CẢ vòng ngoài, không chỉ vòng `ready`. Từ khi tín hiệu huỷ được
-      // ném lại ở mọi điểm suspend (đúng như Kotlin), một thân coroutine kiểu
+      // Count on the OUTER loop too, not just the `ready` loop. Now that the
+      // cancellation signal is re-thrown at every suspend point (matching
+      // Kotlin), a coroutine body like
       // `while (true) { try { delay(1) } catch (e: CancellationException) { } }`
-      // quay vòng qua unwindCancelled mà KHÔNG bao giờ đi qua `ready` — chốt
-      // chỉ nằm ở vòng trong sẽ treo cứng trình duyệt thay vì báo lỗi.
-      if (++guard > 100_000) throw new Error('Scheduler: nghi ngờ lặp vô hạn')
+      // cycles through unwindCancelled WITHOUT ever touching `ready` — a
+      // guard only on the inner loop would hard-freeze the browser instead
+      // of reporting an error.
+      if (++guard > 100_000) throw new Error('Scheduler: suspected infinite loop')
       while (this.ready.length > 0) {
-        if (++guard > 100_000) throw new Error('Scheduler: nghi ngờ lặp vô hạn')
+        if (++guard > 100_000) throw new Error('Scheduler: suspected infinite loop')
         this.step(this.ready.shift()!)
       }
-      // Cho coroutine đã bị cancel chạy nốt finally trước khi nhảy đồng hồ.
-      // Đặt trước sweepWaiters để finally không bị hoãn qua một vòng lặp nữa.
+      // Let an already-cancelled coroutine finish running its finally before
+      // advancing the clock. Placed before sweepWaiters so finally isn't
+      // deferred by yet another loop iteration.
       if (this.unwindCancelled()) continue
-      // Quét waiter SAU KHI ready cạn, không quét sau mỗi step. Job vừa xong có
-      // thể đã mở khoá một waiter; nếu bỏ dòng này thì đồng hồ sẽ nhảy vượt qua
-      // việc vốn đã sẵn sàng chạy. Quét mỗi step vừa thừa vừa tốn.
+      // Sweep waiters AFTER ready has drained, not after every step. A job
+      // that just finished may have unblocked a waiter; skip this line and
+      // the clock would jump right past work that was already ready to run.
+      // Sweeping on every step would be both redundant and wasteful.
       if (this.sweepWaiters()) continue
-      // Chương trình KẾT THÚC khi coroutine gốc kết thúc, y như JVM thoát ngay
-      // sau khi `main` trả về và giết mọi thread daemon.
+      // The program ENDS when the root coroutine ends, exactly like the JVM
+      // exits the instant `main` returns and kills every daemon thread.
       //
-      // Không có chốt này thì runToCompletion vắt cạn MỌI timer, nên coroutine
-      // của GlobalScope (đã thoát khỏi cây job, không ai chờ nó) vẫn in tiếp
-      // sau khi chương trình đáng lẽ đã xong — dạy ngược nửa sau của bài học
-      // "GlobalScope thoát khỏi structured concurrency": thoát rồi thì cũng
-      // KHÔNG được sống lâu hơn chương trình.
+      // Without this gate, runToCompletion would drain EVERY timer, so a
+      // GlobalScope coroutine (which has escaped the job tree — nobody is
+      // waiting on it) would keep printing after the program should already
+      // be done — teaching the wrong half of the "GlobalScope escapes
+      // structured concurrency" lesson: once it escapes, it must NOT
+      // outlive the program either.
       //
-      // Đặt SAU unwindCancelled và sweepWaiters, không phải trước: khi root
-      // FAIL, task của nó finished ngay trong step() trong khi con vừa bị huỷ
-      // còn chưa unwind. Chốt sớm hơn sẽ nuốt mất `finally` của chúng — Kotlin
-      // thì runBlocking chờ con unwind xong mới ném ra ngoài. Đã đo: dời chốt
-      // lên trước unwindCancelled -> test 'root FAIL vẫn để con chạy nốt
-      // finally' ĐỎ ([] thay vì ['cleanup']).
+      // Placed AFTER unwindCancelled and sweepWaiters, not before: when the
+      // root FAILS, its task finishes right inside step() while a child that
+      // was just cancelled hasn't unwound yet. Gating any earlier would
+      // swallow their `finally` — in Kotlin, runBlocking waits for children
+      // to finish unwinding before throwing outward. Measured: moving this
+      // gate before unwindCancelled turns the test 'root FAIL still lets
+      // children finish their finally' RED ([] instead of ['cleanup']).
       //
-      // CỐ Ý không phát cancel tổng hợp cho những coroutine bị bỏ lại: JVM giết
-      // thread daemon mà KHÔNG unwind, nên bịa ra Cancelled sẽ làm `finally`
-      // của chúng chạy — sai theo một kiểu khác. Trace để chúng nằm nguyên ở
-      // COROUTINE_SUSPENDED không có resume, đúng thứ đã xảy ra thật.
+      // DELIBERATELY does not emit a synthetic cancel for coroutines left
+      // behind: the JVM kills daemon threads WITHOUT unwinding them, so
+      // fabricating a Cancelled would run their `finally` — a different kind
+      // of wrong. The trace leaves them sitting at COROUTINE_SUSPENDED with
+      // no resume, exactly what really happened.
       if (this.rootJobId !== null && this.isJobSettled(this.rootJobId)) break
       this.emitter.setClock(this.clock.now)
       if (!this.clock.advanceToNextTimer()) break
       this.emitter.setClock(this.clock.now)
-      // Không quét waiter lại ở đây: callback của timer chỉ đẩy task vào ready,
-      // không đổi state job nào, nên không waiter nào có thể vừa được mở khoá.
+      // No re-sweep of waiters here: a timer's callback only pushes a task
+      // into ready, it doesn't change any job's state, so no waiter could
+      // have just been unblocked.
     }
   }
 
   /**
-   * Ném CancellationException vào các coroutine đã bị cancel nhưng còn đang
-   * lửng ở một điểm suspend, để `finally` trong code Kotlin thật sự chạy.
+   * Throw CancellationException into coroutines that have already been
+   * cancelled but are still suspended at a suspend point, so that `finally`
+   * blocks in the Kotlin code actually run.
    *
-   * Không có bước này thì cancelJob chỉ lật trạng thái Job: generator không
-   * bao giờ được resume, nên mọi khối finally im lặng không chạy — đúng thứ
-   * mà việc chọn generator đáng ra cho không (xem spec §2.3).
+   * Without this step, cancelJob only flips the Job's state: the generator
+   * is never resumed, so every finally block silently fails to run — exactly
+   * what choosing generators was supposed to give us for free (see spec §2.3).
    *
-   * Trả true nếu có unwind, để runToCompletion lặp lại trước khi nhảy đồng hồ.
+   * Returns true if anything unwound, so runToCompletion loops again before
+   * advancing the clock.
    */
   private unwindCancelled(): boolean {
     let did = false
     for (const task of this.taskOrder) {
       if (task.finished || !task.started) continue
-      const governing = this.jobChiPhối(task)
+      const governing = this.governingJob(task)
       if (!governing.isCancelled) continue
-      if (this.đangChờConCủaScope(task, governing)) continue
+      if (this.isWaitingForScopeChildren(task, governing)) continue
 
-      // KHÔNG đặt `finished` ở đây. Unwind có thể kéo dài qua nhiều lượt
-      // scheduler (xem `Task.unwinding`), mà `finished` là thứ `isJobSettled`
-      // đọc để trả lời "đã dọn dẹp xong chưa" — đặt sớm là đánh thức người chờ
-      // trước khi `finally` kịp chạy.
+      // Do NOT set `finished` here. Unwinding can span multiple scheduler
+      // turns (see `Task.unwinding`), and `finished` is what `isJobSettled`
+      // reads to answer "has cleanup finished" — setting it early would wake
+      // a waiter before `finally` has had a chance to run.
       task.unwinding = true
       did = true
       this.currentJob = task.job
-      // Ngăn xếp inline vẫn còn nguyên từ lúc task bị treo: `finally` chạy trên
-      // đường unwind nằm BÊN TRONG scope inline nào thì println của nó thuộc về
-      // scope ấy, y như khi chạy bình thường.
+      // The inline stack is still intact from when the task was suspended:
+      // `finally` running on the unwind path, if it's INSIDE some inline
+      // scope, belongs to that scope, exactly like during normal execution.
       this.currentTask = task
       let result: IteratorResult<Suspension, unknown> | null = null
       try {
-        // Generator chạy các finally trên đường unwind rồi ném lại.
+        // The generator runs any finally blocks on the unwind path and then re-throws.
         //
-        // Job FAIL phải nhận lại ĐÚNG exception gốc, không phải một
-        // CancellationException tổng hợp. Nếu luôn ném cái tổng hợp thì
-        // `try { coroutineScope { launch { throw RuntimeException("boom") } } }
-        //  catch (e: RuntimeException) { ... }` không bao giờ khớp, và người
-        // học thấy "Job was cancelled" ở đúng chỗ Kotlin thật cho "boom" —
-        // tức là công cụ dạy ngược cái khác biệt nó tồn tại để dạy.
-        // Job bị CANCEL từ ngoài thì `failure` là null và vẫn nhận
-        // CancellationException, đúng như Kotlin.
+        // A FAILED job must get back the EXACT original exception, not a
+        // synthetic CancellationException. If we always threw the synthetic
+        // one, `try { coroutineScope { launch { throw RuntimeException("boom") } } }
+        //  catch (e: RuntimeException) { ... }` would never match, and the
+        // learner would see "Job was cancelled" exactly where real Kotlin
+        // gives "boom" — i.e. the tool would teach the opposite of the very
+        // distinction it exists to teach.
+        // A job CANCELLED from outside has `failure` as null and still gets
+        // CancellationException, matching Kotlin.
         const f = governing.failure
         result = task.body.throw(f
           ? new KotlinThrow(f.exType, f.message)
           : new KotlinThrow('CancellationException', 'Job was cancelled'))
       } catch (err) {
-        // Generator ném lại exception KOTLIN sau khi finally đã chạy xong —
-        // bình thường, không phải lỗi, nuốt đúng.
+        // The generator re-throws the KOTLIN exception after finally has
+        // finished running — normal, not a bug, correctly swallowed here.
         //
-        // Nhưng `catch` TRẦN thì nuốt cả lỗi bất biến của chính engine ném ra từ
-        // một `finally` đang unwind — trong đó có "ngăn xếp inline lệch". Phép
-        // kiểm ấy tồn tại để hỏng thật ồn ào; bị nuốt ở đây thì nó thành trang
-        // trí, và một exception nội bộ còn THAY THẾ luôn CancellationException
-        // đang bay mà không để lại dấu vết nào.
+        // But a BARE `catch` would also swallow the engine's own invariant
+        // errors thrown from a `finally` mid-unwind — including "inline
+        // stack mismatch". That check exists to fail loudly; swallowed here,
+        // it becomes decorative, and an internal exception would even
+        // REPLACE the in-flight CancellationException without leaving a trace.
         if (isEngineError(err)) throw err
-        // Ném ra được tới đây nghĩa là generator đã unwind XONG.
+        // Reaching here means the generator has FINISHED unwinding.
         task.finished = true
         task.unwinding = false
       } finally {
@@ -462,10 +502,11 @@ export class Scheduler {
         this.currentTask = null
       }
       if (result === null) continue
-      // Tới đây thì `body.throw()` TRẢ VỀ chứ không ném: generator đã bắt được
-      // tín hiệu huỷ và còn việc phải làm. Bỏ rơi nó ở đây là bỏ luôn mọi
-      // `finally` phía sau điểm bắt — đúng cái mà việc chọn generator đáng ra
-      // cho không. Đưa nó trở lại đường chạy bình thường của scheduler.
+      // Reaching here means `body.throw()` RETURNED instead of throwing: the
+      // generator caught the cancellation signal and still has work to do.
+      // Abandoning it here would drop every `finally` past the catch point —
+      // exactly what choosing generators was supposed to give us for free.
+      // Hand it back to the scheduler's normal run path.
       if (result.done) this.completeTask(task, result.value)
       else this.suspend(task, result.value)
     }
@@ -473,40 +514,47 @@ export class Scheduler {
   }
 
   /**
-   * Job nào đang thật sự chi phối việc task này còn được chạy tiếp hay không.
+   * Which job actually governs whether this task keeps being allowed to run.
    *
-   * Không phải lúc nào cũng là `task.job`: khi task đang treo giữa thân một
-   * scope inline (`coroutineScope { delay(1000) }`), thân đó thuộc về job của
-   * scope, và chính job đó mới là cái bị huỷ khi một con của scope fail. Trước
-   * đây chỉ xét `task.job` nên tín hiệu huỷ không bao giờ tới nơi: job của scope
-   * đổi state đúng, nhưng "task" của nó là generator rỗng chưa từng chạy, còn
-   * generator thật thì thuộc task cha — mà cha không bị huỷ.
+   * Not always `task.job`: while a task is suspended in the middle of an
+   * inline scope's body (`coroutineScope { delay(1000) }`), that body
+   * belongs to the scope's job, and that job is exactly the one that gets
+   * cancelled when one of the scope's children fails. This used to only look
+   * at `task.job`, so the cancellation signal never arrived: the scope's job
+   * changed state correctly, but its "task" is an empty generator that never
+   * ran, while the real generator belongs to the parent task — and the
+   * parent wasn't cancelled.
    */
-  private jobChiPhối(task: Task): Job {
+  private governingJob(task: Task): Job {
     return task.inlineStack[task.inlineStack.length - 1] ?? task.job
   }
 
   /**
-   * Task đang đỗ ở `joinChildren` CỦA CHÍNH scope inline đang chi phối nó —
-   * tức scope ấy đã TỰ biết mình hỏng và đang chờ con chạy hết `finally` trước
-   * khi ném lại ở khung người gọi (`runInlineBody`, cả đường thuận lẫn đường
-   * `catch`). Đây là "đừng ném lần thứ hai cho cùng một job": tín hiệu huỷ đã
-   * ở trong generator rồi, ném thêm lần nữa rơi đúng vào cái `yield
-   * joinChildren` đang chờ và CẮT LUÔN việc chờ — người gọi chạy `catch` trước
-   * khi con kịp dọn dẹp, đúng lỗi R1 mà M1 đã sửa một lần.
+   * Whether a task is parked at `joinChildren` for the SAME inline scope
+   * currently governing it — i.e. that scope already KNOWS it's broken and
+   * is waiting for its children to finish running `finally` before
+   * re-throwing at the caller's frame (`runInlineBody`, both the normal path
+   * and the `catch` path). This is the "don't throw a second time for the
+   * same job" guard: the cancellation signal is already inside the
+   * generator, and throwing again would land right on that pending `yield
+   * joinChildren` and CUT THE WAIT SHORT — the caller's `catch` would run
+   * before the children finished cleaning up, exactly bug R1 that M1 already
+   * fixed once.
    *
-   * Đọc thẳng từ `waiters` chứ không giữ thêm cờ trên Task: `waiters` là mô tả
-   * ĐẦY ĐỦ của "đang đỗ ở joinChildren" tại thời điểm này, vì `unwindCancelled`
-   * chỉ chạy khi `ready` đã cạn (xem runToCompletion) — không có task nào vừa
-   * được đánh thức mà chưa kịp chạy. Cờ song song sẽ ôi thiu ở đúng những
-   * đường không ai nhớ cập nhật.
+   * Reads straight from `waiters` instead of keeping a parallel flag on
+   * Task: `waiters` is a COMPLETE description of "parked at joinChildren" at
+   * this moment, because `unwindCancelled` only ever runs once `ready` has
+   * drained (see runToCompletion) — no task can have just been woken without
+   * having had a chance to run yet. A parallel flag would go stale on
+   * exactly the paths nobody remembers to update.
    *
-   * `inlineStack.length > 0` là điều kiện thật, không phải cho vui: mọi thân
-   * launch/async/root đều kết thúc bằng một `joinChildren` cho CHÍNH job mình.
-   * Thiếu nó thì một launch bị huỷ từ ngoài trong lúc chờ con sẽ không bao giờ
-   * nhận được tín hiệu huỷ, và người `join()` nó treo vĩnh viễn.
+   * `inlineStack.length > 0` is a real condition, not decoration: every
+   * launch/async/root body ends with a `joinChildren` for its OWN job.
+   * Without it, a launch cancelled from outside while waiting for its
+   * children would never receive the cancellation signal, and whoever
+   * `join()`s it would hang forever.
    */
-  private đangChờConCủaScope(task: Task, governing: Job): boolean {
+  private isWaitingForScopeChildren(task: Task, governing: Job): boolean {
     if (task.inlineStack.length === 0) return false
     return this.waiters.some(
       w => w.task === task && w.kind === 'children' && w.targetId === governing.id)
@@ -514,38 +562,42 @@ export class Scheduler {
 
   private step(task: Task): void {
     const { job } = task
-    // `task.unwinding` là ngoại lệ có chủ ý của chốt "job xong rồi thì thôi":
-    // một generator ĐANG unwind vẫn còn `finally` phải chạy và phần đuôi
-    // (`joinChildren` chờ con dọn dẹp) phải hoàn tất, mà job của nó thì đã
-    // Cancelled từ trước khi tín hiệu huỷ được ném vào. Chặn ở đây là bỏ rơi
-    // generator giữa chừng: `finally` không chạy, `finished` không bao giờ
-    // được đặt, và người `join()` nó treo vĩnh viễn.
+    // `task.unwinding` is a deliberate exception to the "job is already done,
+    // so stop" gate: a generator that is CURRENTLY unwinding still has
+    // `finally` blocks to run and a tail (`joinChildren` waiting for
+    // children to clean up) to finish, even though its job was already
+    // Cancelled before the cancellation signal was thrown in. Gating here
+    // would abandon the generator mid-flight: `finally` wouldn't run,
+    // `finished` would never be set, and whoever `join()`s it would hang
+    // forever.
     if (job.isCompleted && !task.unwinding) return
 
     const acquired = this.pool.acquire(task.ctx.dispatcher, job.id)
     if (acquired === null) {
-      // KHÔNG được bịa ra một thread id ở đây. release() sau đó sẽ giải phóng
-      // đúng thread mang id bịa ấy — có thể đang bận chạy job khác — làm hỏng
-      // state của pool và sinh THREAD_STATE 'FREE' cho thread thật ra đang chạy.
-      // Ở M1 scheduler chạy tuần tự từng task nên pool không bao giờ cạn;
-      // nếu cạn thì đó là bất biến bị vỡ, phải chết ngay chứ không hỏng ngầm.
+      // MUST NOT fabricate a thread id here. A subsequent release() would
+      // free the thread with that made-up id — which could be busy running a
+      // different job — corrupting the pool's state and producing a
+      // THREAD_STATE 'FREE' for a thread that's actually still running. In
+      // M1 the scheduler runs tasks strictly one at a time, so the pool
+      // never runs dry; if it does, an invariant has broken and we must die
+      // immediately rather than corrupt state silently.
       throw new Error(
-        `Scheduler: pool '${task.ctx.dispatcher}' cạn thread khi chạy ${job.id}. ` +
-        'Bất biến "mỗi lượt chỉ chạy một task" đã bị vỡ.',
+        `Scheduler: pool '${task.ctx.dispatcher}' ran out of threads while running ${job.id}. ` +
+        'The "only one task runs per turn" invariant has been broken.',
       )
     }
     const threadId = acquired
     this.currentJob = job
     this.currentTask = task
 
-    // DISPATCH nghĩa là ĐỔI dispatcher, không phải "được xếp lịch". Phát khi:
-    //  - task vừa qua switchContext (withContext đổi dispatcher), hoặc
-    //  - lần chạy đầu tiên của một coroutine có dispatcher khác cha nó.
-    // Nếu phát ở mọi lần acquire thì nó trùng lặp COROUTINE_STARTED/RESUMED và
-    // mất hẳn ý nghĩa "chỗ này đổi thread".
+    // DISPATCH means a dispatcher CHANGE, not "was scheduled". Emitted when:
+    //  - a task just went through switchContext (withContext changing dispatcher), or
+    //  - the first run of a coroutine whose dispatcher differs from its parent's.
+    // Emitting it on every acquire would duplicate COROUTINE_STARTED/RESUMED
+    // and completely lose the meaning of "this is where the thread changed".
     //
-    // Phải nằm TRƯỚC khối `task.started = true` bên dưới: điều kiện lần-đầu đọc
-    // chính cờ đó.
+    // Must come BEFORE the `task.started = true` block below: the first-run
+    // condition reads that very flag.
     const pending = this.pendingDispatch.get(task)
     this.pendingDispatch.delete(task)
     if (pending) {
@@ -558,11 +610,13 @@ export class Scheduler {
     }
 
     if (!task.started) {
-      // `New -> Active` KHÔNG còn xảy ra ở đây từ Task 19: job đã Active ngay
-      // lúc `spawn`/`spawnChildOf` tạo ra nó (khớp CoroutineStart.DEFAULT thật
-      // của Kotlin). Chỗ này chỉ còn đánh dấu THỰC THI bắt đầu — COROUTINE_STARTED
-      // là sự kiện chạy, khác với Active là trạng thái vòng đời; cố tình giữ
-      // `task.started` và event này nguyên chỗ cũ, không dời theo Active.
+      // `New -> Active` no longer happens here as of Task 19: the job is
+      // already Active the instant `spawn`/`spawnChildOf` creates it
+      // (matching real Kotlin's CoroutineStart.DEFAULT). This spot now only
+      // marks the start of EXECUTION — COROUTINE_STARTED is a run-time
+      // event, distinct from Active, which is a lifecycle state; `task.started`
+      // and this event are deliberately kept right where they were, not
+      // moved to track Active.
       task.started = true
       this.emitter.emit({ k: 'COROUTINE_STARTED', id: job.id, threadId }, task.startLine)
     } else {
@@ -572,10 +626,11 @@ export class Scheduler {
 
     let result: IteratorResult<Suspension, unknown>
     try {
-      // Hai đường resume. Đường `throw` là của `await` trên Deferred đã fail:
-      // exception phải nảy ra TỪ TRONG generator, tại đúng dòng gọi await, để
-      // try/catch của code Kotlin quanh chỗ đó bắt được. Dọn cả hai trường
-      // TRƯỚC khi gọi, kẻo một lần resume sau lại dùng lại giá trị cũ.
+      // Two resume paths. The `throw` path is for `await` on a Deferred that
+      // already failed: the exception must surface FROM INSIDE the
+      // generator, at the exact line that called await, so that Kotlin
+      // code's try/catch around that spot catches it. Clear both fields
+      // BEFORE calling, or a later resume would reuse a stale value.
       const thrown = task.resumeThrow
       const resumed = task.resumeValue
       task.resumeThrow = undefined
@@ -583,21 +638,23 @@ export class Scheduler {
       result = thrown !== undefined ? task.body.throw(thrown) : task.body.next(resumed)
     } catch (err) {
       task.finished = true
-      // Exception đã ra khỏi generator: nếu đây là phần đuôi của một đợt unwind
-      // thì đợt ấy kết thúc tại đây.
+      // The exception has left the generator: if this was the tail of an
+      // unwind, that unwind ends right here.
       task.unwinding = false
       this.pool.release(threadId)
       this.emitter.emit({ k: 'THREAD_STATE', threadId, state: 'FREE' })
       this.currentJob = null
       this.currentTask = null
-      // Cùng lý do (và cùng cách canh) như failInline: job đã kết thúc RỒI thì
-      // đây không phải failure mới, chỉ là cùng một exception đang đi ngược ra
-      // qua khung của nó. Ghi lại lần nữa là nhân đôi sự kiện — và tệ hơn, ghi
-      // EXCEPTION_THROWN cho một job mà trace vừa tuyên bố là đã chết.
+      // Same reason (and same guard) as failInline: if the job has ALREADY
+      // finished, this isn't a new failure, just the same exception
+      // continuing to unwind back out through its frame. Recording it again
+      // would duplicate the event — and worse, emit EXCEPTION_THROWN for a
+      // job the trace has just declared dead.
       //
-      // job.isCompleted ở ĐÂY khác với lần kiểm ở đầu step(): nó có thể vừa
-      // chuyển sang kết thúc TRONG lúc body.next() chạy, do chính thân nó làm
-      // failure leo lên qua job này.
+      // job.isCompleted HERE differs from the check at the top of step(): it
+      // may have just transitioned to a terminal state WHILE body.next() was
+      // running, because the body's own failure propagated up through this
+      // very job.
       if (job.isCompleted) return
       const cause = toCause(err)
       this.emitter.emit(
@@ -620,20 +677,21 @@ export class Scheduler {
   }
 
   /**
-   * Generator của task đã chạy hết: ghi kết quả rồi đóng job.
+   * The task's generator has finished running: record the result and close out the job.
    *
-   * Dùng CHUNG cho hai đường tới đích — `step()` (đường thuận) và
-   * `unwindCancelled` (generator nuốt tín hiệu huỷ rồi chạy nốt tới hết). Hai
-   * bản sao của khối này sẽ trôi khỏi nhau, và cái trôi được là thứ im lặng:
-   * quên `job.result` thì `await` đọc phải undefined, quên chuyển trạng thái
-   * thì job đứng mãi ở Active trong trace.
+   * Shared by both paths that reach this destination — `step()` (the normal
+   * path) and `unwindCancelled` (the generator caught the cancellation
+   * signal and ran on to completion). Two copies of this block would drift
+   * apart, and the drift would be silent: forget `job.result` and `await`
+   * reads undefined; forget the state transition and the job sits at Active
+   * forever in the trace.
    */
   private completeTask(task: Task, value: unknown): void {
     const { job } = task
     task.finished = true
     task.unwinding = false
-    // Lưu TRƯỚC khi chuyển trạng thái: người chờ được đánh thức theo trạng
-    // thái, nên nếu ghi sau thì await có thể đọc phải result còn rỗng.
+    // Store BEFORE transitioning state: waiters are woken based on state, so
+    // writing this after could let await read a still-empty result.
     job.result = value
     if (!job.isCompleted) {
       job.transitionTo('Completing')
@@ -644,20 +702,23 @@ export class Scheduler {
   }
 
   private suspend(task: Task, s: Suspension): void {
-    // `switchContext` là điểm nhường quyền KỸ THUẬT (phải trả thread cũ rồi mới
-    // lấy được thread mới), KHÔNG phải điểm suspend mà người học cần thấy như
-    // delay/await/join. Kotlin cũng không coi withContext là suspend point của
-    // coroutine gọi theo nghĩa đó. Phát COROUTINE_SUSPENDED ở đây sẽ nhét thêm
-    // một cặp suspended/resumed vào timeline cho MỌI withContext đổi dispatcher,
-    // làm nhiễu đúng thứ mà bài học muốn chỉ ra: chỗ đổi thread.
+    // `switchContext` is a TECHNICAL yield point (the old thread must be
+    // released before the new one can be acquired), NOT a suspend point the
+    // learner needs to see the way delay/await/join are. Kotlin doesn't
+    // treat withContext as a suspend point of the calling coroutine in that
+    // sense either. Emitting COROUTINE_SUSPENDED here would inject an extra
+    // suspended/resumed pair into the timeline for EVERY dispatcher-changing
+    // withContext, drowning out the exact thing the lesson wants to
+    // highlight: where the thread changed.
     if (s.s !== 'switchContext') {
-      // 'joinChildren' không có trong schema Event — gom về 'join' khi ghi trace.
+      // 'joinChildren' isn't part of the Event schema — collapse it to 'join' when recording the trace.
       const reason = s.s === 'joinChildren' ? 'join' : s.s
       this.emitter.emit({ k: 'COROUTINE_SUSPENDED', id: task.job.id, reason }, s.line)
     }
-    // Nhớ chỗ đang treo để lần resume tới trỏ đúng về đây. `joinChildren` do
-    // builder tự sinh nên không mang dòng nào — giữ NGUYÊN giá trị cũ thay vì
-    // ghi đè bằng undefined, nếu không resume sau một joinChildren sẽ mất dòng.
+    // Remember where it's suspended so the next resume points back here
+    // correctly. `joinChildren` is generated by the builder itself and
+    // carries no line — KEEP the old value instead of overwriting it with
+    // undefined, otherwise resuming after a joinChildren would lose the line.
     if (s.line !== undefined) {
       task.resumeLine = s.line
       task.job.suspendedAtLine = s.line
@@ -671,17 +732,20 @@ export class Scheduler {
         this.ready.push(task)
         break
       case 'join': {
-        // Cùng điều kiện với sweepWaiters — nếu hai chỗ lệch nhau thì join()
-        // trả về ngay hay phải chờ sẽ phụ thuộc vào thời điểm ngẫu nhiên.
+        // Same condition as sweepWaiters — if the two ever drift apart,
+        // whether join() returns immediately or has to wait would depend on
+        // random timing.
         if (this.isJobSettled(s.jobId)) { this.ready.push(task); break }
         this.waiters.push({ task, kind: 'join', targetId: s.jobId })
         break
       }
       case 'await': {
-        // KHÁC 'join' đúng một chỗ: await đọc kết quả, nên đi qua wakeAwaiter.
-        // Deferred đã settled từ trước cũng phải đi đường đó — nếu ở đây dùng
-        // ready.push như join thì `await` trên Deferred fail sớm sẽ im lặng
-        // trả Unit, còn cùng đoạn code với Deferred fail muộn lại ném.
+        // Differs from 'join' in exactly one place: await reads the result,
+        // so it goes through wakeAwaiter. A Deferred that already settled
+        // must also go through that path — if this used ready.push like
+        // join, an `await` on a Deferred that failed early would silently
+        // return Unit, while the exact same code with a Deferred that failed
+        // late would throw.
         if (this.isJobSettled(s.jobId)) { this.wakeAwaiter(task, s.jobId); break }
         this.waiters.push({ task, kind: 'await', targetId: s.jobId })
         break
@@ -696,9 +760,10 @@ export class Scheduler {
       }
       case 'switchContext': {
         task.ctx = task.ctx.withDispatcher(s.dispatcher)
-        // Thread cũ đã được release ở cuối step(); thread mới sẽ acquire ở step
-        // kế. DISPATCH phải mang threadId MỚI, mà threadId chỉ biết được sau khi
-        // acquire — nên ghi nợ ở đây, trả ở đầu step() kế.
+        // The old thread was already released at the end of step(); the new
+        // thread will be acquired on the next step. DISPATCH must carry the
+        // NEW threadId, which is only known after acquire — so record it as
+        // owed here, and pay it off at the top of the next step().
         this.pendingDispatch.set(task, { jobId: s.jobId, line: s.line })
         this.ready.push(task)
         break
@@ -711,26 +776,31 @@ export class Scheduler {
   }
 
   /**
-   * launch/async: tạo child dưới `parentJobId` (lấy từ Env, KHÔNG lấy từ
-   * currentJob — xem ghi chú trong Env), chạy sau, xếp cuối hàng ready.
+   * launch/async: creates a child under `parentJobId` (taken from Env, NOT
+   * from currentJob — see the note in Env), which runs later, appended to
+   * the end of the ready queue.
    *
-   * Cha ĐÃ KẾT THÚC là ca riêng: con vẫn được TẠO RA (nó là một Job có thật,
-   * đọc được `isCancelled`) nhưng bị huỷ ngay và KHÔNG vào hàng ready, nên thân
-   * nó không bao giờ chạy. Đã đối chiếu Kotlin thật (2.1.20):
+   * A parent that has ALREADY FINISHED is a special case: the child is still
+   * CREATED (it's a real Job — `isCancelled` reads correctly on it) but is
+   * cancelled immediately and NEVER enters the ready queue, so its body
+   * never runs at all. Verified against real Kotlin (2.1.20):
    *
    *   val scope = CoroutineScope(Job()); scope.cancel()
    *   val j = scope.launch { println("BODY"); ... finally { println("FINALLY") } }
-   *   -> isCancelled=true, isActive=false, và KHÔNG in gì cả — cả BODY lẫn
-   *      FINALLY. Thân chưa từng bắt đầu thì cũng không có gì để unwind. (Đây
-   *      chính là lý do Kotlin phải có withContext(NonCancellable) cho dọn dẹp.)
+   *   -> isCancelled=true, isActive=false, and NOTHING is printed — neither
+   *      BODY nor FINALLY. A body that never started has nothing to unwind.
+   *      (This is exactly why Kotlin needs withContext(NonCancellable) for
+   *      cleanup work.)
    *
-   * Thiếu guard này thì trace sinh ra một hình dạng BẤT KHẢ THI: node cha
-   * 'Cancelled' chứa node con 'Completed'. Ngưỡng đó chỉ mở ra từ khi có
-   * spawnScopeRoot — trước đó không job nào có thể chết trong khi code còn sinh
-   * được con dưới nó, vì `scope.cancel()` chưa huỷ được gì.
+   * Without this guard, the trace would produce an IMPOSSIBLE shape: a
+   * 'Cancelled' parent node containing a 'Completed' child node. That door
+   * only opened once spawnScopeRoot existed — before that, no job could die
+   * while code was still spawning children under it, because `scope.cancel()`
+   * couldn't have cancelled anything yet.
    *
-   * Cũng đúng cho `finally { launch { } }` bên trong một coroutine đang bị huỷ:
-   * cha ở Cancelled nên con mới không chạy — y như Kotlin.
+   * Also correct for `finally { launch { } }` inside a coroutine that's
+   * already being cancelled: the parent is already Cancelled, so the new
+   * child simply never runs — exactly like Kotlin.
    */
   spawnChildOf(
     parentJobId: JobId | null,
@@ -745,16 +815,17 @@ export class Scheduler {
     const parentCtx = parent ? this.tasks.get(parent.id)!.ctx : CoroutineContext.empty()
     const job = this.spawn(parent, false, builder, parentCtx.plus(ctx), makeBody, srcLine, startLine, varName)
     if (parent?.isCompleted) {
-      // Rút khỏi ready SAU KHI spawn, không phải thêm cờ vào spawn: COROUTINE_CREATED
-      // phải được phát bình thường (con có tồn tại — Kotlin trả về một Job đọc
-      // được), chỉ có việc CHẠY là không xảy ra. Tìm theo danh tính chứ không
-      // giả định nó là phần tử cuối.
+      // Pull it out of ready AFTER spawn, rather than adding a flag to spawn:
+      // COROUTINE_CREATED must still be emitted normally (the child does
+      // exist — Kotlin returns a readable Job), only RUNNING doesn't happen.
+      // Found by identity, not assumed to be the last element.
       const i = this.ready.findIndex(t => t.job === job)
       if (i >= 0) this.ready.splice(i, 1)
-      // CancellationException tổng hợp, KHÔNG phải `parent.cause`. Đã đo:
-      // `scope.async { }.await()` trên scope đã huỷ ném JobCancellationException,
-      // không ném lại lý do gốc đã giết scope. Dùng parent.cause ở đây sẽ khiến
-      // wakeAwaiter ném ra exception của kẻ khác tại điểm await — sai kiểu tinh vi.
+      // A synthetic CancellationException, NOT `parent.cause`. Measured:
+      // `scope.async { }.await()` on an already-cancelled scope throws
+      // JobCancellationException, not a re-throw of whatever originally
+      // killed the scope. Using parent.cause here would make wakeAwaiter
+      // throw someone else's exception at the await point — a subtle bug.
       cancelJob(job, {
         exType: 'CancellationException', message: 'Job was cancelled', isCancellation: true,
       }, this.emitter, parent.id)
@@ -763,8 +834,8 @@ export class Scheduler {
   }
 
   /**
-   * coroutineScope/supervisorScope/runBlocking/withContext: tạo Job trong cây
-   * nhưng thân chạy ngay tại chỗ, không xếp hàng riêng.
+   * coroutineScope/supervisorScope/runBlocking/withContext: creates a Job in
+   * the tree, but the body runs right here, not queued separately.
    */
   spawnInline(
     builder: 'runBlocking' | 'coroutineScope' | 'supervisorScope' | 'withContext',
@@ -776,8 +847,9 @@ export class Scheduler {
     const parentCtx = parent ? this.tasks.get(parent.id)!.ctx : CoroutineContext.empty()
     const merged = parentCtx.plus(ctx)
     const id = this.newJobId()
-    // runBlocking KHÔNG phải scope coroutine: BlockingCoroutine của kotlinx
-    // chặn luồng gọi chứ không trả exception vào continuation. Xem Job.isScopeCoroutine.
+    // runBlocking is NOT a scope coroutine: kotlinx's BlockingCoroutine
+    // blocks the calling thread rather than returning the exception into a
+    // continuation. See Job.isScopeCoroutine.
     const job = new Job(id, merged.name ?? id, parent, isSupervisor, builder !== 'runBlocking')
     parent?.addChild(job)
     const jobCtx = merged.withJob(job)
@@ -794,32 +866,36 @@ export class Scheduler {
     }
     this.tasks.set(id, task)
     this.taskOrder.push(task)
-    // KHÔNG push vào ngăn xếp inline ở đây. Việc TẠO job và việc BƯỚC VÀO scope
-    // là hai thời điểm khác nhau: giữa chúng, withContext còn yield một điểm đổi
-    // dispatcher, và task có thể bị huỷ ngay tại điểm đó. Push ở đây thì cú push
-    // ấy nằm NGOÀI try/finally sở hữu cú pop, nên lần huỷ đó rò một job trong
-    // ngăn xếp. Người gọi phải tự gọi `enterInline` làm câu lệnh đầu tiên trong
-    // chính cái try có `exitInline` ở finally.
+    // Do NOT push onto the inline stack here. CREATING the job and ENTERING
+    // the scope are two different moments: between them, withContext still
+    // yields a dispatcher-switch point, and the task could be cancelled
+    // right at that point. Pushing here would put that push OUTSIDE the
+    // try/finally that owns the matching pop, so that cancellation would
+    // leak a job off the stack. The caller must call `enterInline`
+    // themselves as the first statement, inside the very same try that has
+    // `exitInline` in its finally.
     return job
   }
 
   /**
-   * Job GỐC đại diện cho một `CoroutineScope(ctx)`. Không cha, không thân
-   * generator, không bao giờ vào hàng ready — nó chỉ là điểm neo cấu trúc để
-   * `scope.launch` có cha thật và để SupervisorJob có chỗ mà chặn failure.
+   * The ROOT job representing a `CoroutineScope(ctx)`. No parent, no
+   * generator body, never enters the ready queue — it's purely a structural
+   * anchor so `scope.launch` has a real parent, and so a SupervisorJob has
+   * somewhere to block failure.
    *
-   * Không tự Completed: trong Kotlin, scope do user tự dựng sống cho tới khi bị
-   * cancel. Nó kết thúc khi `scope.cancel()` được gọi, hoặc không bao giờ.
+   * Does not auto-Complete: in Kotlin, a user-built scope lives until it's
+   * cancelled. It ends when `scope.cancel()` is called, or never.
    *
-   * KHÁC spawnInline ở hai chỗ, và cả hai đều cố ý:
-   *   - `parent` luôn null. `CoroutineScope(ctx)` KHÔNG treo dưới coroutine bao
-   *     quanh — đó chính là lý do nó thoát khỏi structured concurrency của nơi
-   *     gọi, và là nửa đầu bài học.
-   *   - task mang `finished: true` ngay từ đầu. Không có generator nào để chạy
-   *     nên cũng không có gì để unwind: `unwindCancelled` phải BỎ QUA nó (nếu
-   *     không, `scope.cancel()` sẽ gọi `.throw()` vào một generator rỗng, tốn
-   *     một vòng lặp mà không sinh sự kiện nào), còn `isJobSettled` thì rơi về
-   *     đúng câu hỏi duy nhất có nghĩa với job này: state đã kết thúc chưa.
+   * DIFFERS from spawnInline in two deliberate ways:
+   *   - `parent` is always null. `CoroutineScope(ctx)` does NOT hang beneath
+   *     the surrounding coroutine — that's exactly why it escapes the
+   *     caller's structured concurrency, and it's the first half of the lesson.
+   *   - the task has `finished: true` from the start. There's no generator
+   *     to run, so there's nothing to unwind: `unwindCancelled` must SKIP it
+   *     (otherwise `scope.cancel()` would call `.throw()` into an empty
+   *     generator, burning a loop iteration with no event produced), while
+   *     `isJobSettled` falls back to the only question that means anything
+   *     for this job: has the state reached an end state.
    */
   spawnScopeRoot(ctx: CoroutineContext, isSupervisor: boolean, varName?: string): Job {
     const id = this.newJobId()
@@ -843,54 +919,61 @@ export class Scheduler {
   }
 
   /**
-   * BƯỚC VÀO một scope inline: từ đây tới `exitInline`, mọi event nhân danh "job
-   * hiện tại" thuộc về scope này chứ không thuộc task bao ngoài.
+   * ENTER an inline scope: from here until `exitInline`, every event emitted
+   * on behalf of "the current job" belongs to this scope, not to the
+   * enclosing task.
    *
-   * Tách khỏi `spawnInline` và bắt buộc gọi làm câu lệnh ĐẦU TIÊN trong chính
-   * cái `try` có `exitInline` ở `finally`. Push ở chỗ khác thì có một cửa sổ
-   * trong đó ngăn xếp đã bẩn mà `finally` chưa canh: `withContext` yield điểm
-   * đổi dispatcher NGAY SAU khi tạo job, và nếu job bị huỷ tại đúng điểm đó thì
-   * `unwindCancelled` ném vào generator TRƯỚC `try` — pop không bao giờ chạy, và
-   * mọi println về sau (kể cả `finally` dọn dẹp của người dùng) mang id của một
-   * scope chưa từng chạy thân. Đã đo được đúng lỗi ấy trước khi tách.
+   * Kept separate from `spawnInline` and required to be called as the FIRST
+   * statement inside the very same `try` that has `exitInline` in its
+   * `finally`. Pushing anywhere else opens a window where the stack is dirty
+   * but the `finally` isn't armed to fix it yet: `withContext` yields a
+   * dispatcher-switch point RIGHT AFTER creating the job, and if the job is
+   * cancelled at exactly that point, `unwindCancelled` throws into the
+   * generator BEFORE `try` — the pop never runs, and every println after
+   * that (including the user's own cleanup `finally`) gets tagged with the
+   * id of a scope whose body never ran. This exact bug was measured before
+   * splitting it out.
    */
   enterInline(job: Job): void {
     if (!this.currentTask) {
       throw new Error(
-        `Scheduler: enterInline(${job.id}) ngoài lúc chạy một task. Scope inline chỉ ` +
-        'tồn tại bên trong thân một coroutine — không có task thì không có ngăn xếp để push.',
+        `Scheduler: enterInline(${job.id}) outside of running a task. An inline scope only ` +
+        'exists inside a coroutine body — no task means no stack to push onto.',
       )
     }
     this.currentTask.inlineStack.push(job)
   }
 
   /**
-   * Rời một scope inline. Pop phải đúng job đang ở đỉnh — nếu không khớp, ném
-   * lỗi thay vì im lặng, vì lệch ngăn xếp sẽ gán nhầm job cho MỌI println về sau.
+   * Leave an inline scope. The pop must match the job on top — if it
+   * doesn't, throw instead of failing silently, since a mismatched stack
+   * would misattribute EVERY println that follows.
    *
-   * Gọi từ interpreter trong `finally`, KHÔNG gọi từ completeInline/failInline.
-   * Scope inline có BA đường thoát, và đường thứ ba — con của scope fail nên
-   * interpreter ném lại tại `if (job.failure)` — không đi qua hàm nào trong hai
-   * hàm đó. Đặt pop ở đấy thì ngăn xếp rò đúng ở ca ấy.
+   * Called from the interpreter's `finally`, NOT from completeInline/failInline.
+   * An inline scope has THREE exit paths, and the third — a child of the
+   * scope fails, so the interpreter re-throws at `if (job.failure)` — goes
+   * through neither of those two functions. Putting the pop there would leak
+   * the stack on exactly that path.
    */
   exitInline(job: Job): void {
     const task = this.currentTask
     if (!task) {
-      throw new Error(`Scheduler: exitInline(${job.id}) ngoài lúc chạy một task`)
+      throw new Error(`Scheduler: exitInline(${job.id}) outside of running a task`)
     }
     const top = task.inlineStack.pop()
     if (top !== job) {
       throw new Error(
-        `Scheduler: ngăn xếp inline lệch — pop ${job.id} nhưng đỉnh là ${top?.id ?? 'rỗng'}`,
+        `Scheduler: inline stack mismatch — popped ${job.id} but the top was ${top?.id ?? 'empty'}`,
       )
     }
   }
 
   /**
-   * Task của scope inline không có generator thật (thân chạy trong task bao
-   * ngoài), nên không đường nào đặt `finished` cho nó. Từ khi người chờ hỏi cả
-   * `finished` chứ không chỉ state, bỏ sót bước này sẽ làm joinChildren của cha
-   * treo vĩnh viễn trên một scope đã Completed.
+   * An inline scope's task has no real generator (its body runs inside the
+   * enclosing task), so nothing else ever sets `finished` for it. Now that
+   * waiters check `finished` and not just state, skipping this step would
+   * leave a parent's joinChildren hanging forever on a scope that's already
+   * Completed.
    */
   private settleInline(job: Job): void {
     const task = this.tasks.get(job.id)
@@ -907,20 +990,22 @@ export class Scheduler {
   }
 
   /**
-   * Đối xứng với completeInline, cho đường THẤT BẠI của scope inline
-   * (coroutineScope/supervisorScope/runBlocking/withContext).
+   * The counterpart to completeInline, for the FAILURE path of an inline
+   * scope (coroutineScope/supervisorScope/runBlocking/withContext).
    *
-   * Không có hàm này thì interpreter chỉ có completeInline để gọi trong
-   * `finally`, nghĩa là một exception thoát khỏi thân scope vẫn được ghi vào
-   * trace là HOÀN THÀNH THÀNH CÔNG: con của scope không ai huỷ (chạy tiếp như
-   * mồ côi), không có FAILURE_PROPAGATED nào, và EXCEPTION_THROWN bị gán cho
-   * job bao ngoài chứ không phải cho chính scope.
+   * Without this function, the interpreter would only have completeInline to
+   * call in `finally`, meaning an exception escaping the scope's body would
+   * still be recorded in the trace as a SUCCESSFUL COMPLETION: the scope's
+   * children would never be cancelled (running on as orphans), no
+   * FAILURE_PROPAGATED would be emitted, and EXCEPTION_THROWN would be
+   * attributed to the enclosing job instead of to the scope itself.
    */
   failInline(job: Job, cause: FailureCause): void {
     this.settleInline(job)
-    // Job đã kết thúc rồi thì đây không phải failure mới — chỉ là cùng một
-    // exception đang đi ngược ra qua khung của scope (vd. scope đã bị con của
-    // nó kéo chết trước đó). Ghi lại lần nữa là nhân đôi sự kiện.
+    // If the job has already finished, this isn't a new failure — just the
+    // same exception continuing to unwind back out through the scope's frame
+    // (e.g. the scope was already killed earlier by one of its own children).
+    // Recording it again would duplicate the event.
     if (job.isCompleted) return
     this.emitter.emit({
       k: 'EXCEPTION_THROWN', id: job.id, exType: cause.exType, message: cause.message,

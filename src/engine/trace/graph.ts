@@ -4,14 +4,14 @@ export interface GraphNodeSpec {
   id: JobId
   parentId: JobId | null
   builder: string
-  /** Container ⟺ có ≥1 con. KHÔNG suy theo builder: launch/async cũng có con. */
+  /** Container ⟺ has ≥1 child. NOT inferred from builder: launch/async can have children too. */
   isContainer: boolean
   isSupervisor: boolean
   name: string | null
-  /** Tên biến người học gán coroutine này vào. Xem Event COROUTINE_CREATED. */
+  /** Variable name the learner assigns this coroutine to. See Event COROUTINE_CREATED. */
   varName: string | null
   dispatcher: string
-  /** seq của COROUTINE_CREATED. UI dùng để biết node đã "sinh ra" ở step nào. */
+  /** seq of the COROUTINE_CREATED. The UI uses this to know at which step the node was "born". */
   bornAt: number
 }
 
@@ -20,9 +20,9 @@ export interface GraphEdgeSpec {
   source: JobId
   target: JobId
   kind: 'child' | 'failure' | 'cancel'
-  /** Chỉ có nghĩa với kind 'failure'. */
+  /** Only meaningful for kind 'failure'. */
   blocked: boolean
-  /** seq của event đầu tiên tạo ra cạnh này. */
+  /** seq of the first event that produced this edge. */
   firstSeq: number
 }
 
@@ -32,17 +32,19 @@ export interface GraphSpec {
 }
 
 /**
- * Bộ xương graph, suy từ TOÀN BỘ trace — cố ý không nhận `upTo`.
+ * Graph skeleton, derived from the WHOLE trace — deliberately takes no `upTo`.
  *
- * Vì sao không dựng graph từ `foldTrace(events, n)`: tập job lớn dần theo step,
- * nên ELK sẽ nhận đồ thị khác nhau ở mỗi step và trả toạ độ khác nhau. Mọi node
- * đã có sẽ nhảy chỗ mỗi khi một node mới sinh ra — không tua được.
+ * Why not build the graph from `foldTrace(events, n)`: the set of jobs grows
+ * step by step, so ELK would receive a different graph at every step and
+ * return different coordinates. Every existing node would jump to a new spot
+ * each time a new node is born — scrubbing would be impossible.
  *
- * Tách hình dạng (hàm này, bất biến) khỏi trạng thái (`foldTrace`, theo step).
- * ELK chạy một lần cho mỗi lần compile; tua chỉ đổi diện mạo, không đổi vị trí.
+ * Separates shape (this function, invariant) from state (`foldTrace`,
+ * per-step). ELK runs once per compile; scrubbing only changes what's
+ * highlighted, never where anything sits.
  *
- * An toàn vì `foldTrace` chỉ THÊM job, không bao giờ xoá — tập node đơn điệu
- * tăng, nên tập đầy đủ là hợp của mọi tập trung gian.
+ * Safe because `foldTrace` only ADDS jobs, never removes them — the node set
+ * grows monotonically, so the full set is the union of every intermediate set.
  */
 export function buildGraphSpec(events: readonly Event[]): GraphSpec {
   const nodes: GraphNodeSpec[] = []
@@ -54,8 +56,9 @@ export function buildGraphSpec(events: readonly Event[]): GraphSpec {
     source: JobId, target: JobId, kind: GraphEdgeSpec['kind'], blocked: boolean, firstSeq: number,
   ): void => {
     const id = `${kind}:${source}->${target}`
-    // Gộp lần lặp lại: cùng một cặp có thể phát nhiều lần trong trace (vd
-    // cancel lan xuống rồi lan lại). Cạnh là quan hệ, không phải lần xuất hiện.
+    // Collapse repeats: the same pair can be emitted multiple times in the
+    // trace (e.g. cancel propagating down and then propagating again). An
+    // edge is a relationship, not an occurrence.
     if (edgeSeen.has(id)) return
     edgeSeen.add(id)
     edges.push({ id, source, target, kind, blocked, firstSeq })
@@ -69,8 +72,9 @@ export function buildGraphSpec(events: readonly Event[]): GraphSpec {
           isSupervisor: e.ctx.isSupervisor, name: e.ctx.name, varName: e.varName ?? null,
           dispatcher: e.ctx.dispatcher, bornAt: e.seq,
         }
-        // Thứ tự chèn = thứ tự COROUTINE_CREATED = cha luôn trước con, vì con
-        // không thể được tạo trước khi cha tồn tại. React Flow đòi đúng thế.
+        // Insertion order = COROUTINE_CREATED order = parent always before
+        // child, since a child can't be created before its parent exists.
+        // React Flow requires exactly this.
         nodes.push(n)
         byId.set(e.id, n)
         const parent = e.parentId === null ? undefined : byId.get(e.parentId)
@@ -81,8 +85,9 @@ export function buildGraphSpec(events: readonly Event[]): GraphSpec {
         break
       }
       case 'FAILURE_PROPAGATED':
-        // Có thể trỏ vào node ĐÃ Cancelled (tồn đọng M1). Vẫn vẽ: nó mô tả
-        // quan hệ với-tới-được theo cấu trúc, không phải trạng thái sống.
+        // Can point at a node that's ALREADY Cancelled (M1 leftover). Still
+        // drawn: it describes a structural reachability relationship, not a
+        // live state.
         addEdge(e.from, e.to, 'failure', e.blockedBySupervisor, e.seq)
         break
       case 'CANCEL_REQUESTED':

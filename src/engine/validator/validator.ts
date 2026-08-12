@@ -2,46 +2,49 @@ import type { Block, Expr, Pos, Program, Stmt } from '../ast/nodes'
 import { UNSUPPORTED, type Diagnostic } from './diagnostics'
 
 /**
- * Builder tạo/chạy thân coroutine — CHÍNH XÁC tập tên mà `tryBuilder` trong
- * interpreter.ts nhận diện. Chỉ thân lambda của những lời gọi này mới có
- * CoroutineScope bao quanh; đây là điều kiện để `isActive` trần/`ensureActive()`
- * hợp lệ (Kotlin thật: cả hai là extension trên CoroutineScope/CoroutineContext).
+ * Builders that create/run a coroutine body — the EXACT set of names that
+ * `tryBuilder` in interpreter.ts recognizes. Only the lambda body of these
+ * calls has an enclosing CoroutineScope; this is the condition for a bare
+ * `isActive`/`ensureActive()` to be valid (real Kotlin: both are extensions on
+ * CoroutineScope/CoroutineContext).
  */
 const COROUTINE_BUILDERS = new Set([
   'launch', 'async', 'runBlocking', 'coroutineScope', 'supervisorScope', 'withContext',
 ])
 
 /**
- * Tra bảng UNSUPPORTED mà KHÔNG chạm tới Object.prototype.
+ * Looks up the UNSUPPORTED table WITHOUT touching Object.prototype.
  *
- * `UNSUPPORTED[name]` trần đọc trúng cả thành viên kế thừa: `toString`,
- * `valueOf`, `constructor`, `hasOwnProperty`... Đã đo trước khi sửa —
- * `i.toString()` (một trong những lời gọi phổ biến nhất của Kotlin) bị báo
- * "'toString' chưa được hỗ trợ", còn `hint` là một HÀM lọt thẳng ra UI; và một
- * biến tên `valueOf` cũng bị chặn dù chẳng liên quan gì.
+ * A bare `UNSUPPORTED[name]` also reads inherited members: `toString`,
+ * `valueOf`, `constructor`, `hasOwnProperty`... Measured before fixing this —
+ * `i.toString()` (one of the most common calls in Kotlin) was reported as
+ * "'toString' is not supported", with `hint` being a FUNCTION leaking straight
+ * into the UI; and a variable named `valueOf` was blocked too, despite having
+ * nothing to do with any of this.
  */
-function goiYChuaHoTro(name: string): string | undefined {
+function unsupportedHint(name: string): string | undefined {
   return Object.hasOwn(UNSUPPORTED, name) ? UNSUPPORTED[name] : undefined
 }
 
 /**
- * Tên dùng được mà không cần khai báo — mọi thứ interpreter tự nhận ra.
+ * Names usable without a declaration — anything the interpreter recognizes on its own.
  *
- * Chỉ liệt kê tên viết THƯỜNG: định danh viết hoa chữ đầu được coi là tên
- * kiểu/hàm dựng (`RuntimeException("x")`, `Dispatchers.IO`, `GlobalScope`,
- * `SupervisorJob()`) và không bao giờ bị hỏi tới — đúng như interpreter làm
- * (`/^[A-Z]/` -> dựng object).
+ * Only lowercase names are listed: an identifier starting with an uppercase
+ * letter is treated as a type/constructor name (`RuntimeException("x")`,
+ * `Dispatchers.IO`, `GlobalScope`, `SupervisorJob()`) and is never questioned —
+ * exactly like the interpreter does (`/^[A-Z]/` -> build an object).
  *
- * Danh sách này phải khớp với evalCall/trySuspensionPoint/tryBuilder. Thứ canh
- * nó không trôi lệch là chính bộ bài học và bộ ví dụ: 13 lesson và 19 ví dụ
- * trong trang giới thiệu đều được chạy qua `validate` trong test và phải sạch
- * chẩn đoán. Bỏ sót một tên ở đây thì có bài đỏ ngay.
+ * This list must stay in sync with evalCall/trySuspensionPoint/tryBuilder.
+ * What keeps it from drifting is the lesson and example set itself: 13
+ * lessons and 19 examples on the about page are all run through `validate` in
+ * tests and must come back clean. Missing a name here turns a lesson red
+ * immediately.
  */
-const TEN_CO_SAN = new Set([
-  // Đọc được như một GIÁ TRỊ, không cần khai báo.
-  'it',        // tham số ngầm của lambda một tham số
-  'this',      // receiver của scope bao quanh — `work(this)`
-  'isActive',  // property của CoroutineScope; đã có kiểm riêng cho chỗ dùng sai
+const BUILTIN_VALUES = new Set([
+  // Readable as a VALUE, no declaration needed.
+  'it',        // implicit parameter of a single-parameter lambda
+  'this',      // receiver of the enclosing scope — `work(this)`
+  'isActive',  // property of CoroutineScope; has its own separate check for misuse
 ])
 
 export function validate(program: Program): Diagnostic[] {
@@ -50,101 +53,110 @@ export function validate(program: Program): Diagnostic[] {
   if (!program.funs.some(f => f.name === 'main')) {
     out.push({
       severity: 'error',
-      message: 'Không tìm thấy fun main(). Chương trình cần một điểm vào tên main.',
+      message: 'No fun main() found. The program needs an entry point named main.',
       line: 1, col: 1,
-      hint: 'Thêm: fun main() = runBlocking { ... }',
+      hint: 'Add: fun main() = runBlocking { ... }',
     })
   }
 
-  // Ngăn xếp scope: mỗi phần tử là tập tên đã khai (ValDecl/tham số hàm/tham
-  // số lambda/biến catch/biến vòng for) TRONG đúng block đó. `isDeclared` tra
-  // CẢ ngăn xếp — giống hệt chuỗi cha mà `Env.get`/`Env.has` (interpreter/env.ts)
-  // tra lúc chạy. Cần để KHÔNG báo lỗi cho `val isActive = true` tự người học
-  // khai: đúng tiền lệ interpreter.ts:119 đã có (`!env.has('isActive')`), nếu
-  // validator không biết biến đã khai thì nó chặn nhầm code hợp lệ 100% trên
-  // Kotlin thật. Luôn có ít nhất một phần tử gốc, không bao giờ pop hết.
+  // Scope stack: each element is the set of names declared (ValDecl/function
+  // param/lambda param/catch variable/for variable) IN that exact block.
+  // `isDeclared` searches the WHOLE stack — the same parent chain that
+  // `Env.get`/`Env.has` (interpreter/env.ts) search at runtime. This is needed
+  // so that `val isActive = true` declared by the learner does NOT get
+  // flagged: interpreter.ts:119 already set this precedent
+  // (`!env.has('isActive')`) — if the validator didn't know a variable had
+  // been declared, it would block code that is 100% valid in real Kotlin.
+  // There's always at least one root element, never popped away entirely.
   const scopes: Set<string>[] = [new Set()]
   const isDeclared = (name: string): boolean => scopes.some(sc => sc.has(name))
   const declare = (name: string): void => { scopes[scopes.length - 1]!.add(name) }
 
-  // `inCoroutine`: đang duyệt bên trong thân lambda của một builder ở trên
-  // (lồng bao nhiêu tầng không quan trọng — while/for/if/try/lambda thường
-  // như của repeat() đều KẾ THỪA cờ này, không tự đổi biên coroutine). Mặc
-  // định false: thân `fun` bất kỳ (kể cả main dạng block) không tự nhiên có
-  // CoroutineScope, đúng như Kotlin thật báo "Unresolved reference" cho
-  // `isActive trần`/`ensureActive()` viết ngoài mọi builder.
+  // `inCoroutine`: currently walking inside the lambda body of one of the
+  // builders above (nesting depth doesn't matter — while/for/if/try, or a
+  // plain lambda like repeat()'s, all INHERIT this flag; they don't change the
+  // coroutine boundary on their own). Defaults to false: the body of any `fun`
+  // (including a block-form main) does not automatically have a CoroutineScope,
+  // exactly matching real Kotlin reporting "Unresolved reference" for a bare
+  // `isActive`/`ensureActive()` written outside every builder.
   /**
-   * Ba phép kiểm trên một định danh. `laCallee` = định danh đang ở vị trí GỌI
-   * (`foo(...)`), khác hẳn vị trí giá trị (`foo`, `foo.bar`).
+   * Three checks on one identifier. `isCallee` = the identifier is in a CALL
+   * position (`foo(...)`), as opposed to a value position (`foo`, `foo.bar`).
    *
-   * Tách ra vì cả hai vị trí đều cần hai phép kiểm đầu — `ensureActive()` ngoài
-   * coroutine phải báo, và `withTimeout(...)` chưa hỗ trợ cũng phải báo — nhưng
-   * chỉ vị trí GIÁ TRỊ mới cần phép kiểm "đã khai báo chưa".
+   * Split out because both positions need the first two checks —
+   * `ensureActive()` outside a coroutine must be flagged, and an unsupported
+   * `withTimeout(...)` must be flagged too — but only the VALUE position needs
+   * the "has it been declared" check.
    */
-  const kiemIdent = (name: string, pos: Pos, inCoroutine: boolean, laCallee: boolean): void => {
+  const checkIdent = (name: string, pos: Pos, inCoroutine: boolean, isCallee: boolean): void => {
     if ((name === 'isActive' || name === 'ensureActive') && !inCoroutine && !isDeclared(name)) {
       out.push({
         severity: 'error',
-        message: `'${name}' chỉ dùng được bên trong coroutine — Kotlin thật báo `
-          + `unresolved reference ở ngoài thân launch/async/runBlocking/coroutineScope/`
+        message: `'${name}' can only be used inside a coroutine — real Kotlin reports `
+          + `unresolved reference outside the body of launch/async/runBlocking/coroutineScope/`
           + 'supervisorScope/withContext.',
         line: pos.line, col: pos.col,
-        hint: 'Đặt bên trong thân một trong các builder trên, hoặc đọc qua biến Job cụ thể (job.isActive).',
+        hint: 'Put it inside the body of one of the builders above, or read it through a specific Job variable (job.isActive).',
       })
     }
-    const hint = goiYChuaHoTro(name)
+    const hint = unsupportedHint(name)
     if (hint) {
       out.push({
         severity: 'error',
-        message: `'${name}' chưa được hỗ trợ ở phiên bản này.`,
+        message: `'${name}' is not supported in this version.`,
         line: pos.line, col: pos.col, hint,
       })
       return
     }
-    // Tên viết thường, dùng như một GIÁ TRỊ, mà chưa khai báo ở đâu cả.
+    // A lowercase name, used as a VALUE, that hasn't been declared anywhere.
     //
-    // Ca đã gặp thật: `supervisorScope.launch { }` khi quên khai báo
-    // `val supervisorScope = CoroutineScope(...)`. Kotlin thật không biên dịch
-    // được ("Unresolved reference"); engine thì im lặng dựng ra một object rác
-    // mang đúng cái tên ấy, `scopeReceiver` không nhận ra nó, nên lời gọi chạy
-    // y hệt `launch { }` trần — cùng cha, cùng luật. Bài học về supervisor
-    // lặng lẽ dạy ngược mà không ai báo gì.
+    // A real case this caught: `supervisorScope.launch { }` when the learner
+    // forgot to write `val supervisorScope = CoroutineScope(...)`. Real Kotlin
+    // fails to compile ("Unresolved reference"); the engine used to silently
+    // build a garbage object carrying that exact name, `scopeReceiver` didn't
+    // recognize it, so the call ran exactly like a bare `launch { }` — same
+    // parent, same rules. The lesson about a silent supervisor quietly taught
+    // the opposite, with nothing reported.
     //
-    // Hai giới hạn CỐ Ý, nói rõ để không ai tưởng nó canh nhiều hơn:
-    //   - Chỉ tên viết thường. Viết hoa chữ đầu là tên kiểu/hàm dựng và
-    //     interpreter cố ý dựng object cho chúng (`RuntimeException("x")`).
-    //   - Chỉ vị trí GIÁ TRỊ. Hàm chưa biết là chuyện khác: `flowOf(1)` là hàm
-    //     có thật của kotlinx mà engine chưa cài, và Flow thuộc milestone sau.
-    //     Gộp hai chuyện vào một câu báo sẽ nói sai một trong hai.
-    if (!laCallee && !/^[A-Z]/.test(name) && !TEN_CO_SAN.has(name) && !isDeclared(name)) {
+    // Two limits, INTENTIONAL, stated plainly so nobody assumes this checks
+    // more than it does:
+    //   - Only lowercase names. An uppercase-starting name is a type/
+    //     constructor name, and the interpreter deliberately builds an object
+    //     for those (`RuntimeException("x")`).
+    //   - Only the VALUE position. An unknown function is a different matter:
+    //     `flowOf(1)` is a real kotlinx function this engine hasn't
+    //     implemented yet, and Flow belongs to a later milestone. Folding
+    //     both into one message would get one of them wrong.
+    if (!isCallee && !/^[A-Z]/.test(name) && !BUILTIN_VALUES.has(name) && !isDeclared(name)) {
       out.push({
         severity: 'error',
-        message: `'${name}' chưa được khai báo — Kotlin thật báo "Unresolved reference".`,
+        message: `'${name}' has not been declared — real Kotlin reports "Unresolved reference".`,
         line: pos.line, col: pos.col,
-        hint: 'Kiểm tra chính tả, hoặc khai báo bằng val/var trước khi dùng.',
+        hint: 'Check the spelling, or declare it with val/var before using it.',
       })
     }
   }
 
   const visitExpr = (e: Expr, inCoroutine: boolean): void => {
     switch (e.k) {
-      case 'Ident': kiemIdent(e.name, e.pos, inCoroutine, false); break
+      case 'Ident': checkIdent(e.name, e.pos, inCoroutine, false); break
       case 'Member': {
-        const hint = goiYChuaHoTro(e.name)
+        const hint = unsupportedHint(e.name)
         if (hint) out.push({
           severity: 'error',
-          message: `'${e.name}' chưa được hỗ trợ ở phiên bản này.`,
+          message: `'${e.name}' is not supported in this version.`,
           line: e.pos.line, col: e.pos.col, hint,
         })
         visitExpr(e.target, inCoroutine)
         break
       }
       case 'Call': {
-        // Callee dạng Ident KHÔNG đi qua phép kiểm "đã khai báo chưa" ở case
-        // 'Ident': tên hàm dựng sẵn (`launch`, `delay`, `println`...) không nằm
-        // trong scope nào, và hàm chưa biết thì thuộc diện khác (xem ghi chú ở
-        // case 'Ident'). Vẫn duyệt để bắt UNSUPPORTED như cũ.
-        if (e.callee.k === 'Ident') kiemIdent(e.callee.name, e.callee.pos, inCoroutine, true)
+        // An Ident-shaped callee does NOT go through the "has it been
+        // declared" check in case 'Ident': built-in function names (`launch`,
+        // `delay`, `println`...) don't live in any scope, and an unknown
+        // function belongs to a different category (see the note on case
+        // 'Ident'). Still walked so UNSUPPORTED gets caught as before.
+        if (e.callee.k === 'Ident') checkIdent(e.callee.name, e.callee.pos, inCoroutine, true)
         else visitExpr(e.callee, inCoroutine)
         e.args.forEach(a => visitExpr(a.value, inCoroutine))
         if (e.lambda) {
@@ -182,9 +194,10 @@ export function validate(program: Program): Diagnostic[] {
 
   const visitStmt = (s: Stmt, inCoroutine: boolean): void => {
     switch (s.k) {
-      // Khai báo SAU khi duyệt init — đúng thứ tự runtime thật (Env.declare
-      // chạy sau evalExpr(s.init)), nên `val isActive = isActive` (không có gì
-      // bao quanh) vẫn báo lỗi ở vế phải như Kotlin thật, không tự che chính nó.
+      // Declared AFTER visiting init — matching the real runtime order
+      // (Env.declare runs after evalExpr(s.init)), so `val isActive = isActive`
+      // (with nothing enclosing it) still flags an error on the right-hand
+      // side just like real Kotlin, instead of shadowing itself.
       case 'ValDecl': visitExpr(s.init, inCoroutine); declare(s.name); break
       case 'Assign': visitExpr(s.target, inCoroutine); visitExpr(s.value, inCoroutine); break
       case 'ExprStmt': visitExpr(s.expr, inCoroutine); break
@@ -200,10 +213,11 @@ export function validate(program: Program): Diagnostic[] {
     }
   }
 
-  // Block LUÔN mở một scope riêng (khớp `env.child()` lúc chạy cho while/for/
-  // try/if/lambda...) và pop lại khi ra — đây là điều khiến ca "biến khai
-  // trong block không rò ra ngoài" phân biệt được: bỏ dòng `scopes.pop()` là
-  // đúng phép phá mà test đó canh.
+  // A block ALWAYS opens its own scope (matching `env.child()` at runtime for
+  // while/for/try/if/lambda...) and pops it back on the way out — this is what
+  // makes the "a variable declared inside a block doesn't leak outside" case
+  // distinguishable: dropping the `scopes.pop()` line is exactly the kind of
+  // break that test guards against.
   const visitBlockWithNames = (b: Block, inCoroutine: boolean, names: readonly string[]): void => {
     scopes.push(new Set())
     names.forEach(declare)
@@ -212,8 +226,9 @@ export function validate(program: Program): Diagnostic[] {
   }
   const visitBlock = (b: Block, inCoroutine: boolean): void => visitBlockWithNames(b, inCoroutine, [])
 
-  // Tên hàm vào scope gốc TRƯỚC khi duyệt bất kỳ thân nào: hàm gọi hàm khai
-  // báo sau nó, và hàm gọi chính nó, đều hợp lệ trong Kotlin.
+  // Function names go into the root scope BEFORE walking any body: a function
+  // calling a function declared after it, and a function calling itself, are
+  // both valid in Kotlin.
   program.funs.forEach(f => declare(f.name))
 
   program.topLevel.forEach(s => visitStmt(s, false))

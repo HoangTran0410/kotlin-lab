@@ -7,21 +7,22 @@ import { NODE_H } from '../../src/ui/graph/dimensions'
 
 const specFor = (id: string): GraphSpec => buildGraphSpec(runSourceSafe(lessonSource(id)!).events)
 
-// So sánh giá trị, không phụ thuộc thứ tự chèn Map — điều đang được kiểm ở
-// đây là TOẠ ĐỘ có đổi giữa hai lần chạy hay không, không phải thứ tự duyệt.
+// Compares by value, independent of Map insertion order — what's being
+// checked here is whether COORDINATES change between two runs, not traversal
+// order.
 const normalize = (boxes: Awaited<ReturnType<typeof layoutGraph>>): string =>
   JSON.stringify([...boxes.entries()].sort(([a], [b]) => a.localeCompare(b)))
 
-describe('layoutGraph — ELK bố cục một lần, deterministic (Task 11)', () => {
-  it('mọi node trong spec đều có box', async () => {
+describe('layoutGraph — ELK lays out once, deterministically (Task 11)', () => {
+  it('every node in the spec has a box', async () => {
     for (const { id } of LESSON_LIST) {
       const spec = specFor(id)
       const boxes = await layoutGraph(spec)
-      for (const n of spec.nodes) expect(boxes.has(n.id), `${id}: thiếu box cho ${n.id}`).toBe(true)
+      for (const n of spec.nodes) expect(boxes.has(n.id), `${id}: missing box for ${n.id}`).toBe(true)
     }
   })
 
-  it('box có width/height dương', async () => {
+  it('box width/height are positive', async () => {
     for (const { id } of LESSON_LIST) {
       const spec = specFor(id)
       const boxes = await layoutGraph(spec)
@@ -33,7 +34,7 @@ describe('layoutGraph — ELK bố cục một lần, deterministic (Task 11)', 
     }
   })
 
-  it('deterministic — hai lần chạy trên cùng spec cho toạ độ y hệt', async () => {
+  it('deterministic — two runs on the same spec give identical coordinates', async () => {
     for (const { id } of LESSON_LIST) {
       const spec = specFor(id)
       const first = await layoutGraph(spec)
@@ -42,15 +43,15 @@ describe('layoutGraph — ELK bố cục một lần, deterministic (Task 11)', 
     }
   })
 
-  it('spec rỗng trả map rỗng, không ném', async () => {
+  it("empty spec returns an empty map, doesn't throw", async () => {
     await expect(layoutGraph({ nodes: [], edges: [] })).resolves.toEqual(new Map())
   })
 
-  it('node compound có height LỚN HƠN NODE_H — chứng tỏ nó bọc con thật sự', async () => {
+  it('a compound node has height GREATER THAN NODE_H — proving it actually wraps its children', async () => {
     const spec = specFor('supervisor')
     const containerIds = spec.nodes.filter(n => n.isContainer).map(n => n.id)
-    // Ghim rằng fixture thật sự có node compound — nếu không thì test này vô nghĩa.
-    expect(containerIds.length, 'fixture cần có node compound').toBeGreaterThan(0)
+    // Pin that the fixture really does have a compound node — otherwise this test is meaningless.
+    expect(containerIds.length, 'fixture needs a compound node').toBeGreaterThan(0)
 
     const boxes = await layoutGraph(spec)
     for (const id of containerIds) {
@@ -58,21 +59,23 @@ describe('layoutGraph — ELK bố cục một lần, deterministic (Task 11)', 
     }
   })
 
-  it('toạ độ con TƯƠNG ĐỐI với cha — j3 nằm trong [0, width(j2)] của supervisor', async () => {
+  it('child coordinates are RELATIVE to the parent — j3 sits within [0, width(j2)] of supervisor', async () => {
     const spec = specFor('supervisor')
-    // Ghim hình dạng cụ thể mà test này dựa vào, thay vì đoán mù: j2 là
-    // supervisorScope (container), j3 là launch đầu tiên nằm trực tiếp trong nó.
+    // Pin the specific shape this test relies on, instead of guessing blind:
+    // j2 is a supervisorScope (container), j3 is the first launch sitting
+    // directly inside it.
     const j2 = spec.nodes.find(n => n.id === 'j2')
     const j3 = spec.nodes.find(n => n.id === 'j3')
-    expect(j2?.isContainer, 'fixture: j2 phải là container').toBe(true)
-    expect(j3?.parentId, 'fixture: j3 phải là con trực tiếp của j2').toBe('j2')
+    expect(j2?.isContainer, 'fixture: j2 must be a container').toBe(true)
+    expect(j3?.parentId, 'fixture: j3 must be a direct child of j2').toBe('j2')
 
     const boxes = await layoutGraph(spec)
     const j2Box = boxes.get('j2')!
     const j3Box = boxes.get('j3')!
 
-    // Nếu ELK trả toạ độ TUYỆT ĐỐI trên canvas, j3.x sẽ vượt xa width(j2) —
-    // đây chính là phép kiểm khoá chặt giả định làm React Flow khớp với ELK.
+    // If ELK returned ABSOLUTE canvas coordinates, j3.x would be way beyond
+    // width(j2) — this is exactly the check that locks down the assumption
+    // that makes React Flow match ELK.
     expect(j3Box.x).toBeGreaterThanOrEqual(0)
     expect(j3Box.y).toBeGreaterThanOrEqual(0)
     expect(j3Box.x + j3Box.width).toBeLessThanOrEqual(j2Box.width)

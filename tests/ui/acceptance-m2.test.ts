@@ -10,11 +10,12 @@ import { lessonSource } from '../../src/lessons/registry'
 const LESSON_IDS = ['jobtree', 'normalfail', 'supervisor'] as const
 
 /**
- * `elkLayoutModule.layoutGraph(...)` — KHÔNG named-import `layoutGraph` thẳng
- * — để bài test "gọi đúng một lần" bên dưới spy đúng điểm mà `prep` thật sự
- * gọi tới, không phụ thuộc cách bundler/vitest có coi named import và truy
- * cập qua namespace là cùng một binding hay không (xem cách
- * tests/ui/use-layout.test.tsx đã làm với hook thật).
+ * `elkLayoutModule.layoutGraph(...)` — NOT a direct named import of
+ * `layoutGraph` — so the "called exactly once" test's spy hooks the exact
+ * point that `prep` actually calls, regardless of whether the
+ * bundler/vitest treat a named import and a namespace access as the same
+ * binding or not (see how tests/ui/use-layout.test.tsx does this with the
+ * real hook).
  */
 const prep = async (id: string) => {
   const { events, diagnostics } = runSourceSafe(lessonSource(id)!)
@@ -28,13 +29,18 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('NGHIỆM THU M2 — khác biệt supervisor phải NHÌN THẤY ĐƯỢC', () => {
-  it('console: normalfail 0 dòng, supervisor 2 dòng', async () => {
+// 'A done' / 'C done' below are println output from the
+// 'supervisor' lesson fixture (src/lessons/*), owned and translated
+// independently by the lessons agent — outside this agent's scope. Left
+// as-is; integrator must update this literal to match once that translation
+// lands.
+describe('M2 ACCEPTANCE — the supervisor difference must be VISIBLE', () => {
+  it('console: normalfail 0 lines, supervisor 2 lines', async () => {
     expect(final((await prep('normalfail')).events).output).toEqual([])
-    expect(final((await prep('supervisor')).events).output).toEqual(['A xong', 'C xong'])
+    expect(final((await prep('supervisor')).events).output).toEqual(['A done', 'C done'])
   })
 
-  it('graph: anh em CHẾT ở normalfail, SỐNG ở supervisor', async () => {
+  it('graph: siblings DIE in normalfail, SURVIVE in supervisor', async () => {
     const dead = await prep('normalfail')
     const alive = await prep('supervisor')
     const states = (p: Awaited<ReturnType<typeof prep>>) =>
@@ -44,12 +50,12 @@ describe('NGHIỆM THU M2 — khác biệt supervisor phải NHÌN THẤY ĐƯ�
         .sort()
 
     expect(states(dead).every(s => s === 'Cancelled')).toBe(true)
-    // supervisor: hai launch Completed (A, C) + một Cancelled (B ném)
+    // supervisor: two launches Completed (A, C) + one Cancelled (B threw)
     expect(states(alive).filter(s => s === 'Completed')).toHaveLength(2)
     expect(states(alive).filter(s => s === 'Cancelled')).toHaveLength(1)
   })
 
-  it('cạnh: chỉ supervisor có cạnh failure BỊ CHẶN', async () => {
+  it('edges: only supervisor has a BLOCKED failure edge', async () => {
     const blocked = (p: Awaited<ReturnType<typeof prep>>) =>
       toReactFlow(p.spec, p.layout, final(p.events)).edges
         .filter(e => e.data?.kind === 'failure' && e.data?.blocked === true)
@@ -58,18 +64,18 @@ describe('NGHIỆM THU M2 — khác biệt supervisor phải NHÌN THẤY ĐƯ�
     expect(blocked(await prep('supervisor')).length).toBeGreaterThan(0)
   })
 
-  it('VỊ TRÍ NODE bất biến qua tiến-rồi-lùi hết trace, cả ba lesson', async () => {
+  it('NODE POSITIONS are invariant across a full forward-then-backward scrub, all three lessons', async () => {
     for (const id of LESSON_IDS) {
       const p = await prep(id)
       const at = (n: number) => JSON.stringify(
         toReactFlow(p.spec, p.layout, foldTrace(p.events, n)).nodes.map(x => [x.id, x.position]))
       const ref = at(p.events.length)
-      for (let n = 0; n <= p.events.length; n++) expect(at(n), `${id} tiến @${n}`).toBe(ref)
-      for (let n = p.events.length; n >= 0; n--) expect(at(n), `${id} lùi @${n}`).toBe(ref)
+      for (let n = 0; n <= p.events.length; n++) expect(at(n), `${id} forward @${n}`).toBe(ref)
+      for (let n = p.events.length; n >= 0; n--) expect(at(n), `${id} backward @${n}`).toBe(ref)
     }
   })
 
-  it('mọi step gập được, không ném — cả ba lesson', async () => {
+  it('every step folds without throwing — all three lessons', async () => {
     for (const id of LESSON_IDS) {
       const p = await prep(id)
       for (let n = 0; n <= p.events.length; n++) {
@@ -78,13 +84,14 @@ describe('NGHIỆM THU M2 — khác biệt supervisor phải NHÌN THẤY ĐƯ�
     }
   })
 
-  it('layoutGraph được gọi ĐÚNG MỘT LẦN cho mỗi lesson, dù bố cục toàn bộ trace', async () => {
-    // Bổ sung so với khung sườn của brief: bảng nghiệm thu đòi "layoutGraph gọi
-    // đúng một lần cho mỗi lesson" như một hàng riêng, ngang hàng với vị trí
-    // node bất biến — nhưng khối test mẫu trong task-20-brief.md chỉ IMPORT
-    // `vi` mà không dùng nó ở đâu cả. tests/ui/use-layout.test.tsx đã khoá
-    // hành vi này ở tầng hook (Task 15) bằng spec giả lập; test này khoá lại
-    // trên chính ba lesson thật, ở đúng nơi acceptance đọc tiêu chí.
+  it('layoutGraph is called EXACTLY ONCE per lesson, no matter how much of the trace is laid out', async () => {
+    // An addition beyond the brief's skeleton: the acceptance table demands
+    // "layoutGraph called exactly once per lesson" as its own row, alongside
+    // node-position invariance — but the sample test block in
+    // task-20-brief.md only IMPORTS `vi` without using it anywhere. tests/ui/use-layout.test.tsx
+    // already locks this behavior at the hook layer (Task 15) with a mock
+    // spec; this test locks it again against the three real lessons, right
+    // where acceptance reads its criteria from.
     const spy = vi.spyOn(elkLayoutModule, 'layoutGraph')
     for (const id of LESSON_IDS) {
       spy.mockClear()

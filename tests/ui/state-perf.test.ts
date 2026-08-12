@@ -2,21 +2,22 @@ import { describe, expect, it } from 'vitest'
 import { runSourceSafe } from '../../src/engine/run'
 import { foldTrace } from '../../src/engine/trace/world'
 
-describe('rào chắn hiệu năng — kéo scrubber phải mượt', () => {
-  it('gập trace lớn dưới 5ms — một khung 60fps là 16.7ms', () => {
+describe('performance guardrail — dragging the scrubber must stay smooth', () => {
+  it('folds a large trace under 5ms — one 60fps frame is 16.7ms', () => {
     const r = runSourceSafe(
       'fun main() = runBlocking {\n  repeat(500) { i ->\n    launch { delay(10); println("job $i") }\n  }\n}\n')
     expect(r.diagnostics).toEqual([])
     expect(r.events.length).toBeGreaterThan(5000)
 
-    foldTrace(r.events, r.events.length)   // làm nóng
+    foldTrace(r.events, r.events.length)   // warm up
     const t0 = performance.now()
     for (let i = 0; i < 20; i++) foldTrace(r.events, r.events.length)
     const each = (performance.now() - t0) / 20
 
-    // Đo lúc lập kế hoạch: 0.25ms ở 8k event, 0.49ms ở 16k. Ngưỡng 5ms là
-    // rộng rãi 10x. Nếu test này đỏ thì foldTrace đã thành siêu tuyến tính,
-    // và quyết định "không cần fold tăng dần" cần xem lại.
+    // Measured during planning: 0.25ms at 8k events, 0.49ms at 16k. The 5ms
+    // threshold gives a generous 10x margin. If this test goes red, foldTrace
+    // has become superlinear, and the decision "no incremental fold needed"
+    // needs revisiting.
     expect(each).toBeLessThan(5)
   })
 })

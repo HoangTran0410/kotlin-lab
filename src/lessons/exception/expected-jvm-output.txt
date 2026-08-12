@@ -1,5 +1,5 @@
-1. bắt được exception: boom
-2. job này KHÔNG fail — exception đã được xử lý
+1. caught exception: boom
+2. this job does NOT fail — the exception was handled
 3. isCancelled = false
-4. exception thoát khỏi coroutine => Job FAIL: không ai bắt
-5. hết bài
+4. exception escapes the coroutine => Job FAILS: nobody catches this
+5. lesson done

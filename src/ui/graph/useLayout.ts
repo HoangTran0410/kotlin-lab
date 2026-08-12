@@ -5,25 +5,27 @@ import { layoutGraph, type LayoutResult } from './elkLayout'
 const EMPTY_LAYOUT: LayoutResult = new Map()
 
 /**
- * Chạy `layoutGraph` (ELK, Task 11) trong `useEffect` với dependency
- * **`compiled.revision`** — KHÔNG phải `compiled.spec` (đối tượng MỚI mỗi lần
- * `compile()` chạy dù nội dung giống hệt, so sánh tham chiếu trong mảng deps
- * sẽ luôn coi là đổi) và KHÔNG phải `stepIndex`.
+ * Runs `layoutGraph` (ELK, Task 11) inside a `useEffect` with dependency
+ * **`compiled.revision`** — NOT `compiled.spec` (a NEW object every time
+ * `compile()` runs even with identical content, so a reference comparison in
+ * the deps array would always see it as changed) and NOT `stepIndex`.
  *
- * Đây là chỗ Quyết định 2 (toReactFlow, Task 12) được THI HÀNH ở tầng hook:
- * `useLabStore.setStep` không đụng tới trường `compiled`, nên tham chiếu
- * `compiled` không đổi khi user kéo timeline — effect này không chạy lại, ELK
- * không chạy lại, graph không rung. Nếu ai đó thêm `stepIndex` vào deps, ELK
- * sẽ chạy lại ở MỖI tick kéo (test 1 dưới đây đếm số lần gọi chính vì thế).
+ * This is where Decision 2 (toReactFlow, Task 12) gets ENFORCED at the hook
+ * layer: `useLabStore.setStep` never touches the `compiled` field, so the
+ * `compiled` reference doesn't change when the user drags the timeline — this
+ * effect doesn't rerun, ELK doesn't rerun, the graph doesn't jitter. If
+ * someone added `stepIndex` to the deps, ELK would rerun on EVERY drag tick
+ * (test 1 below counts the number of calls for exactly this reason).
  *
- * ELK là async, còn source recompile theo debounce 250ms trong lúc gõ: một
- * layout chậm của compile A có thể về SAU KHI user đã gõ sang compile B —
- * nếu áp kết quả đó vô điều kiện, graph hiển thị bố cục không khớp với source
- * nào đang hiện trên màn hình. Token tăng dần giữ đúng "cuộc chạy hiện hành";
- * kết quả về muộn hơn token hiện tại (dù vì bị compile mới ghi đè, dù vì
- * unmount) bị VỨT, không setState — cả hai đường đều dùng chung một cơ chế:
- * cleanup của effect (chạy khi deps đổi HOẶC khi unmount) luôn làm token của
- * cuộc chạy vừa rồi thành cũ.
+ * ELK is async, and the source recompiles on a 250ms debounce while typing: a
+ * slow layout from compile A can come back AFTER the user has already typed
+ * their way to compile B — applying that result unconditionally would show a
+ * layout that doesn't match whatever source is currently on screen. An
+ * increasing token keeps track of the "current run"; a result that comes back
+ * later than the current token (whether because a new compile overwrote it,
+ * or because of unmount) is THROWN AWAY, no setState — both paths share one
+ * mechanism: the effect's cleanup (which runs when deps change OR on unmount)
+ * always makes the token of the run that just finished stale.
  */
 export function useLayout(compiled: Compiled): LayoutResult {
   const [layout, setLayout] = useState<LayoutResult>(EMPTY_LAYOUT)
@@ -32,26 +34,28 @@ export function useLayout(compiled: Compiled): LayoutResult {
   useEffect(() => {
     const token = ++tokenRef.current
 
-    // Spec rỗng (chưa compile lần nào, hoặc source rỗng): không có gì để bố
-    // cục. Trả thẳng map rỗng, không gọi layoutGraph — layoutGraph tự nó đã
-    // short-circuit tương tự (elkLayout.ts), nhưng gọi qua Promise vẫn tốn
-    // một microtask vô ích ở đúng con đường chạy thường xuyên nhất (mount).
+    // Empty spec (never compiled yet, or empty source): nothing to lay out.
+    // Return an empty map directly, don't call layoutGraph — layoutGraph
+    // already short-circuits the same way (elkLayout.ts), but going through a
+    // Promise still costs a wasted microtask on the most frequently hit path
+    // (mount).
     if (compiled.spec.nodes.length === 0) {
       setLayout(EMPTY_LAYOUT)
       return
     }
 
     layoutGraph(compiled.spec).then(result => {
-      if (token !== tokenRef.current) return // cuộc chạy này đã cũ — vứt
+      if (token !== tokenRef.current) return // this run is stale — discard
       setLayout(result)
     })
 
     return () => {
-      // Chạy khi deps đổi (compile mới ghi đè) HOẶC khi unmount. Cả hai
-      // trường hợp đều có chung ý nghĩa: cuộc chạy vừa rồi không còn là
-      // "hiện hành" nữa. Vô hiệu hoá token của nó — nếu promise phía trên
-      // resolve sau đó (dù muộn hơn compile mới, dù sau khi đã unmount),
-      // nhánh so sánh token ở trên tự loại nó, không setState.
+      // Runs when deps change (a new compile overwrote it) OR on unmount.
+      // Both cases mean the same thing: the run that just happened is no
+      // longer "current". Invalidate its token — if the promise above
+      // resolves afterward (whether later than a new compile, or after
+      // unmount), the token comparison above discards it on its own, no
+      // setState.
       tokenRef.current += 1
     }
   }, [compiled.revision])

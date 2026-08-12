@@ -1,15 +1,15 @@
 import { tokenize } from '../lexer/lexer'
 import type { StringPart, Token } from '../lexer/token'
-// Chỉ import kiểu thực sự dùng ở task này. Task 4 thêm Lambda, Task 5 thêm
-// CatchClause/WhenBranch, Task 6 thêm FunDecl/Param — thêm khi cần.
+// Only import the types actually used at this task. Task 4 adds Lambda, Task 5
+// adds CatchClause/WhenBranch, Task 6 adds FunDecl/Param — add as needed.
 import type { Arg, Block, CatchClause, Expr, FunDecl, Lambda, Param, Pos, Program, Stmt, StringPartNode, WhenBranch } from '../ast/nodes'
 
 /**
- * Độ ưu tiên càng cao càng bám chặt. Thứ tự theo đúng Kotlin.
+ * Higher precedence binds tighter. Order follows Kotlin exactly.
  *
- * Chú ý '..': trong Kotlin nó LỎNG HƠN cộng/trừ và CHẶT HƠN so sánh.
- * Nếu cho '..' bám chặt hơn số học thì `1..n-1` — idiom range phổ biến nhất —
- * sẽ parse thành `(1..n)-1` thay vì `1..(n-1)`.
+ * Note on '..': in Kotlin it is LOOSER than plus/minus and TIGHTER than
+ * comparison. If '..' bound tighter than arithmetic, `1..n-1` — the most
+ * common range idiom — would parse as `(1..n)-1` instead of `1..(n-1)`.
  */
 const BINARY_PRECEDENCE: Record<string, number> = {
   '||': 1, '&&': 2,
@@ -25,17 +25,19 @@ export class ParseError extends Error {
 }
 
 /**
- * Quy MỘT vị trí trong mẩu `${...}` về toạ độ thật của file.
+ * Maps ONE position inside a `${...}` fragment back to the real coordinates of the file.
  *
- * Cùng quy tắc với phần rebase của ParseError trong stringParts: chỉ cộng bù
- * cột khi vị trí nằm ở dòng ĐẦU của mẩu, vì từ dòng 2 trở đi cột trong mẩu đã
- * là cột thật. Sửa TẠI CHỖ — Pos do parser dựng là object riêng của node, không
- * dùng chung với gì bên ngoài sub-AST này.
+ * Same rule as the ParseError rebase in stringParts: only add the column offset
+ * when the position is on the FIRST line of the fragment, since from line 2
+ * onward the column inside the fragment is already the real column. Mutates IN
+ * PLACE — a Pos built by the parser is a node's private object, not shared with
+ * anything outside this sub-AST.
  */
 function rebasePos(pos: Pos, base: Pos, seen: Set<Pos>): void {
-  // parsePostfix dùng LẠI chính object `lambda.pos` làm pos của Call bao ngoài
-  // (`{ k: 'Call', ..., pos: lambda.pos }`), nên hai node có thể trỏ vào cùng
-  // một Pos. Không canh thì nó bị dời hai lần và cột chạy đi gấp đôi.
+  // parsePostfix REUSES the very same `lambda.pos` object as the pos of the
+  // enclosing Call (`{ k: 'Call', ..., pos: lambda.pos }`), so two nodes can
+  // point at the same Pos. Without this guard it would get shifted twice and
+  // the column would run off by double.
   if (seen.has(pos)) return
   seen.add(pos)
   if (pos.line === 1) pos.col = base.col + pos.col - 1
@@ -43,16 +45,18 @@ function rebasePos(pos: Pos, base: Pos, seen: Set<Pos>): void {
 }
 
 /**
- * Dời toàn bộ sub-AST dựng bên trong một `${...}` về toạ độ thật của file.
+ * Shifts an entire sub-AST built inside a `${...}` to the real coordinates of the file.
  *
- * Task 3 đã rebase vị trí của ParseError, nhưng các NODE dựng THÀNH CÔNG thì
- * chưa: parser lồng chỉ thấy một mẩu mã rời nên mọi node của nó nằm ở dòng 1.
- * Validator đọc thẳng `pos` đó, nên mọi chẩn đoán bên trong template đều báo
- * dòng 1 trong khi dạng không-template ngay bên cạnh lại báo đúng.
+ * Task 3 already rebased the position of ParseError, but the NODES built
+ * SUCCESSFULLY were not: the nested parser only ever sees one loose fragment of
+ * code, so every one of its nodes sits on line 1. The validator reads `pos`
+ * directly, so every diagnostic inside a template would report line 1 while the
+ * non-template form right next to it reports correctly.
  *
- * Template lồng nhau tự đúng theo phép hợp thành: parser lồng bên trong đã dời
- * node của nó về toạ độ của MẨU BAO NGOÀI trước, rồi lần dời này đưa cả cụm về
- * toạ độ file — mỗi node đúng một lần cho mỗi tầng.
+ * Nested templates get this right automatically by composition: the inner
+ * nested parser has already shifted its nodes to the coordinates of the OUTER
+ * fragment, and this rebase pass then brings the whole cluster to file
+ * coordinates — each node correctly offset exactly once per nesting level.
  */
 function rebaseExpr(e: Expr, base: Pos, seen: Set<Pos>): void {
   rebasePos(e.pos, base, seen)
@@ -119,7 +123,7 @@ export class Parser {
   private i = 0
   constructor(private readonly toks: Token[]) {}
 
-  // ---- tiện ích ----
+  // ---- helpers ----
   private peek(offset = 0): Token {
     let j = this.i, seen = 0
     while (j < this.toks.length) {
@@ -132,7 +136,7 @@ export class Parser {
     return this.toks[this.toks.length - 1]!
   }
 
-  /** Token kế tiếp, KHÔNG bỏ qua xuống dòng. Dùng khi xuống dòng có nghĩa. */
+  /** Next token, WITHOUT skipping newlines. Used where a newline is significant. */
   private peekRaw(): Token { return this.toks[this.i] ?? this.toks[this.toks.length - 1]! }
 
   private next(): Token {
@@ -154,7 +158,7 @@ export class Parser {
     if (!this.at(kind, text)) {
       const t = this.peek()
       throw new ParseError(
-        `Mong đợi ${text ?? kind} nhưng gặp '${t.text || t.kind}'`,
+        `Expected ${text ?? kind} but found '${t.text || t.kind}'`,
         { line: t.line, col: t.col },
       )
     }
@@ -167,10 +171,10 @@ export class Parser {
   atEof(): boolean { return this.peek().kind === 'EOF' }
 
   /**
-   * Token kế tiếp có đúng loại `kind` VÀ nằm cùng dòng với vị trí hiện tại?
-   * Dùng cho trailing lambda: `foo()` rồi xuống dòng mới `{ ... }` là một khối
-   * riêng, không phải lambda của foo. Nếu bỏ điều kiện cùng dòng thì
-   * `val x = f()` theo sau bởi một block sẽ bị nuốt nhầm.
+   * Is the next token of type `kind` AND on the same line as the current
+   * position? Used for trailing lambdas: `foo()` followed by a `{ ... }` on a
+   * new line is a standalone block, not foo's lambda. Without the same-line
+   * condition, `val x = f()` followed by a block would get swallowed by mistake.
    */
   private atSameLine(kind: Token['kind']): boolean {
     const next = this.toks[this.i]
@@ -178,10 +182,10 @@ export class Parser {
     return next.kind === kind
   }
 
-  // ---- biểu thức ----
+  // ---- expressions ----
   parseExpr(): Expr { return this.parseBinary(0) }
 
-  /** Precedence climbing. `prec + 1` cho toán hạng phải ⇒ kết hợp trái. */
+  /** Precedence climbing. `prec + 1` for the right operand ⇒ left-associative. */
   private parseBinary(minPrec: number): Expr {
     let left = this.parseUnary()
     for (;;) {
@@ -191,8 +195,9 @@ export class Parser {
       if (prec === undefined || prec < minPrec) break
       this.next()
       const right = this.parseBinary(prec + 1)
-      // '..' đi chung bảng ưu tiên với toán tử nhị phân nhưng dựng ra node
-      // Range riêng — nhờ vậy ưu tiên đúng Kotlin mà AST vẫn tách bạch.
+      // '..' shares the precedence table with the binary operators but builds a
+      // separate Range node — this keeps Kotlin-correct precedence while
+      // keeping the AST distinct.
       left = t.text === '..'
         ? { k: 'Range', from: left, to: right, pos: this.posOf(t) }
         : { k: 'Binary', op: t.text, left, right, pos: this.posOf(t) }
@@ -217,7 +222,7 @@ export class Parser {
         const name = this.expect('IDENT')
         expr = { k: 'Member', target: expr, name: name.text, pos: this.posOf(name) }
       } else if (this.trySkipTypeArgs()) {
-        // Đã nuốt <...>; vòng lặp kế sẽ thấy '(' và gọi parseCallTail.
+        // Already consumed <...>; the next loop iteration will see '(' and call parseCallTail.
       } else if (this.at('LPAREN')) {
         expr = this.parseCallTail(expr)
       } else if (this.atSameLine('LBRACE')) {
@@ -233,21 +238,23 @@ export class Parser {
   }
 
   /**
-   * Phân biệt `Channel<Int>()` (đối số kiểu) với `a < b` (so sánh).
+   * Distinguishes `Channel<Int>()` (type argument) from `a < b` (comparison).
    *
-   * Chỉ coi là đối số kiểu khi quét được tới '>' khớp cặp VÀ ngay sau đó là
-   * '('. Nhờ điều kiện thứ hai mà `a < b` không bao giờ bị hiểu nhầm. Thất bại
-   * thì khôi phục con trỏ về chỗ cũ, không để lại dấu vết.
+   * Only treated as a type argument when scanning reaches a matching '>' AND it
+   * is immediately followed by '('. That second condition is what keeps `a < b`
+   * from ever being misread. On failure, the cursor is restored to where it
+   * was, leaving no trace.
    */
   private trySkipTypeArgs(): boolean {
     if (!this.at('OP', '<')) return false
 
-    // Chỉ '>' theo sau bởi '(' là KHÔNG đủ: `x < y > (z)` cũng khớp mẫu đó và
-    // sẽ bị nuốt thành Call(x, [z]) một cách im lặng — tệ hơn cả lỗi parse.
-    // Chốt thêm bằng quy ước Kotlin: tên kiểu viết hoa chữ đầu.
-    // Giới hạn đã biết: `x < Y > (z)` với Y là biến viết hoa vẫn nhầm. Chấp
-    // nhận ở M1 — trình biên dịch thật phân giải chỗ này bằng thông tin kiểu
-    // mà engine này không có, và subset M1 không cho user tự định nghĩa generic.
+    // A '>' followed by '(' alone is NOT enough: `x < y > (z)` also matches
+    // that pattern and would get silently swallowed into Call(x, [z]) — worse
+    // than a parse error. Add one more anchor: the Kotlin convention that type
+    // names start with an uppercase letter. Known limitation: `x < Y > (z)`
+    // where Y is an uppercase-starting variable still gets it wrong. Accepted
+    // for M1 — the real compiler resolves this using type information this
+    // engine doesn't have, and the M1 subset doesn't let users define generics.
     const first = this.peek(1)
     if (first.kind !== 'IDENT' || !/^[A-Z]/.test(first.text)) return false
 
@@ -258,7 +265,7 @@ export class Parser {
       if (this.atEof()) { this.i = save; return false }
       if (this.at('OP', '<')) { depth++; this.next(); continue }
       if (this.at('OP', '>')) { depth--; this.next(); continue }
-      // Bên trong đối số kiểu chỉ chấp nhận tên, dấu phẩy, chấm, dấu hỏi.
+      // Inside a type argument, only accept names, commas, dots, question marks.
       if (this.at('IDENT') || this.at('COMMA') || this.at('DOT') || this.at('OP', '?')) {
         this.next(); continue
       }
@@ -270,7 +277,7 @@ export class Parser {
     return false
   }
 
-  /** Task 4 sẽ mở rộng để nuốt trailing lambda. */
+  /** Task 4 will extend this to consume a trailing lambda. */
   protected parseCallTail(callee: Expr): Expr {
     const lp = this.expect('LPAREN')
     const args: Arg[] = []
@@ -322,9 +329,9 @@ export class Parser {
       while (!this.at('RBRACE') && !this.atEof()) {
         const cond = this.accept('KEYWORD', 'else') ? null : this.parseExpr()
         this.expect('ARROW')
-        // Vế phải chấp nhận cả hai dạng: `{ ... }` (block) hoặc một biểu thức
-        // đơn (`1 -> println("one")` — dạng phổ biến nhất trong Kotlin thật).
-        // Bắt buộc LBRACE trước đây khiến dạng biểu thức lỗi parse.
+        // The right-hand side accepts both forms: `{ ... }` (block) or a single
+        // expression (`1 -> println("one")` — the most common form in real
+        // Kotlin). Previously requiring LBRACE made the expression form a parse error.
         if (this.at('LBRACE')) branches.push({ cond, block: this.parseBlock(), expr: null })
         else branches.push({ cond, block: null, expr: this.parseExpr() })
         this.skipNewlines()
@@ -345,38 +352,40 @@ export class Parser {
       return inner
     }
 
-    throw new ParseError(`Không phân tích được biểu thức bắt đầu bằng '${t.text || t.kind}'`, pos)
+    throw new ParseError(`Could not parse an expression starting with '${t.text || t.kind}'`, pos)
   }
 
   /**
-   * Parse lại từng phần biểu thức của string template.
+   * Re-parses each expression part of a string template.
    *
-   * Vị trí lỗi phải được QUY VỀ vị trí thật trong file. Parser lồng chỉ thấy
-   * một mẩu mã rời nên mọi ParseError của nó đều báo dòng 1 cột 1; nếu ném
-   * thẳng ra thì người dùng nhận vị trí vô nghĩa. StringPart mang sẵn line/col
-   * của ký tự đầu mẩu — dùng nó để cộng bù.
+   * The error position must be REBASED to the real position in the file. The
+   * nested parser only ever sees one loose fragment of code, so every one of
+   * its ParseErrors reports line 1 column 1; throwing it straight through would
+   * hand the user a meaningless position. StringPart already carries the
+   * line/col of the fragment's first character — use it to apply the offset.
    */
   private stringParts(parts: StringPart[]): StringPartNode[] {
     return parts.map(p => {
       if (p.type === 'text') return { type: 'text' as const, value: p.value }
 
       if (p.source.trim() === '') {
-        throw new ParseError('Biểu thức trong ${...} đang rỗng', { line: p.line, col: p.col })
+        throw new ParseError('Expression inside ${...} is empty', { line: p.line, col: p.col })
       }
 
       try {
         const expr = new Parser(tokenize(p.source)).parseExpr()
-        // Rebase node CŨNG cần thiết y như rebase ParseError ở dưới, chỉ khác
-        // là nó im lặng: parse thành công nên không ai thấy gì sai cho tới khi
-        // validator báo lỗi ở dòng 1.
+        // The node also needs rebasing, exactly like the ParseError rebase
+        // below — just silently: parsing succeeded, so nothing looks wrong
+        // until the validator reports an error on line 1.
         rebaseExpr(expr, { line: p.line, col: p.col }, new Set())
         return { type: 'expr' as const, expr }
       } catch (err) {
         if (!(err instanceof ParseError)) throw err
         throw new ParseError(err.message, {
           line: p.line + err.pos.line - 1,
-          // Chỉ cộng bù cột khi lỗi nằm ở dòng đầu của mẩu; từ dòng 2 trở đi
-          // cột trong mẩu đã là cột thật.
+          // Only add the column offset when the error is on the fragment's
+          // first line; from line 2 onward the column inside the fragment is
+          // already the real column.
           col: err.pos.line === 1 ? p.col + err.pos.col - 1 : err.pos.col,
         })
       }
@@ -402,7 +411,7 @@ export class Parser {
       if (!this.accept('COMMA')) break
     }
     this.expect('RPAREN')
-    if (this.accept('COLON')) this.expect('IDENT') // kiểu trả về: bỏ qua
+    if (this.accept('COLON')) this.expect('IDENT') // return type: ignored
 
     if (this.accept('OP', '=')) {
       return { name, params, isSuspend, body: null, exprBody: this.parseExpr(), pos: this.posOf(start) }
@@ -453,7 +462,7 @@ export class Parser {
     if (t.kind === 'KEYWORD' && (t.text === 'val' || t.text === 'var')) {
       this.next()
       const name = this.expect('IDENT').text
-      if (this.accept('COLON')) this.expect('IDENT') // kiểu khai báo: bỏ qua
+      if (this.accept('COLON')) this.expect('IDENT') // declared type: ignored
       this.expect('OP', '=')
       return { k: 'ValDecl', name, mutable: t.text === 'var', init: this.parseExpr(), pos }
     }
@@ -518,7 +527,7 @@ export class Parser {
     this.expect('LBRACE')
     this.skipNewlines()
 
-    // Dò tham số: IDENT (, IDENT)* ->
+    // Probe for parameters: IDENT (, IDENT)* ->
     const params: string[] = []
     if (this.peek().kind === 'IDENT') {
       const probe = this.i

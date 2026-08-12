@@ -3,16 +3,16 @@ import kotlinx.coroutines.*
 fun main() = runBlocking {
     val job = launch {
         try {
-            println("1. mở tài nguyên")
+            println("1. open resource")
             delay(1000)
-            println("dòng này không bao giờ chạy")
+            println("this line never runs")
         } finally {
-            println("3. finally VẪN chạy khi bị huỷ — đây là chỗ dọn dẹp")
+            println("3. finally STILL runs when cancelled — this is where cleanup happens")
         }
     }
 
     delay(50)
-    println("2. gọi cancelAndJoin()")
+    println("2. call cancelAndJoin()")
     job.cancelAndJoin()
-    println("4. cancelAndJoin() chờ dọn dẹp xong mới đi tiếp")
+    println("4. cancelAndJoin() waits for cleanup to finish before continuing")
 }

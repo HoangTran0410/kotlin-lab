@@ -8,37 +8,42 @@ import { lessonSource } from '../../src/lessons/registry'
 import { highlightedLine } from './support/highlightedLine'
 
 /**
- * "Nối dây" (Step 3 của brief task 9) không có test tự động nào trong brief —
- * chỉ `npm run dev` thủ công, mở lesson và "kéo timeline". Chưa có timeline
- * slider nào được dựng tới task này (Panel timeline vẫn là placeholder ở
- * App.tsx), nên bài kiểm ở đây lái store thật qua `setStep` — đúng cơ chế mà
- * một thanh kéo timeline ở task sau sẽ gọi.
+ * "Wiring" (Step 3 of brief task 9) has no automated test in the brief — just
+ * a manual `npm run dev`, open a lesson, and "drag the timeline". No timeline
+ * slider had been built as of this task yet (the timeline panel is still a
+ * placeholder in App.tsx), so the test here drives the real store through
+ * `setStep` — the exact mechanism a timeline scrubber in a later task will
+ * call.
  *
- * Tách file riêng (không nằm trong current-line.test.ts) vì brief ghi rõ file
- * đó "Test thuần, không cần render React" — còn test này CẦN render <App />.
+ * Split into its own file (not part of current-line.test.ts) because the
+ * brief explicitly says that file is a "pure test, no React rendering
+ * needed" — while this test NEEDS to render <App />.
  *
- * Lý do thêm test này dù brief không yêu cầu: task 8 (debounce) từng lọt lưới
- * CHÍNH VÌ mọi test khi đó chỉ render CodeEditor trực tiếp, không qua App —
- * hành vi "prop currentLine THẬT SỰ chảy từ store xuống EditorView" chỉ tồn
- * tại khi App và CodeEditor được ghép lại. currentLine.test.ts (Step 2) không
- * thể bắt lỗi kiểu "App quên đọc selectCurrentLine" hay "App quên truyền prop
- * currentLine" — cả hai đều để lại field currentLineField hoạt động đúng khi
- * bị gọi trực tiếp, tests đó vẫn xanh.
+ * Why this test was added even though the brief doesn't ask for it: task 8
+ * (debounce) once slipped through the net EXACTLY BECAUSE every test at the
+ * time only rendered CodeEditor directly, never through App — the behavior
+ * "the currentLine prop ACTUALLY flows from the store down to EditorView"
+ * only exists once App and CodeEditor are wired together. currentLine.test.ts
+ * (Step 2) can't catch bugs like "App forgot to read selectCurrentLine" or
+ * "App forgot to pass the currentLine prop" — both would leave the
+ * currentLineField working correctly when called directly, so those tests
+ * would still pass.
  */
-describe('nối dây App -> CodeEditor — highlight đi theo stepIndex thật của store', () => {
-  it('kéo stepIndex qua store làm dòng highlight trong EditorView di chuyển theo', () => {
+describe("wiring App -> CodeEditor — highlight follows the store's real stepIndex", () => {
+  it('dragging stepIndex through the store moves the highlighted line in EditorView along with it', () => {
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource(lessonSource('supervisor')!)
     const { container } = render(<App />)
     const host = container.querySelector('[data-testid="code-editor"]') as HTMLElement
     const view = EditorView.findFromDOM(host)
-    if (!view) throw new Error('không tìm thấy EditorView trong DOM')
+    if (!view) throw new Error('EditorView not found in the DOM')
 
-    // Đo trước khi viết ngưỡng (tests/engine/trace-srcline.test.ts dùng cùng
-    // nguồn 'supervisor'; đo tay lại ở đây): trace của lesson này có 64 event,
-    // đi qua đúng 3 dòng khác nhau (3, 4, 5).
+    // Measured before writing the threshold (tests/engine/trace-srcline.test.ts
+    // uses the same 'supervisor' source; re-measured by hand here): this
+    // lesson's trace has 64 events, passing through exactly 3 different lines
+    // (3, 4, 5).
     const n = useLabStore.getState().compiled.events.length
-    expect(n, 'fixture supervisor phải có event để bước qua thì test mới có ý nghĩa').toBeGreaterThan(0)
+    expect(n, 'fixture supervisor must have events to step through for the test to be meaningful').toBeGreaterThan(0)
 
     const seen = new Set<number | null>()
     for (let i = 0; i <= n; i++) {
@@ -47,25 +52,27 @@ describe('nối dây App -> CodeEditor — highlight đi theo stepIndex thật c
     }
 
     const distinctLines = [...seen].filter((l): l is number => l !== null)
-    expect(new Set(distinctLines).size, 'phải thấy nhiều hơn 1 dòng khi tua hết trace').toBeGreaterThan(1)
-    // Suy từ SOURCE thật, không chép số cứng: thêm một dòng `import` vào đầu
-    // lesson là mọi số dòng chép tay lệch đi, và test sẽ đỏ vì lý do chẳng
-    // liên quan gì tới thứ nó canh (wiring highlight <-> stepIndex).
+    expect(new Set(distinctLines).size, 'must see more than 1 line when scrubbing through the whole trace').toBeGreaterThan(1)
+    // Derived from the REAL SOURCE, not hardcoded numbers: adding one
+    // `import` line at the top of the lesson would throw off every hand-
+    // copied line number, and the test would fail for a reason that has
+    // nothing to do with what it's locking down (wiring highlight <->
+    // stepIndex).
     const src = lessonSource('supervisor')!.split('\n')
-    const dongLaunch = src
+    const launchLines = src
       .map((l, i) => (l.includes('launch {') ? i + 1 : -1))
       .filter(n => n > 0)
-    expect(dongLaunch.length, 'lesson supervisor phải có 3 dòng launch').toBe(3)
-    expect(new Set(distinctLines)).toEqual(new Set(dongLaunch))
+    expect(launchLines.length, 'lesson supervisor must have 3 launch lines').toBe(3)
+    expect(new Set(distinctLines)).toEqual(new Set(launchLines))
   })
 
-  it('step 0 chưa có event nào thì chưa có gì được tô', () => {
+  it('step 0, with no events yet, has nothing highlighted', () => {
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource(lessonSource('supervisor')!)
     const { container } = render(<App />)
     const host = container.querySelector('[data-testid="code-editor"]') as HTMLElement
     const view = EditorView.findFromDOM(host)
-    if (!view) throw new Error('không tìm thấy EditorView trong DOM')
+    if (!view) throw new Error('EditorView not found in the DOM')
     expect(highlightedLine(view.state)).toBeNull()
   })
 })

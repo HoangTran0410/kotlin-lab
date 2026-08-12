@@ -5,8 +5,9 @@
   min-width: 0;
 }
 
-/* Lối vào lộ trình. Hiện TÊN bài đang mở, không phải một con số trong chip:
-   tiêu đề là thứ người ta nhớ, số thứ tự chỉ để biết đang ở đâu trong đường đi. */
+/* Entry point into the lesson path. Shows the NAME of the open lesson, not
+   just a number in a chip: the title is what people remember, the order
+   number is only there to know where you are along the path. */
 .lesson-nav__open {
   display: flex;
   align-items: center;

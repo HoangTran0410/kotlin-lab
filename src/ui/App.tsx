@@ -24,10 +24,11 @@ import { LESSON_LIST } from '../lessons/registry'
 import { selectCurrentLine, selectWorld } from '../state/selectors'
 
 /**
- * runSourceSafe biên dịch lại TOÀN BỘ trace (parse + interpret + buildGraphSpec)
- * mỗi lần setSource được gọi. Gọi việc đó trên từng phím gõ sẽ giật khi code
- * dài — nên debounce 250ms ở ranh giới UI, còn CodeEditor tự giữ con trỏ/DOM
- * mượt bằng EditorView nội bộ của chính nó (task 8, kotlinLang.ts).
+ * runSourceSafe recompiles the WHOLE trace (parse + interpret + buildGraphSpec)
+ * every time setSource is called. Calling that on every keystroke would judder
+ * on long code — so we debounce 250ms at the UI boundary, while CodeEditor
+ * keeps its own cursor/DOM smooth with its own internal EditorView (task 8,
+ * kotlinLang.ts).
  */
 const SET_SOURCE_DEBOUNCE_MS = 250
 
@@ -47,12 +48,13 @@ function useDebouncedSetSource(): (src: string) => void {
 }
 
 /**
- * CodeEditor (Task 9) không lộ EditorView của nó ra ngoài — theo đúng ranh
- * giới của task này, CodeEditor.tsx là interface CHỈ ĐỌC, không sửa. Tìm view
- * qua DOM bằng `EditorView.findFromDOM` là kỹ thuật bộ test của dự án đã dùng
- * để chạm view từ bên ngoài component (tests/ui/code-editor.test.tsx,
- * current-line-wiring.test.tsx) — dùng lại đúng kỹ thuật đó ở đây thay vì
- * thêm một prop/ref mới vào CodeEditor.
+ * CodeEditor (Task 9) does not expose its EditorView to the outside — per this
+ * task's boundary, CodeEditor.tsx is a READ-ONLY interface, not to be modified.
+ * Finding the view through the DOM with `EditorView.findFromDOM` is the
+ * technique the project's own test suite already uses to reach the view from
+ * outside the component (tests/ui/code-editor.test.tsx,
+ * current-line-wiring.test.tsx) — reusing that same technique here instead of
+ * adding a new prop/ref to CodeEditor.
  */
 function findEditorView(host: HTMLDivElement | null): EditorView | null {
   const el = host?.querySelector<HTMLElement>('[data-testid="code-editor"]')
@@ -71,43 +73,47 @@ export function App() {
   const loadLesson = useLabStore(s => s.loadLesson)
   const loadSource = useLabStore(s => s.loadSource)
   const handleChange = useDebouncedSetSource()
-  // Hộp chung cho lộ trình + trang giới thiệu. `null` = đang đóng.
+  // Shared modal for the lesson path + about page. `null` = closed.
   const [tab, setTab] = useState<string | null>(null)
-  // Bảng gỡ lỗi (console + chẩn đoán + diễn giải đầy đủ + timeline từng event)
-  // mặc định ĐÓNG: đồ thị đã tự kể được chuyện gì đang xảy ra.
+  // Debug panel (console + diagnostics + full narration + per-event timeline)
+  // defaults to CLOSED: the graph already tells its own story of what's
+  // happening.
   const [debugOpen, setDebugOpen] = useState(false)
   const toggleDebug = useCallback(() => setDebugOpen(v => !v), [])
   const editorHost = useRef<HTMLDivElement>(null)
 
-  // Task 15: layout chạy MỘT LẦN mỗi compile (deps = compiled.revision, xem
-  // useLayout.ts) — kéo timeline chỉ đổi `world` (qua selectWorld/stepIndex),
-  // không chạm lại ELK. toReactFlow (Task 12) là hàm thuần: gộp layout cố
-  // định với world theo-step để ra node/edge React Flow, không tính lại vị trí.
+  // Task 15: layout runs ONCE per compile (deps = compiled.revision, see
+  // useLayout.ts) — scrubbing the timeline only changes `world` (via
+  // selectWorld/stepIndex), it never touches ELK again. toReactFlow (Task 12)
+  // is a pure function: it merges the fixed layout with the per-step world to
+  // produce React Flow nodes/edges, without recomputing positions.
   const layout = useLayout(compiled)
   const graphData = toReactFlow(compiled.spec, layout, world)
 
-  // Diễn giải phụ thuộc TRACE, không phụ thuộc step — tính một lần mỗi lần
-  // compile. Memo ở đây là để giữ ỔN ĐỊNH THAM CHIẾU (mảng mới mỗi render sẽ
-  // bắt NarrationPanel render lại vô ích), không phải vì narrateTrace chậm:
-  // nó duyệt một lượt.
+  // Narration depends on the TRACE, not on the step — computed once per
+  // compile. The memo here is to keep REFERENCE STABILITY (a new array on
+  // every render would make NarrationPanel re-render for nothing), not
+  // because narrateTrace is slow: it does a single pass.
   const narration = useMemo(() => narrateTrace(compiled.events), [compiled.events])
 
-  // Đẩy diagnostic vào diagnosticMarks (gutter chấm đỏ + gạch chân) mỗi khi
-  // danh sách đổi. Cắm field/gutter qua `extraExtensions` (đã có sẵn từ Task
-  // 8) lúc mount; ở đây chỉ dispatch DỮ LIỆU — StateField tự kẹp dòng bằng
-  // doc THẬT tại thời điểm effect chạy (xem diagnosticMarks.ts), nên dù
-  // `source` trong store trễ hơn vài kí tự so với EditorView đang gõ dở thì
-  // vẫn không ném.
+  // Push diagnostics into diagnosticMarks (red gutter dot + underline)
+  // whenever the list changes. The field/gutter are plugged in via
+  // `extraExtensions` (already set up since Task 8) at mount time; here we
+  // only dispatch DATA — the StateField clamps the line against the REAL doc
+  // at the moment the effect runs (see diagnosticMarks.ts), so even if
+  // `source` in the store lags a few characters behind the EditorView the
+  // user is mid-typing in, it still never throws.
   useEffect(() => {
     const view = findEditorView(editorHost.current)
     if (!view) return
     view.dispatch({ effects: setDiagnosticLines.of(diagnostics.map(d => d.line)) })
   }, [diagnostics])
 
-  // Bấm một diagnostic trong panel -> cuộn CodeEditor tới dòng đó. Kẹp LẦN
-  // NỮA bằng doc thật của view lúc bấm (không chỉ tin số đã kẹp mà
-  // DiagnosticsPanel trả về, vốn kẹp theo `source` của store — có thể lệch
-  // với doc sống của CodeMirror trong lúc debounce chưa chạy xong).
+  // Click a diagnostic in the panel -> scroll CodeEditor to that line. Clamp
+  // AGAIN using the view's real doc at the moment of the click (don't just
+  // trust the already-clamped number DiagnosticsPanel returns, which clamps
+  // against the store's `source` — that can be out of sync with CodeMirror's
+  // live doc while the debounce hasn't fired yet).
   const handleJumpToLine = useCallback((line: number) => {
     const view = findEditorView(editorHost.current)
     if (!view) return
@@ -123,17 +129,17 @@ export function App() {
       nav={
         <LessonNav
           currentLessonId={lessonId}
-          onMoLoTrinh={() => setTab('lo-trinh')}
-          onMoGioiThieu={() => setTab('chay-duoc')}
+          onOpenLessons={() => setTab('lessons')}
+          onOpenAbout={() => setTab('about')}
           setSource={loadSource}
         />
       }
       editor={
         <div className="editor-col">
-          {/* Trên editor, không phải ở cột bên: đọc mô hình xong thì mắt đi
-              thẳng xuống đúng đoạn code hiện thân cho nó. */}
+          {/* Above the editor, not in a side column: once you've read the
+              model, your eyes go straight down to the code that embodies it. */}
           <MentalModel lessonId={lessonId} />
-          <Panel title="Mã Kotlin" grow>
+          <Panel title="Kotlin source" grow>
             <div ref={editorHost}>
               <CodeEditor
                 value={source}
@@ -143,13 +149,14 @@ export function App() {
               />
             </div>
           </Panel>
-          {/* Lỗi nằm NGAY DƯỚI code, không nằm sau nút gỡ lỗi. Trước đây
-              diagnostic chỉ có trong bảng gỡ lỗi (mặc định đóng), nên người
-              học thấy dòng bị gạch đỏ trong editor mà không có một chữ nào
-              giải thích — biết là sai, không biết sai gì. Chỉ hiện khi CÓ lỗi:
-              lúc code sạch thì cả chiều cao thuộc về editor. */}
+          {/* Errors sit RIGHT BELOW the code, not behind the debug button.
+              Previously diagnostics only lived in the debug panel (closed by
+              default), so learners saw a red-underlined line in the editor
+              with not a single word explaining it — they knew it was wrong,
+              not what was wrong. Only shows when there ARE errors: with clean
+              code, the full height belongs to the editor. */}
           {diagnostics.length > 0 && (
-            <Panel title={`${diagnostics.length} lỗi cần sửa`} tone="error">
+            <Panel title={`${diagnostics.length} error(s) to fix`} tone="error">
               <DiagnosticsPanel
                 diagnostics={diagnostics}
                 docLines={source.split('\n').length}
@@ -160,7 +167,7 @@ export function App() {
         </div>
       }
       graph={
-        <Panel title="Sơ đồ coroutine" grow>
+        <Panel title="Coroutine graph" grow>
           <GraphStage
             graph={graphData}
             narration={narration}
@@ -175,18 +182,19 @@ export function App() {
         </Panel>
       }
       timeline={
-        <Panel title="Dòng thời gian">
+        <Panel title="Timeline">
           <Timeline events={compiled.events} stepIndex={stepIndex} setStep={setStep} />
           <PlaybackControls stepIndex={stepIndex} setStep={setStep} max={compiled.events.length} />
         </Panel>
       }
       side={
         <>
-          <Panel title="Đang xảy ra gì" grow>
+          <Panel title="What's happening" grow>
             <NarrationPanel lines={narration} stepIndex={stepIndex} onJump={setStep} />
           </Panel>
-          {/* Chẩn đoán đã chuyển sang cột mã (ngay dưới editor) — ở đây chỉ
-              còn console, để không hiện cùng một lỗi ở hai chỗ. */}
+          {/* Diagnostics moved to the code column (right under the editor) —
+              only the console is left here, so the same error doesn't show up
+              in two places. */}
           <Panel title="Console">
             <ConsolePanel events={compiled.events} stepIndex={stepIndex} />
           </Panel>
@@ -195,24 +203,24 @@ export function App() {
     />
     {tab !== null && (
       <Modal
-        tabDangMo={tab}
+        activeTab={tab}
         setTab={setTab}
         onClose={() => setTab(null)}
         tabs={[
           {
-            id: 'lo-trinh',
-            nhan: `Lộ trình · ${LESSON_LIST.length} bài`,
-            noi: (
+            id: 'lessons',
+            label: `Lessons · ${LESSON_LIST.length}`,
+            content: (
               <LessonList
                 currentLessonId={lessonId}
-                onChon={id => { loadLesson(id); setTab(null) }}
+                onPick={id => { loadLesson(id); setTab(null) }}
               />
             ),
           },
           {
-            id: 'chay-duoc',
-            nhan: 'Chạy được gì?',
-            noi: <AboutContent onMoViDu={src => { loadSource(src); setTab(null) }} />,
+            id: 'about',
+            label: 'What can it run?',
+            content: <AboutContent onOpenExample={src => { loadSource(src); setTab(null) }} />,
           },
         ]}
       />

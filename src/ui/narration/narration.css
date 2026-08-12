@@ -19,8 +19,10 @@
   border-radius: 0 4px 4px 0;
 }
 
-/* Bước ĐANG xem: nổi hẳn lên. Các câu trước mờ đi để mắt bám đúng một dòng —
-   không mờ hẳn, vì đọc lại mạch trước đó chính là cách hiểu vì sao tới đây. */
+/* The step being VIEWED right now: stands out fully. Earlier sentences fade
+   so the eye locks onto exactly one line — not fully faded, because
+   re-reading the thread that led here is exactly how you understand why
+   you're here. */
 .k-narration__line--current {
   background: var(--panel-2, #1c2128);
 }

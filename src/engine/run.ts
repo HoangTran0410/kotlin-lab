@@ -15,21 +15,23 @@ export interface RunResult {
 }
 
 /**
- * `fun main() = runBlocking { ... }` là dạng đặc biệt: trong Kotlin thật,
- * coroutine gốc DUY NHẤT chính là `runBlocking` đó — không có job nào phía
- * trên nó. Nếu để `main`'s exprBody đi qua `callFun` như bình thường, nó sẽ
- * chạm nhánh `runBlocking` trong `evalCall`, nhánh đó lại `spawnInline` thêm
- * MỘT job nữa bên dưới root job đã có sẵn — sinh ra hai lớp "runBlocking"
- * lồng nhau, sai so với ngôn ngữ đang dạy và khiến UI vẽ ra một coroutine
- * node không tồn tại. Nhận diện đúng dạng này để root job CHÍNH LÀ coroutine
- * runBlocking, không bọc thêm lớp nào. Dạng `fun main() { ... }` (block, có
- * `body`) không đụng tới — vẫn đi qua `callFun` như cũ.
+ * `fun main() = runBlocking { ... }` is a special form: in real Kotlin, the
+ * ONE root coroutine is precisely that `runBlocking` — there is no job above
+ * it. If `main`'s exprBody were run through `callFun` normally, it would hit
+ * the `runBlocking` branch in `evalCall`, which would `spawnInline` yet
+ * ANOTHER job below the root job that already exists — producing two nested
+ * layers of "runBlocking", diverging from the language being taught and
+ * making the UI draw a coroutine node that doesn't exist. This form is
+ * recognized specially so the root job IS the runBlocking coroutine, with no
+ * extra wrapping layer. The `fun main() { ... }` form (block, with a `body`)
+ * is left untouched — it still goes through `callFun` as before.
  *
- * Chỉ unwrap khi KHÔNG có đối số (`runBlocking { }`, không phải
- * `runBlocking(Dispatchers.IO) { }`) — root job không đi qua contextFromArgs
- * nên đối số như dispatcher sẽ bị bỏ rơi âm thầm nếu unwrap bất chấp. Có đối
- * số thì để callFun/evalCall xử lý bình thường, dù lúc đó lại có hai job root
- * lồng nhau; đây là đánh đổi chấp nhận được cho một trường hợp hiếm.
+ * Only unwrapped when there are NO arguments (`runBlocking { }`, not
+ * `runBlocking(Dispatchers.IO) { }`) — the root job doesn't go through
+ * contextFromArgs, so an argument like a dispatcher would get silently
+ * dropped if unwrapped unconditionally. With arguments, callFun/evalCall
+ * handle it as usual, even though that produces two nested root jobs; an
+ * acceptable trade-off for a rare case.
  */
 function runBlockingLambda(fn: FunDecl): Lambda | null {
   const call = fn.exprBody
@@ -50,21 +52,24 @@ export function runSource(src: string): RunResult {
   const main = interp.lookupFun('main')!
   const lambda = runBlockingLambda(main)
 
-  // Env gốc mang jobId của root, để runBlocking/launch ở tầng ngoài cùng
-  // gắn vào đúng cây thay vì tạo ra một root thứ hai.
+  // The root Env carries the root's jobId, so runBlocking/launch at the
+  // outermost level attach to the right tree instead of creating a second root.
   scheduler.spawnRoot(rootJob => (function* (): CoroutineBody {
     const rootEnv = interp.globals.child(rootJob.id)
     if (lambda) {
-      // Root job đã mang builder 'runBlocking' (xem Scheduler.spawnRoot) — nó
-      // CHÍNH LÀ coroutine này, nên chạy thẳng thân lambda, không gọi callFun/
-      // evalCall để tránh spawnInline tạo thêm job con trùng vai trò.
+      // The root job already carries the 'runBlocking' builder (see
+      // Scheduler.spawnRoot) — it IS this coroutine, so run the lambda body
+      // directly, without calling callFun/evalCall, to avoid spawnInline
+      // creating an extra, duplicate-role child job.
       const value = yield* interp.evalBlock(lambda.body, rootEnv)
-      // Giống nhánh runBlocking trong evalCall: chỉ coi là xong khi mọi child
-      // đã xong — nếu bỏ bước này, root có thể Completed trước launch bên
-      // trong nó, sai trace dù output có thể vẫn đúng.
+      // Same as the runBlocking branch in evalCall: only considered done once
+      // every child is done — skipping this step would let the root become
+      // Completed before a launch inside it, producing a wrong trace even if
+      // the output happens to still be correct.
       yield { s: 'joinChildren', jobId: rootJob.id }
-      // Giá trị của `runBlocking { }` gốc. Chưa ai đọc (không await được root),
-      // nhưng trả đúng thứ thân nó cho ra thì rẻ hơn là bịa ra undefined.
+      // The value of the root `runBlocking { }`. Nobody reads it yet (the
+      // root can't be awaited), but returning whatever its body actually
+      // produces is cheaper than making up undefined.
       return value
     }
     return yield* interp.callFun(main, [], rootEnv)
@@ -80,12 +85,13 @@ export function runSource(src: string): RunResult {
 }
 
 /**
- * Bọc `runSource` để KHÔNG BAO GIỜ ném. Editor sống gọi hàm này ở mỗi nhịp
- * gõ phím, mà source lúc đang gõ thì gần như luôn dở dang: `runSource` ném
- * ParseError/LexError ở phần lớn các trạng thái trung gian đó.
+ * Wraps `runSource` so it NEVER throws. The live editor calls this function on
+ * every keystroke, and source mid-keystroke is almost always incomplete:
+ * `runSource` throws ParseError/LexError for most of those in-between states.
  *
- * `runSource` vẫn giữ nguyên hành vi ném — golden test của M1 dựa vào nó, và
- * ở trong test thì ném là đúng: hỏng thì phải ồn ào.
+ * `runSource` itself keeps its throwing behavior — M1's golden test relies on
+ * it, and inside a test throwing is correct: if it's broken, it should be loud
+ * about it.
  */
 export function runSourceSafe(src: string): RunResult {
   try {
@@ -99,12 +105,13 @@ function toDiagnostic(err: unknown): Diagnostic {
   if (err instanceof ParseError || err instanceof LexError) {
     return { severity: 'error', message: err.message, line: err.pos.line, col: err.pos.col }
   }
-  // Lưới an toàn cuối. Nếu tới được đây thì engine có lỗi thật, nhưng UI vẫn
-  // phải sống để user còn sửa được code. Ghi rõ là bất thường.
+  // Last safety net. Reaching this point means the engine has a real bug, but
+  // the UI still has to stay alive so the user can keep editing their code.
+  // Flag it clearly as abnormal.
   return {
     severity: 'error',
-    message: `Lỗi không mong đợi trong engine: ${err instanceof Error ? err.message : String(err)}`,
+    message: `Unexpected error in the engine: ${err instanceof Error ? err.message : String(err)}`,
     line: 1, col: 1,
-    hint: 'Đây có thể là lỗi của công cụ, không phải của code bạn viết.',
+    hint: 'This might be a bug in the tool, not in the code you wrote.',
   }
 }

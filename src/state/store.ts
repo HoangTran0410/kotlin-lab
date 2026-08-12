@@ -11,20 +11,22 @@ interface LabState {
   setSource: (src: string) => void
   setStep: (n: number) => void
   loadLesson: (id: string) => void
-  /** Nạp một đoạn mã KHÔNG thuộc bài nào (trang trắng, ví dụ trong trang giới thiệu). */
+  /** Loads a piece of code that belongs to NO lesson (blank page, an example from the about page). */
   loadSource: (src: string) => void
 }
 
 const clampStep = (n: number, len: number): number => Math.max(0, Math.min(n, len))
 
 /**
- * Store giữ ĐÚNG BA thứ không suy ra được: source (user gõ), compiled (kết quả
- * của một hàm thuần trên source, ở đây vì compile theo debounce chứ không trong
- * render), stepIndex (con trỏ của user).
+ * The store holds EXACTLY THREE things that can't be derived: source (what
+ * the user typed), compiled (the result of a pure function over source, kept
+ * here because compiling is debounced rather than done in render), stepIndex
+ * (the user's cursor).
  *
- * KHÔNG được thêm WorldState, danh sách node, dòng console hay dòng highlight
- * vào đây. Chúng đều là hàm thuần của ba trường trên; giữ bản sao là dựng mô
- * hình state song song với trace — thứ chắc chắn trôi lệch khi tua ngược.
+ * WorldState, a node list, console lines, or a highlight line must NOT be
+ * added here. They're all pure functions of the three fields above; keeping a
+ * copy would mean building a state model that runs parallel to the trace —
+ * something that's guaranteed to drift when scrubbing backwards.
  */
 export const useLabStore = create<LabState>((set, get) => ({
   source: '',
@@ -34,8 +36,9 @@ export const useLabStore = create<LabState>((set, get) => ({
 
   setSource: src => {
     const compiled = compile(src)
-    // Trace mới thì con trỏ cũ có thể trỏ ra ngoài. Kẹp thay vì về 0: khi user
-    // sửa một dòng ở giữa, họ muốn ở lại gần chỗ đang xem.
+    // With a new trace, the old cursor can point past the end. Clamp instead
+    // of resetting to 0: when the user edits a line in the middle, they want
+    // to stay near where they're looking.
     set({ source: src, compiled, stepIndex: clampStep(get().stepIndex, compiled.events.length) })
   },
 
@@ -47,11 +50,12 @@ export const useLabStore = create<LabState>((set, get) => ({
     set({ source: src, compiled: compile(src), stepIndex: 0, lessonId: id })
   },
 
-  // Khác `setSource` ở hai chỗ, và cả hai đều cần: XOÁ lessonId (nếu không,
-  // "Bắt đầu từ trang trắng" và "Mở ví dụ" để lại chip bài cũ sáng trên nav
-  // trong khi editor đã là mã khác hẳn), và ĐƯA con trỏ về 0 (kẹp con trỏ cũ
-  // như setSource là đúng khi đang gõ dở, nhưng nhảy vào giữa một chương trình
-  // vừa mở thì vô nghĩa).
+  // Differs from `setSource` in two places, and both are needed: CLEARS
+  // lessonId (otherwise "Start from blank" and "Open example" would leave the
+  // old lesson chip lit up in the nav while the editor already holds
+  // completely different code), and RESETS the cursor to 0 (clamping the old
+  // cursor like setSource does is right while mid-edit, but jumping into the
+  // middle of a program that was just opened makes no sense).
   loadSource: src => set({ source: src, compiled: compile(src), stepIndex: 0, lessonId: null }),
 }))
 

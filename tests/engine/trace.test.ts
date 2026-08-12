@@ -14,43 +14,44 @@ const sample = () => {
 }
 
 describe('trace', () => {
-  it('seq tăng đơn điệu từ 0', () => {
+  it('seq increases monotonically from 0', () => {
     expect(sample().map(e => e.seq)).toEqual([0, 1, 2, 3])
   })
 
-  it('t lấy theo đồng hồ ảo tại thời điểm phát', () => {
+  it('t is taken from the virtual clock at the moment of emit', () => {
     expect(sample().map(e => e.t)).toEqual([0, 0, 100, 100])
   })
 
-  it('fold dựng đúng trạng thái job tại step cuối', () => {
+  it('fold builds the correct job state at the last step', () => {
     const w = foldTrace(sample(), 4)
     expect(w.jobs.get('j1')).toMatchObject({ state: 'Completed', builder: 'runBlocking' })
   })
 
-  it('fold tới step giữa cho trạng thái trung gian', () => {
+  it('fold up to a middle step gives an intermediate state', () => {
     const w = foldTrace(sample(), 2)
     expect(w.jobs.get('j1')!.state).toBe('Active')
     expect(w.output).toEqual([])
   })
 
-  it('output println tích luỹ theo thứ tự', () => {
+  it('println output accumulates in order', () => {
     expect(foldTrace(sample(), 4).output).toEqual(['hi'])
   })
 
-  it('fold là hàm thuần — không phụ thuộc lần gọi trước đó', () => {
+  it('fold is a pure function — does not depend on previous calls', () => {
     const evs = sample()
-    // Phải chụp BẢN SAO SÂU trước khi gọi cái có thể làm hỏng state.
-    // Nếu chỉ giữ tham chiếu thì một foldTrace stateful (hoist WorldState ra
-    // module scope) sẽ khiến biến này thay đổi theo, và phép so sánh cuối
-    // suy biến thành x === x — luôn đúng, không phát hiện được gì.
+    // Must capture a DEEP CLONE before calling anything that could corrupt
+    // state. If we only kept a reference, a stateful foldTrace (WorldState
+    // hoisted to module scope) would change this variable along with it, and
+    // the final comparison would degenerate into x === x — always true,
+    // detecting nothing.
     const straightToTwo = structuredClone(foldTrace(evs, 2))
     foldTrace(evs, evs.length)
     expect(foldTrace(evs, 2)).toEqual(straightToTwo)
   })
 
-  it('mỗi lần gọi trả về đối tượng MỚI, không dùng lại state cũ', () => {
-    // Đây mới là test thực sự chặn được kiểu hồi quy nói trên: so sánh
-    // tham chiếu, thứ mà toEqual không bao giờ nhìn thấy.
+  it('every call returns a NEW object, never reuses old state', () => {
+    // This is the test that actually catches the regression above: it
+    // compares by reference, which toEqual can never see.
     const evs = sample()
     const a = foldTrace(evs, 2)
     const b = foldTrace(evs, 2)
@@ -60,19 +61,19 @@ describe('trace', () => {
     expect(a).toEqual(b)
   })
 
-  it('foldTrace không làm thay đổi mảng event đầu vào', () => {
+  it('foldTrace does not mutate the input event array', () => {
     const evs = sample()
     const before = structuredClone(evs)
     foldTrace(evs, evs.length)
     expect(evs).toEqual(before)
   })
 
-  it('upTo vượt quá độ dài thì kẹp về step cuối', () => {
+  it('upTo beyond the array length clamps to the last step', () => {
     const evs = sample()
     expect(foldTrace(evs, 999)).toEqual(foldTrace(evs, evs.length))
   })
 
-  it('upTo âm cho trạng thái rỗng', () => {
+  it('negative upTo gives empty state', () => {
     const w = foldTrace(sample(), -5)
     expect({ jobs: w.jobs.size, output: w.output }).toEqual({ jobs: 0, output: [] })
   })

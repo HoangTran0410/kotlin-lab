@@ -1,28 +1,32 @@
-## Mô hình tư duy
+## Mental model
 
-**Exception** và **failure** là hai chuyện khác nhau.
+**Exception** and **failure** are two different things.
 
-- *Exception* là một giá trị đang bay lên trong ngăn xếp. Bắt được là hết chuyện.
-- *Failure* là trạng thái của một **Job**: nó kết thúc bất thường, và điều đó là
-  việc của cha nó.
+- An *exception* is a value flying up the call stack. Catch it and it's over.
+- A *failure* is the state of a **Job**: it ended abnormally, and that becomes its
+  parent's problem.
 
-Một exception chỉ trở thành failure khi nó **thoát ra khỏi thân coroutine**. Bắt
-được bên trong thì Job không bao giờ biết có chuyện gì xảy ra.
+An exception only becomes a failure once it **escapes the coroutine body**. If it's
+caught inside, the Job never learns that anything happened.
 
-## Vì sao Kotlin làm thế
+## Why Kotlin works this way
 
-Coroutine không có ngăn xếp chung với nơi gọi nó. `launch { }` trả về ngay, nên
-không có ai đứng đó để `try/catch` bọc quanh nó. Vì vậy Kotlin cần một đường thứ
-hai để chuyển lỗi: đường của **cây job** — thứ mà bài này và ba bài sau nói tới.
+A coroutine doesn't share a call stack with the place that launched it. `launch { }`
+returns right away, so there is nobody standing there to wrap it in `try/catch`.
+That's why Kotlin needs a second path to carry errors: the path of the **job
+tree** — the thing this lesson and the next three lessons are about.
 
-## Chỗ hay sai
+## Where people get it wrong
 
-- `try { launch { throw ... } } catch (e: Exception) { }`. Khối `catch` này **không
-  bao giờ** chạy: `launch` đã trả về từ lâu, exception xảy ra ở nơi khác, lúc khác.
-  Muốn bắt thì bọc `coroutineScope { }`, hoặc `try/catch` **bên trong** thân launch.
-- Tưởng bắt được exception là job "vẫn xanh". Đúng — nhưng chỉ khi bắt **bên trong**.
+- `try { launch { throw ... } } catch (e: Exception) { }`. This `catch` block
+  **never** runs: `launch` already returned long ago, and the exception happens
+  somewhere else, at a different time. To catch it, wrap `coroutineScope { }`, or
+  put `try/catch` **inside** the launch body.
+- Assuming that catching the exception means the job is "still green". True — but
+  only if it's caught **inside**.
 
-## Nhìn gì trên đồ thị
+## What to look for on the graph
 
-Ở nửa đầu: có một câu "bắt được" và không có cạnh failure nào rời khỏi node. Ở nửa
-sau: exception thoát ra, và lập tức xuất hiện cạnh failure đi **lên** cha.
+In the first half: there's a "caught it" line and no failure edge leaves the node.
+In the second half: the exception escapes, and a failure edge immediately appears
+going **up** to the parent.

@@ -10,8 +10,9 @@
   min-height: 0;
 }
 
-/* Thanh dưới đồ thị: điều khiển + câu giải thích + nút mở bảng gỡ lỗi.
-   Nằm SÁT đồ thị chứ không ở đáy màn hình — mắt không phải rời khỏi hình. */
+/* Bar below the graph: controls + explanation + button to open the debug
+   panel. Sits RIGHT AGAINST the graph, not at the bottom of the screen — the
+   eye never has to leave the picture. */
 .k-stage__bar {
   display: flex;
   align-items: flex-start;
@@ -59,8 +60,9 @@
 
 .k-stage__clock { min-width: 46px; text-align: right; }
 
-/* Câu giải thích của bước đang xem. Đây là thứ thay cho việc phải liếc sang
-   panel bên phải — nên nó phải to và dễ đọc, không phải chú thích nhỏ. */
+/* The narration for the step being viewed. This is what replaces having to
+   glance at the panel on the right — so it has to be large and readable, not
+   a small caption. */
 .k-stage__caption {
   flex: 1;
   min-width: 0;
@@ -103,9 +105,10 @@
 .k-stage__debug:hover { border-color: var(--fg-dim); color: var(--fg); }
 .k-stage__debug[aria-pressed='true'] { border-style: solid; color: var(--fg); }
 
-/* Ghi chú "coroutine bị bỏ lại giữa chừng". Đứng TRÊN canvas, không nằm trong
-   thanh caption dưới đáy: nó nói về cả lần chạy chứ không về bước đang xem, và
-   nó phải đập vào mắt đúng lúc màn hình trông như chẳng có gì xảy ra. */
+/* "Coroutines left unfinished" notice. Sits ABOVE the canvas, not inside the
+   caption bar at the bottom: it talks about the whole run, not the step being
+   viewed, and it has to catch the eye at exactly the moment the screen looks
+   like nothing is happening. */
 .k-stage__leftover {
   flex: none;
   margin: 0 0 6px;

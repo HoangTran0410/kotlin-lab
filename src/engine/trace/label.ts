@@ -1,18 +1,18 @@
 /**
- * Tên hiển thị của một job, dùng CHUNG giữa đồ thị và phần diễn giải.
+ * Display name of a job, SHARED between the graph and the narration.
  *
- * Thứ tự ưu tiên, và lý do:
+ * Priority order, and why:
  *
- * 1. `CoroutineName("x")` — người học GÕ RA nó một cách có chủ đích, và nó là
- *    một element thật của CoroutineContext. Cái gì cố ý thì thắng.
- * 2. Tên biến (`val job = launch { }` -> `job`) — thứ người học đang nhìn thấy
- *    trong code của chính mình, nên là cầu nối tự nhiên nhất giữa dòng code và
- *    ô vuông trên đồ thị.
- * 3. Builder (`launch`) — không còn gì khác để gọi.
+ * 1. `CoroutineName("x")` — the learner TYPED it out deliberately, and it's a
+ *    real element of the CoroutineContext. Whatever's intentional wins.
+ * 2. Variable name (`val job = launch { }` -> `job`) — what the learner is
+ *    already looking at in their own code, so it's the most natural bridge
+ *    between the line of code and the box on the graph.
+ * 3. Builder (`launch`) — nothing else left to call it.
  *
- * Id (`j4`) KHÔNG nằm ở đây: nó luôn được hiện RIÊNG bên cạnh nhãn, vì ba
- * `launch` không tên phải phân biệt được với nhau ngay cả khi cả ba cùng rơi
- * xuống bậc 3.
+ * Id (`j4`) does NOT live here: it's always shown SEPARATELY next to the
+ * label, because three unnamed `launch`es have to stay distinguishable from
+ * each other even when all three fall through to tier 3.
  */
 export function jobLabel(j: {
   id: string; builder: string; name: string | null; varName?: string | null

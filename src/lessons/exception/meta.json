@@ -1,8 +1,8 @@
 {
   "id": "exception",
   "order": 5,
-  "title": "Exception vs Failure — không phải một",
-  "summary": "Exception bị bắt thì không có failure. Chỉ exception thoát ra mới làm Job fail.",
+  "title": "Exception vs Failure — not the same thing",
+  "summary": "A caught exception is not a failure. Only an exception that escapes makes the Job fail.",
   "concepts": [
     "exception",
     "failure",

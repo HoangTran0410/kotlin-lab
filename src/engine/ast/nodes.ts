@@ -8,11 +8,11 @@ export interface Arg { name: string | null; value: Expr }
 export interface Lambda { params: string[]; body: Block; pos: Pos }
 export interface Block { stmts: Stmt[]; pos: Pos }
 export interface WhenBranch {
-  /** null = nhánh `else`. */
+  /** null = the `else` branch. */
   cond: Expr | null
-  /** Vế phải dạng `{ ... }`. Đúng một trong block/expr khác null. */
+  /** Right-hand side in `{ ... }` form. Exactly one of block/expr is non-null. */
   block: Block | null
-  /** Vế phải dạng biểu thức đơn: `1 -> println("one")`. */
+  /** Right-hand side as a single expression: `1 -> println("one")`. */
   expr: Expr | null
 }
 export interface CatchClause { name: string; type: string; block: Block }
@@ -47,7 +47,7 @@ export interface FunDecl {
   name: string
   params: Param[]
   isSuspend: boolean
-  /** Đúng một trong hai khác null. `fun main() = runBlocking { }` dùng exprBody. */
+  /** Exactly one of the two is non-null. `fun main() = runBlocking { }` uses exprBody. */
   body: Block | null
   exprBody: Expr | null
   pos: Pos

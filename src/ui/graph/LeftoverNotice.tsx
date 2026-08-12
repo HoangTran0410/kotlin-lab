@@ -1,39 +1,41 @@
 import { useMemo } from 'react'
 import type { Event } from '../../engine/trace/events'
-import { coroutineDangDo, thieuRunBlocking } from '../../engine/trace/leftover'
+import { unfinishedCoroutines, missingRunBlocking } from '../../engine/trace/leftover'
 
 /**
- * "Chương trình kết thúc khi còn N coroutine đang dừng giữa chừng."
+ * "The program ended while N coroutines were still stopped partway through."
  *
- * Ca đã gặp thật: `fun main() { CoroutineScope(...).launch { delay(500); ... } }`
- * — không `runBlocking` nào. Chương trình chạy xong trong 0ms, output rỗng,
- * đồ thị đầy node đứng im, và KHÔNG có một chữ nào nói vì sao. Kotlin thật cũng
- * cho ra output rỗng, nên đây không phải lỗi của engine — nhưng im lặng thì vẫn
- * là câu trả lời tệ nhất có thể cho câu hỏi "sao nó không chạy?".
+ * A real case we've hit: `fun main() { CoroutineScope(...).launch { delay(500); ... } }`
+ * — no `runBlocking` anywhere. The program finishes in 0ms, empty output, the
+ * graph full of nodes standing still, and NOT A WORD about why. Real Kotlin
+ * also produces empty output for this, so it's not an engine bug — but
+ * silence is still the worst possible answer to "why didn't it run?".
  *
- * Hiện ở đầu sân khấu đồ thị, chỗ mắt đang nhìn khi thấy không có gì xảy ra —
- * không giấu sau nút gỡ lỗi.
+ * Shown at the top of the graph stage, right where the eye is already looking
+ * when it sees nothing happening — not hidden behind the debug button.
  */
 export function LeftoverNotice({ events, source }: { events: readonly Event[]; source: string }) {
-  const { nhan } = useMemo(() => coroutineDangDo(events), [events])
-  if (events.length === 0 || nhan.length === 0) return null
+  const { labels } = useMemo(() => unfinishedCoroutines(events), [events])
+  if (events.length === 0 || labels.length === 0) return null
 
-  const thieu = thieuRunBlocking(source)
+  const missing = missingRunBlocking(source)
   return (
     <div className="k-stage__leftover" role="note" data-testid="leftover-notice">
-      <strong>{nhan.length} coroutine bị bỏ lại giữa chừng.</strong>{' '}
-      Chương trình kết thúc khi coroutine GỐC kết thúc — y như JVM thoát ngay sau khi{' '}
-      <code>main</code> trả về và giết mọi thread daemon. Những cái này chưa chạy xong:{' '}
-      {nhan.map((n, i) => (
+      <strong>{labels.length} coroutine(s) left unfinished.</strong>{' '}
+      The program ends when the ROOT coroutine ends — just like the JVM exits
+      right after <code>main</code> returns and kills every daemon thread.
+      These haven't finished running:{' '}
+      {labels.map((n, i) => (
         <span key={`${n}-${i}`}>{i > 0 ? ', ' : ''}<code>{n}</code></span>
       ))}.
-      {thieu && (
+      {missing && (
         <>
           {' '}
-          <strong>Không có <code>runBlocking</code> nào trong file.</strong>{' '}
-          <code>fun main() {'{ ... }'}</code> trả về ngay lập tức, nên không ai chờ chúng cả. Đổi
-          thành <code>fun main() = runBlocking {'{ ... }'}</code> rồi <code>join()</code> (hoặc{' '}
-          <code>delay</code>) đủ lâu để thấy chúng chạy.
+          <strong>There's no <code>runBlocking</code> anywhere in the file.</strong>{' '}
+          <code>fun main() {'{ ... }'}</code> returns immediately, so nothing
+          waits for them. Change it to{' '}
+          <code>fun main() = runBlocking {'{ ... }'}</code> then{' '}
+          <code>join()</code> (or <code>delay</code>) long enough to see them run.
         </>
       )}
     </div>

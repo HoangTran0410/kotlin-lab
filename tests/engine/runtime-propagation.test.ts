@@ -6,7 +6,7 @@ import { TraceEmitter } from '../../src/engine/trace/emitter'
 const boom = { exType: 'RuntimeException', message: 'boom', isCancellation: false }
 const cancelled = { exType: 'CancellationException', message: 'cancelled', isCancellation: true }
 
-/** parent + 3 con, tất cả Active. */
+/** parent + 3 children, all Active. */
 function tree(supervisor: boolean) {
   const p = new Job('p', 'Parent', null, supervisor)
   p.transitionTo('Active')
@@ -19,22 +19,22 @@ function tree(supervisor: boolean) {
   return { p, a: kids[0]!, b: kids[1]!, c: kids[2]! }
 }
 
-describe('propagation — cancel đi xuống', () => {
-  it('cancel parent làm mọi child Cancelled', () => {
+describe('propagation — cancel goes down', () => {
+  it('cancelling the parent makes every child Cancelled', () => {
     const { p, a, b, c } = tree(false)
     cancelJob(p, cancelled, new TraceEmitter(), 'user')
     expect([p.state, a.state, b.state, c.state]).toEqual(
       ['Cancelled', 'Cancelled', 'Cancelled', 'Cancelled'])
   })
 
-  it('cancel lan tới cháu, không chỉ con trực tiếp', () => {
+  it('cancellation reaches grandchildren, not just direct children', () => {
     const { p, a } = tree(false)
     const g = new Job('g', 'G', a, false); g.transitionTo('Active'); a.addChild(g)
     cancelJob(p, cancelled, new TraceEmitter(), 'user')
     expect(g.state).toBe('Cancelled')
   })
 
-  it('phát CANCEL_REQUESTED cho chính job bị cancel rồi tới từng child', () => {
+  it('emits CANCEL_REQUESTED for the cancelled job itself, then for each child', () => {
     const { p } = tree(false)
     const em = new TraceEmitter()
     cancelJob(p, cancelled, em, 'user')
@@ -44,7 +44,7 @@ describe('propagation — cancel đi xuống', () => {
     ])
   })
 
-  it('không phát CANCEL_REQUESTED trùng cho cùng một job', () => {
+  it('does not emit a duplicate CANCEL_REQUESTED for the same job', () => {
     const { p } = tree(false)
     const em = new TraceEmitter()
     cancelJob(p, cancelled, em, 'user')
@@ -52,16 +52,17 @@ describe('propagation — cancel đi xuống', () => {
     expect(new Set(targets).size).toBe(targets.length)
   })
 
-  it('cancel job đã Completed không gây lỗi', () => {
+  it('cancelling an already-Completed job does not error', () => {
     const j = new Job('j', 'J', null, false)
     j.transitionTo('Active'); j.transitionTo('Completed')
     expect(() => cancelJob(j, cancelled, new TraceEmitter(), 'user')).not.toThrow()
     expect(j.state).toBe('Completed')
   })
 
-  it('phát JOB_STATE đủ hai chặng Active->Cancelling->Cancelled', () => {
-    // UI vẽ chặng Cancelling; nếu nhảy thẳng sang Cancelled thì mất một bước
-    // của hoạt cảnh và người học không thấy được giai đoạn "đang huỷ".
+  it('emits both JOB_STATE legs Active->Cancelling->Cancelled', () => {
+    // The UI draws the Cancelling leg; jumping straight to Cancelled would
+    // drop a step of the animation and the learner would never see the
+    // "being cancelled" phase.
     const j = new Job('j', 'J', null, false)
     j.transitionTo('Active')
     const em = new TraceEmitter()
@@ -72,7 +73,7 @@ describe('propagation — cancel đi xuống', () => {
     expect(states).toEqual([['Active', 'Cancelling'], ['Cancelling', 'Cancelled']])
   })
 
-  it('con bị cancel TRƯỚC cha — thứ tự này là thứ tự UI vẽ', () => {
+  it('children are cancelled BEFORE the parent — this is the order the UI draws', () => {
     const { p } = tree(false)
     const em = new TraceEmitter()
     cancelJob(p, cancelled, em, 'user')
@@ -83,21 +84,21 @@ describe('propagation — cancel đi xuống', () => {
   })
 })
 
-describe('propagation — failure đi lên', () => {
-  it('child fail làm parent thường FAIL', () => {
+describe('propagation — failure goes up', () => {
+  it('child failure makes an ordinary parent FAIL', () => {
     const { p, b } = tree(false)
     reportFailure(b, boom, new TraceEmitter())
     expect(p.state).toBe('Cancelled')
     expect(p.cause?.exType).toBe('RuntimeException')
   })
 
-  it('parent fail rồi cancel các sibling', () => {
+  it('parent fails then cancels its siblings', () => {
     const { a, b, c } = tree(false)
     reportFailure(b, boom, new TraceEmitter())
     expect([a.state, c.state]).toEqual(['Cancelled', 'Cancelled'])
   })
 
-  it('phát FAILURE_PROPAGATED với blockedBySupervisor false', () => {
+  it('emits FAILURE_PROPAGATED with blockedBySupervisor false', () => {
     const { b } = tree(false)
     const em = new TraceEmitter()
     reportFailure(b, boom, em)
@@ -105,7 +106,7 @@ describe('propagation — failure đi lên', () => {
     expect(ev).toMatchObject({ from: 'b', to: 'p', blockedBySupervisor: false })
   })
 
-  it('CancellationException KHÔNG làm parent fail', () => {
+  it('CancellationException does NOT fail the parent', () => {
     const { p, a, c } = tree(false)
     const b = new Job('b2', 'B2', p, false); b.transitionTo('Active'); p.addChild(b)
     reportFailure(b, cancelled, new TraceEmitter())
@@ -114,19 +115,19 @@ describe('propagation — failure đi lên', () => {
 })
 
 describe('propagation — supervisor boundary', () => {
-  it('supervisor KHÔNG fail khi direct child fail', () => {
+  it('a supervisor does NOT fail when a direct child fails', () => {
     const { p, b } = tree(true)
     reportFailure(b, boom, new TraceEmitter())
     expect(p.state).toBe('Active')
   })
 
-  it('sibling vẫn Active khi supervisor chặn failure', () => {
+  it('siblings stay Active when the supervisor blocks the failure', () => {
     const { a, c, b } = tree(true)
     reportFailure(b, boom, new TraceEmitter())
     expect([a.state, c.state]).toEqual(['Active', 'Active'])
   })
 
-  it('phát FAILURE_PROPAGATED với blockedBySupervisor true', () => {
+  it('emits FAILURE_PROPAGATED with blockedBySupervisor true', () => {
     const { b } = tree(true)
     const em = new TraceEmitter()
     reportFailure(b, boom, em)
@@ -134,29 +135,30 @@ describe('propagation — supervisor boundary', () => {
       .toMatchObject({ from: 'b', to: 'p', blockedBySupervisor: true })
   })
 
-  it('BẪY: supervisor chỉ chắn direct child — cháu vẫn theo luật Job thường', () => {
-    // root(supervisor) -> P(thường) -> A, B, C
+  it('TRAP: a supervisor only blocks its direct child — a grandchild still follows ordinary Job rules', () => {
+    // root(supervisor) -> P(ordinary) -> A, B, C
     const root = new Job('root', 'Root', null, true); root.transitionTo('Active')
     const P = new Job('P', 'P', root, false); P.transitionTo('Active'); root.addChild(P)
     const kids = ['A', 'B', 'C'].map(id => {
       const j = new Job(id, id, P, false); j.transitionTo('Active'); P.addChild(j); return j
     })
     reportFailure(kids[1]!, boom, new TraceEmitter())
-    expect(P.state).toBe('Cancelled')          // P thường -> fail
-    expect(kids[0]!.state).toBe('Cancelled')   // sibling bị kéo theo
+    expect(P.state).toBe('Cancelled')          // P is ordinary -> fails
+    expect(kids[0]!.state).toBe('Cancelled')   // sibling dragged down with it
     expect(kids[2]!.state).toBe('Cancelled')
-    expect(root.state).toBe('Active')          // nhưng supervisor gốc vẫn sống
+    expect(root.state).toBe('Active')          // but the root supervisor survives
   })
 
-  it('root fail (không có parent) vẫn ghi nhận cause', () => {
+  it('a root failure (no parent) still records a cause', () => {
     const j = new Job('j', 'J', null, false); j.transitionTo('Active')
     reportFailure(j, boom, new TraceEmitter())
     expect(j.cause?.exType).toBe('RuntimeException')
   })
 
-  it('failure đi lên NHIỀU TẦNG khi mọi parent đều là Job thường', () => {
-    // R -> P -> B, và R còn một con khác là U (chú của B).
-    // Cách cài chỉ-lan-một-tầng sẽ để R sống và U sống — sai hẳn Kotlin.
+  it('failure climbs MULTIPLE LEVELS when every parent is an ordinary Job', () => {
+    // R -> P -> B, and R has another child U (B's uncle).
+    // An implementation that only propagates one level would leave R and U
+    // alive — flat-out wrong compared to Kotlin.
     const R = new Job('R', 'R', null, false); R.transitionTo('Active')
     const P = new Job('P', 'P', R, false); P.transitionTo('Active'); R.addChild(P)
     const U = new Job('U', 'U', R, false); U.transitionTo('Active'); R.addChild(U)
@@ -165,13 +167,14 @@ describe('propagation — supervisor boundary', () => {
     reportFailure(B, boom, new TraceEmitter())
 
     expect(P.state).toBe('Cancelled')
-    expect(R.state).toBe('Cancelled')  // chỉ-một-tầng sẽ để Active
-    expect(U.state).toBe('Cancelled')  // chú cũng bị kéo theo
+    expect(R.state).toBe('Cancelled')  // one-level-only would leave this Active
+    expect(U.state).toBe('Cancelled')  // the uncle gets dragged down too
   })
 
-  it('bẫy nested supervisor: failure phải CHẠM tới boundary và được ghi lại', () => {
-    // Nếu chỉ lan một tầng thì sự kiện P -> root không bao giờ được phát,
-    // và UI không có gì để vẽ ranh giới supervisor — mất trọn bài học.
+  it('nested supervisor trap: failure must REACH the boundary and get recorded', () => {
+    // If propagation only went one level, the P -> root event would never be
+    // emitted, and the UI would have nothing to draw the supervisor boundary
+    // with — the whole lesson would be lost.
     const root = new Job('root', 'Root', null, true); root.transitionTo('Active')
     const P = new Job('P', 'P', root, false); P.transitionTo('Active'); root.addChild(P)
     const B = new Job('B', 'B', P, false); B.transitionTo('Active'); P.addChild(B)
@@ -190,7 +193,7 @@ describe('propagation — supervisor boundary', () => {
     expect(root.state).toBe('Active')
   })
 
-  it('CancellationException ở tầng sâu cũng không kéo tổ tiên nào chết', () => {
+  it('a deeply nested CancellationException still does not drag any ancestor down', () => {
     const R = new Job('R', 'R', null, false); R.transitionTo('Active')
     const P = new Job('P', 'P', R, false); P.transitionTo('Active'); R.addChild(P)
     const B = new Job('B', 'B', P, false); B.transitionTo('Active'); P.addChild(B)

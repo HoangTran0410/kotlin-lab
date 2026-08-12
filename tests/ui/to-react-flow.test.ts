@@ -11,8 +11,8 @@ const eventsOf = (id: string): Event[] => runSource(loadLessonSource(id)).events
 
 const CTX: CtxSummary = { dispatcher: 'Main', name: null, isSupervisor: false, hasHandler: false }
 
-describe('toReactFlow — nơi chống rung được khoá chặt (Task 12)', () => {
-  it('VỊ TRÍ NODE BẤT BIẾN qua mọi step — bất biến chống rung', async () => {
+describe('toReactFlow — where anti-jitter gets locked down (Task 12)', () => {
+  it('NODE POSITION IS INVARIANT across every step — the anti-jitter invariant', async () => {
     for (const id of LESSON_IDS) {
       const events = eventsOf(id)
       const spec = buildGraphSpec(events)
@@ -24,13 +24,13 @@ describe('toReactFlow — nơi chống rung được khoá chặt (Task 12)', ()
     }
   })
 
-  it('tập id node bất biến qua mọi step, kể cả step 0', async () => {
+  it('the set of node ids is invariant across every step, including step 0', async () => {
     for (const id of LESSON_IDS) {
       const events = eventsOf(id)
       const spec = buildGraphSpec(events)
       const layout = await layoutGraph(spec)
       const fullIds = new Set(spec.nodes.map(n => n.id))
-      expect(fullIds.size, `${id}: fixture cần >= 1 node`).toBeGreaterThan(0)
+      expect(fullIds.size, `${id}: fixture needs >= 1 node`).toBeGreaterThan(0)
 
       for (let n = 0; n <= events.length; n++) {
         const ids = new Set(toReactFlow(spec, layout, foldTrace(events, n)).nodes.map(x => x.id))
@@ -39,18 +39,20 @@ describe('toReactFlow — nơi chống rung được khoá chặt (Task 12)', ()
     }
   })
 
-  it('thứ tự mảng bất biến — cha luôn đứng trước con, khoá RIÊNG ở tầng React Flow', async () => {
-    // Task 4 đã khoá bất biến này trên buildGraphSpec(...).nodes. layoutGraph
-    // (Task 11) hoàn toàn không nhạy với thứ tự vì nó dựng cây bằng tra
-    // parentId. toReactFlow là tầng DUY NHẤT mà React Flow thật sự đọc mảng
-    // này để suy toạ độ tương đối — nên phải khoá lại ở ĐÂY, trên chính output
-    // của toReactFlow, để một sai sót trong toReactFlow.ts hay elkLayout.ts
-    // (ví dụ lỡ sort/duyệt lại mảng) bị bắt, thay vì chỉ tin vào test Task 4.
+  it('array order is invariant — parent always comes before child, locked down SEPARATELY at the React Flow layer', async () => {
+    // Task 4 already locked down this invariant on buildGraphSpec(...).nodes.
+    // layoutGraph (Task 11) is completely insensitive to order because it
+    // builds the tree by looking up parentId. toReactFlow is the ONLY layer
+    // where React Flow actually reads this array to infer relative
+    // coordinates — so it must be locked down HERE too, on toReactFlow's own
+    // output, so a mistake in toReactFlow.ts or elkLayout.ts (e.g.
+    // accidentally sorting/re-traversing the array) gets caught, instead of
+    // just trusting the Task 4 test.
     for (const id of LESSON_IDS) {
       const events = eventsOf(id)
       const spec = buildGraphSpec(events)
       const layout = await layoutGraph(spec)
-      // Ghim fixture: cần có ít nhất một node có cha, nếu không test rỗng nghĩa.
+      // Pin the fixture: needs at least one node with a parent, otherwise the test is meaningless.
       expect(spec.nodes.some(n => n.parentId !== null), id).toBe(true)
 
       for (const n of [0, Math.floor(events.length / 2), events.length]) {
@@ -64,7 +66,7 @@ describe('toReactFlow — nơi chống rung được khoá chặt (Task 12)', ()
     }
   })
 
-  it('node chưa sinh ra có data.phase === "unborn"; node đã sinh thì không', async () => {
+  it('a node not born yet has data.phase === "unborn"; a born node doesn\'t', async () => {
     for (const id of LESSON_IDS) {
       const events = eventsOf(id)
       const spec = buildGraphSpec(events)
@@ -79,7 +81,7 @@ describe('toReactFlow — nơi chống rung được khoá chặt (Task 12)', ()
     }
   })
 
-  it('node đã sinh mang đúng state từ world.jobs cho MỌI step, không suy từ cha', async () => {
+  it('a born node carries the correct state from world.jobs at EVERY step, never inferred from the parent', async () => {
     for (const id of LESSON_IDS) {
       const events = eventsOf(id)
       const spec = buildGraphSpec(events)
@@ -95,13 +97,14 @@ describe('toReactFlow — nơi chống rung được khoá chặt (Task 12)', ()
     }
   })
 
-  it('cha Completed trong khi con vẫn Active thì con VẪN Active — khoá tồn đọng A1', async () => {
-    // FSM thật (job.ts) không phát ra cảnh này trong ba lesson (đã đo: không
-    // bước nào trong jobtree/normalfail/supervisor có cha Completed trong khi
-    // một con còn New/Active/Completing/Cancelling) — dựng tay theo đúng chỉ
-    // dẫn của brief, mô phỏng tồn đọng A1 (join/joinChildren tin isCompleted
-    // mà không hỏi task.finished, nên cha có thể phát Completed TRƯỚC khi
-    // finally của con chạy xong).
+  it('parent Completed while a child is still Active leaves the child STILL Active — locks down backlog item A1', async () => {
+    // The real FSM (job.ts) never produces this scenario in the three lessons
+    // (measured: no step in jobtree/normalfail/supervisor has a parent
+    // Completed while a child is still New/Active/Completing/Cancelling) —
+    // built by hand following the brief's exact instructions, simulating
+    // backlog item A1 (join/joinChildren trusts isCompleted without checking
+    // task.finished, so a parent can emit Completed BEFORE the child's
+    // finally finishes running).
     const events: Event[] = [
       { seq: 0, t: 0, k: 'COROUTINE_CREATED', id: 'p', parentId: null, builder: 'runBlocking', ctx: CTX },
       { seq: 1, t: 0, k: 'COROUTINE_CREATED', id: 'c', parentId: 'p', builder: 'launch', ctx: CTX },
@@ -113,7 +116,7 @@ describe('toReactFlow — nơi chống rung được khoá chặt (Task 12)', ()
     const layout = await layoutGraph(spec)
     const world = foldTrace(events, events.length)
 
-    // Ghim đúng ca A1: cha đã Completed, con vẫn Active.
+    // Pin the exact A1 scenario: parent already Completed, child still Active.
     expect(world.jobs.get('p')?.state).toBe('Completed')
     expect(world.jobs.get('c')?.state).toBe('Active')
 
@@ -121,15 +124,15 @@ describe('toReactFlow — nơi chống rung được khoá chặt (Task 12)', ()
     expect(child?.data.state).toBe('Active')
   })
 
-  it('parentId + extent "parent" đặt ĐÚNG trên những node có cha, không hơn không kém', async () => {
+  it('parentId + extent "parent" are set CORRECTLY on nodes with a parent, no more no less', async () => {
     const events = eventsOf('supervisor')
     const spec = buildGraphSpec(events)
     const layout = await layoutGraph(spec)
     const nodes = toReactFlow(spec, layout, foldTrace(events, events.length)).nodes
     const byId = new Map(spec.nodes.map(n => [n.id, n]))
 
-    expect(nodes.some(n => n.parentId !== undefined), 'fixture cần có node có cha').toBe(true)
-    expect(nodes.some(n => n.parentId === undefined), 'fixture cần có node KHÔNG cha').toBe(true)
+    expect(nodes.some(n => n.parentId !== undefined), 'fixture needs a node with a parent').toBe(true)
+    expect(nodes.some(n => n.parentId === undefined), 'fixture needs a node WITHOUT a parent').toBe(true)
 
     for (const nd of nodes) {
       const src = byId.get(nd.id)!
@@ -143,22 +146,22 @@ describe('toReactFlow — nơi chống rung được khoá chặt (Task 12)', ()
     }
   })
 
-  it('node compound dùng type "scope", node lá dùng type "job"', async () => {
+  it('a compound node uses type "scope", a leaf node uses type "job"', async () => {
     const events = eventsOf('supervisor')
     const spec = buildGraphSpec(events)
     const layout = await layoutGraph(spec)
     const nodes = toReactFlow(spec, layout, foldTrace(events, events.length)).nodes
     const byId = new Map(spec.nodes.map(n => [n.id, n]))
 
-    expect(spec.nodes.some(n => n.isContainer), 'fixture cần có node compound').toBe(true)
-    expect(spec.nodes.some(n => !n.isContainer), 'fixture cần có node lá').toBe(true)
+    expect(spec.nodes.some(n => n.isContainer), 'fixture needs a compound node').toBe(true)
+    expect(spec.nodes.some(n => !n.isContainer), 'fixture needs a leaf node').toBe(true)
 
     for (const nd of nodes) {
       expect(nd.type, nd.id).toBe(byId.get(nd.id)!.isContainer ? 'scope' : 'job')
     }
   })
 
-  it('cạnh failure mang data.blocked đúng — supervisor có blocked:true, normalfail thì không', async () => {
+  it("a failure edge carries the correct data.blocked — supervisor has blocked:true, normalfail doesn't", async () => {
     const failureEdgesOf = async (id: string) => {
       const events = eventsOf(id)
       const spec = buildGraphSpec(events)
@@ -176,7 +179,7 @@ describe('toReactFlow — nơi chống rung được khoá chặt (Task 12)', ()
     expect(nor.every(e => e.data?.blocked === false), 'normalfail').toBe(true)
   })
 
-  it('cạnh failure trỏ vào node ĐÃ Cancelled vẫn được phát — khoá tồn đọng A4', async () => {
+  it('a failure edge pointing at an ALREADY-Cancelled node is still emitted — locks down backlog item A4', async () => {
     const events = eventsOf('normalfail')
     const spec = buildGraphSpec(events)
     const layout = await layoutGraph(spec)
@@ -185,15 +188,15 @@ describe('toReactFlow — nơi chống rung được khoá chặt (Task 12)', ()
     const toCancelled = spec.edges
       .filter(e => e.kind === 'failure')
       .filter(e => world.jobs.get(e.target)?.state === 'Cancelled')
-    // Ghim fixture: normalfail THẬT SỰ có cạnh failure trỏ vào node đã Cancelled.
-    expect(toCancelled.length, 'fixture cần cạnh failure -> node Cancelled').toBeGreaterThan(0)
+    // Pin the fixture: normalfail REALLY does have a failure edge pointing at an already-Cancelled node.
+    expect(toCancelled.length, 'fixture needs a failure edge -> Cancelled node').toBeGreaterThan(0)
 
     const outIds = new Set(toReactFlow(spec, layout, world).edges.map(e => e.id))
     for (const e of toCancelled) expect(outIds.has(e.id), e.id).toBe(true)
   })
 
-  it('cause chỉ hiện khi state là Cancelling/Cancelled — khoá tồn đọng B4', async () => {
-    // Ca thật: normalfail, j2 kết thúc Cancelled với cause thật — phải hiện.
+  it('cause only shows when state is Cancelling/Cancelled — locks down backlog item B4', async () => {
+    // Real case: normalfail, j2 ends up Cancelled with a real cause — must show.
     const events = eventsOf('normalfail')
     const spec = buildGraphSpec(events)
     const layout = await layoutGraph(spec)
@@ -204,13 +207,14 @@ describe('toReactFlow — nơi chống rung được khoá chặt (Task 12)', ()
     const j2 = toReactFlow(spec, layout, world).nodes.find(n => n.id === 'j2')
     expect(j2?.data.cause).toBe(world.jobs.get('j2')!.cause)
 
-    // Ca tồn đọng B4: cause SỐNG SÓT trên WorldState.jobs qua một transition
-    // không mang cause (world.ts chỉ ghi đè `j.cause` khi `e.cause` truthy).
-    // Dựng tay vì FSM thật (job.ts, bảng ALLOWED) không cho Cancelling đi tới
-    // đâu khác ngoài Cancelled, nên ba lesson thật không bao giờ tạo ra ca
-    // này — nhưng foldTrace không thẩm định FSM, nó áp máy móc field theo
-    // field trên BẤT KỲ Event[] nào, nên vẫn là một trạng thái hợp lệ cần
-    // toReactFlow tự phòng thủ.
+    // Backlog item B4 scenario: cause SURVIVES on WorldState.jobs across a
+    // transition that carries no cause (world.ts only overwrites `j.cause`
+    // when `e.cause` is truthy). Built by hand because the real FSM (job.ts,
+    // the ALLOWED table) doesn't let Cancelling go anywhere except Cancelled,
+    // so the three real lessons never produce this case — but foldTrace
+    // doesn't validate the FSM, it mechanically applies field by field to
+    // ANY Event[], so it's still a valid state toReactFlow needs to defend
+    // itself against.
     const staleEvents: Event[] = [
       { seq: 0, t: 0, k: 'COROUTINE_CREATED', id: 'x', parentId: null, builder: 'launch', ctx: CTX },
       { seq: 1, t: 0, k: 'JOB_STATE', id: 'x', from: 'New', to: 'Active' },
@@ -220,7 +224,7 @@ describe('toReactFlow — nơi chống rung được khoá chặt (Task 12)', ()
     const staleSpec = buildGraphSpec(staleEvents)
     const staleLayout = await layoutGraph(staleSpec)
     const staleWorld = foldTrace(staleEvents, staleEvents.length)
-    // Ghim: WorldState thô THẬT SỰ giữ cause cũ — đây là hành vi world.ts sẵn có.
+    // Pin: the raw WorldState REALLY does keep the stale cause — this is world.ts's existing behavior.
     expect(staleWorld.jobs.get('x')?.state).toBe('Completed')
     expect(staleWorld.jobs.get('x')?.cause).toBe('Boom')
 
@@ -228,13 +232,13 @@ describe('toReactFlow — nơi chống rung được khoá chặt (Task 12)', ()
     expect(x?.data.cause).toBeNull()
   })
 
-  it('layout thiếu box cho một node thì node đó bị bỏ qua, không ném', async () => {
+  it('a node missing its layout box gets skipped, not thrown', async () => {
     const events = eventsOf('jobtree')
     const spec = buildGraphSpec(events)
     const layout = await layoutGraph(spec)
     const world = foldTrace(events, events.length)
 
-    expect(spec.nodes.length, 'fixture cần >= 2 node').toBeGreaterThan(1)
+    expect(spec.nodes.length, 'fixture needs >= 2 nodes').toBeGreaterThan(1)
     const missingId = spec.nodes[spec.nodes.length - 1]!.id
     const damaged = new Map(layout)
     damaged.delete(missingId)
@@ -243,7 +247,7 @@ describe('toReactFlow — nơi chống rung được khoá chặt (Task 12)', ()
     expect(() => { result = toReactFlow(spec, damaged, world) }).not.toThrow()
     expect(result!.nodes.some(n => n.id === missingId)).toBe(false)
     expect(result!.nodes.length).toBe(spec.nodes.length - 1)
-    // Cạnh trỏ tới node bị bỏ (nếu có) cũng không được mồ côi trong output.
+    // An edge pointing to a dropped node (if any) must also not be orphaned in the output.
     for (const e of result!.edges) {
       expect(e.source).not.toBe(missingId)
       expect(e.target).not.toBe(missingId)

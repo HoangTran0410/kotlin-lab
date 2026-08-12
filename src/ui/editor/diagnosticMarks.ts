@@ -6,13 +6,14 @@ import {
 import { clampDiagnosticLine } from '../diagnostics/clampLine'
 
 /**
- * Các dòng 1-based mang lỗi — CHƯA kẹp ở đây. Giống `setCurrentLine` (Task 9),
- * việc kẹp diễn ra bên trong `update()` bằng `tr.state.doc.lines`, tức là
- * bằng tài liệu THẬT tại đúng thời điểm effect được áp dụng. Nếu kẹp trước
- * khi dispatch (vd. bằng độ dài `source` trong store, có thể trễ hơn vài
- * kí tự so với EditorView đang gõ dở) thì số đã kẹp vẫn có thể sai lệch với
- * doc thật lúc effect chạy — đúng cái bẫy mà brief cảnh báo hai lần
- * ("trước khi hiện VÀ trước khi nhảy").
+ * 1-based lines carrying an error — NOT clamped here yet. Like
+ * `setCurrentLine` (Task 9), the clamping happens inside `update()` using
+ * `tr.state.doc.lines`, i.e. against the REAL document at the exact moment
+ * the effect is applied. If clamped before dispatch instead (e.g. against the
+ * store's `source` length, which can lag a few characters behind the
+ * EditorView the user is mid-typing in), the clamped number can still drift
+ * from the real doc by the time the effect runs — exactly the trap the brief
+ * warns about twice ("before showing it AND before jumping to it").
  */
 export const setDiagnosticLines = StateEffect.define<readonly number[]>()
 
@@ -30,9 +31,10 @@ class DiagnosticDotMarker extends GutterMarker {
 const dotMarker = new DiagnosticDotMarker()
 
 /**
- * `doc.line(n)` với n ngoài [1, doc.lines] NÉM (RangeError) và làm chết cả
- * editor — hazard giống hệt Task 9 (`lineDeco`), lặp lại ở đây vì mỗi
- * diagnostic mang dòng riêng, không chỉ một dòng như current-line.
+ * `doc.line(n)` with n outside [1, doc.lines] THROWS (RangeError) and kills
+ * the whole editor — the exact same hazard as Task 9 (`lineDeco`), repeated
+ * here because each diagnostic carries its own line, not just one line like
+ * current-line.
  */
 function diagnosticDeco(doc: Text, lines: readonly number[]): DecorationSet {
   if (lines.length === 0) return Decoration.none
@@ -43,10 +45,11 @@ function diagnosticDeco(doc: Text, lines: readonly number[]): DecorationSet {
 }
 
 /**
- * StateField giữ DecorationSet của các dòng lỗi (gạch chân). Cùng khuôn với
- * `currentLineField`: chỉ dựng lại khi có effect `setDiagnosticLines`; mọi
- * transaction khác map theo `tr.changes` để không rớt ra ngoài khi user gõ
- * trong lúc chờ debounce biên dịch lại.
+ * StateField holding the DecorationSet for error lines (underline). Same
+ * shape as `currentLineField`: only rebuilt when there's a
+ * `setDiagnosticLines` effect; every other transaction maps through
+ * `tr.changes` so it doesn't fall out of sync when the user types while a
+ * recompile debounce is still pending.
  */
 export const diagnosticsField = StateField.define<DecorationSet>({
   create: () => Decoration.none,
@@ -60,9 +63,10 @@ export const diagnosticsField = StateField.define<DecorationSet>({
 })
 
 /**
- * Gutter chấm đỏ, đọc lại đúng những dòng mà `diagnosticsField` đang gạch
- * chân — một nguồn sự thật duy nhất cho "dòng nào có lỗi", không phải tính
- * lại độc lập (sẽ có nguy cơ trôi lệch giữa gutter và gạch chân).
+ * The red-dot gutter, reading back exactly the lines that `diagnosticsField`
+ * is underlining — one single source of truth for "which line has an
+ * error", instead of computing it independently (which would risk the
+ * gutter and the underline drifting apart).
  */
 const diagnosticGutter = gutter({
   class: 'cm-diagnostic-gutter',
@@ -75,15 +79,17 @@ const diagnosticGutter = gutter({
 })
 
 /**
- * Extension gộp: gạch chân dòng lỗi + gutter chấm đỏ (brief Task 10, Step 2).
+ * Combined extension: error-line underline + red-dot gutter (brief Task 10,
+ * Step 2).
  *
- * CodeEditor.tsx (Task 9) đã có sẵn `extraExtensions` cho đúng việc này — cắm
- * qua đó thay vì sửa CodeEditor.tsx, vì CodeEditor nằm trong danh sách
- * "consume, không sửa" của task này. Cập nhật dữ liệu (dispatch
- * `setDiagnosticLines`) thực hiện từ App bằng `EditorView.findFromDOM`, kỹ
- * thuật mà chính bộ test của dự án đã dùng để chạm EditorView từ bên ngoài
- * CodeEditor (xem tests/ui/code-editor.test.tsx, current-line-wiring.test.tsx)
- * — không phải một cơ chế mới, chỉ là điểm gọi `dispatch` nằm ngoài
- * CodeEditor thay vì trong một `useEffect` của chính nó.
+ * CodeEditor.tsx (Task 9) already has `extraExtensions` set up for exactly
+ * this — plugged in through that instead of editing CodeEditor.tsx, since
+ * CodeEditor is on this task's "consume, don't modify" list. The data update
+ * (dispatching `setDiagnosticLines`) happens from App using
+ * `EditorView.findFromDOM`, the technique the project's own test suite
+ * already uses to reach the EditorView from outside CodeEditor (see
+ * tests/ui/code-editor.test.tsx, current-line-wiring.test.tsx) — not a new
+ * mechanism, just the `dispatch` call site living outside CodeEditor instead
+ * of in one of its own `useEffect`s.
  */
 export const diagnosticMarks: Extension[] = [diagnosticsField, diagnosticGutter]

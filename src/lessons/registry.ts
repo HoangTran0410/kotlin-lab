@@ -1,31 +1,33 @@
 export interface LessonMeta {
   id: string; order: number; title: string; summary: string
-  /** Khái niệm bài này dạy — hiện thành chip trên thẻ bài. */
+  /** Concepts this lesson teaches — shown as chips on the lesson card. */
   concepts: string[]
 }
 
 /**
- * Bản song song của `lessons/index.ts` dành cho browser.
+ * Browser-side parallel of `lessons/index.ts`.
  *
- * `index.ts` dùng `node:fs` nên Vite không bundle được. Không sửa tại chỗ vì
- * golden test của M1 (`tests/lessons/golden.test.ts`) chạy ở môi trường Node và
- * đang dựa vào nó. Hai file, hai môi trường, một nguồn dữ liệu: cùng những file
- * `.kt`/`.json` đó. Task này có test khẳng định hai bản KHÔNG trôi lệch nhau.
+ * `index.ts` uses `node:fs`, so Vite can't bundle it. We don't fix it in place
+ * because M1's golden test (`tests/lessons/golden.test.ts`) runs in a Node
+ * environment and relies on it. Two files, two environments, one data source: the
+ * same `.kt`/`.json` files. This task has a test asserting the two versions do NOT
+ * drift apart.
  *
- * `eager: true` vì tổng dung lượng vài KB và ta muốn danh sách lesson có mặt
- * đồng bộ lúc render đầu tiên, không phải sau một promise.
+ * `eager: true` because the total size is a few KB and we want the lesson list
+ * present in sync at first render, not after a promise resolves.
  */
 const sources = import.meta.glob<string>('./*/main.kt', { query: '?raw', import: 'default', eager: true })
 const metas = import.meta.glob<LessonMeta>('./*/meta.json', { import: 'default', eager: true })
 
 /**
- * Bài nào đã được so từng dòng với output JVM thật — suy từ sự CÓ MẶT của
- * fixture, không phải từ một danh sách viết tay. Trang giới thiệu hiện con số
- * này, và nó phải tự đúng khi ai đó thêm hoặc rút một fixture.
+ * Which lessons have been compared line by line with real JVM output — derived
+ * from the PRESENCE of a fixture, not from a hand-written list. The about page
+ * shows this count, and it must stay correct automatically whenever someone adds
+ * or removes a fixture.
  */
 const fixtures = import.meta.glob('./*/expected-jvm-output.txt', { query: '?raw', eager: true })
 
-/** Mô hình tư duy của từng bài — phần chữ đọc TRƯỚC khi bấm chạy. */
+/** Each lesson's mental model — the prose you read BEFORE hitting run. */
 const models = import.meta.glob<string>(
   './*/mental-model.md', { query: '?raw', import: 'default', eager: true })
 
@@ -41,7 +43,7 @@ export function lessonSource(id: string): string | null {
   return byId.get(id) ?? null
 }
 
-export const LESSON_IDS_DOI_CHIEU_JVM: ReadonlySet<string> = new Set(
+export const LESSON_IDS_WITH_JVM_FIXTURE: ReadonlySet<string> = new Set(
   Object.keys(fixtures).map(idFrom),
 )
 

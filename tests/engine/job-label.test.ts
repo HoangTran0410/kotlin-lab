@@ -3,80 +3,83 @@ import { runSource } from '../../src/engine/run'
 import { jobLabel } from '../../src/engine/trace/label'
 import { narrateTrace } from '../../src/engine/narrate/narrateTrace'
 
-const taoRa = (src: string) =>
+const createdEvents = (src: string) =>
   runSource(src).events.filter(e => e.k === 'COROUTINE_CREATED')
 
-describe('nhãn node — gọi coroutine bằng đúng tên người học đã gõ', () => {
-  it('thứ tự ưu tiên: CoroutineName > tên biến > builder', () => {
+describe('node labels — call each coroutine by the exact name the learner typed', () => {
+  it('priority order: CoroutineName > variable name > builder', () => {
     expect(jobLabel({ id: 'j1', builder: 'launch', name: 'worker', varName: 'job' })).toBe('worker')
     expect(jobLabel({ id: 'j1', builder: 'launch', name: null, varName: 'job' })).toBe('job')
     expect(jobLabel({ id: 'j1', builder: 'launch', name: null, varName: null })).toBe('launch')
   })
 
-  it('`val job = launch { }` gắn tên biến vào node', () => {
-    const t = taoRa(`import kotlinx.coroutines.*
+  it('`val job = launch { }` attaches the variable name to the node', () => {
+    const t = createdEvents(`import kotlinx.coroutines.*
 
 fun main() = runBlocking {
-    val nguoiDoc = launch { delay(10) }
-    nguoiDoc.join()
+    val reader = launch { delay(10) }
+    reader.join()
 }`)
-    const con = t.find(e => e.k === 'COROUTINE_CREATED' && e.builder === 'launch')!
-    expect(con.k === 'COROUTINE_CREATED' && con.varName).toBe('nguoiDoc')
+    const child = t.find(e => e.k === 'COROUTINE_CREATED' && e.builder === 'launch')!
+    expect(child.k === 'COROUTINE_CREATED' && child.varName).toBe('reader')
   })
 
-  it('async và CoroutineScope cũng lấy được tên biến', () => {
-    const t = taoRa(`import kotlinx.coroutines.*
+  it('async and CoroutineScope also pick up the variable name', () => {
+    const t = createdEvents(`import kotlinx.coroutines.*
 
 fun main() = runBlocking {
-    val pham = CoroutineScope(SupervisorJob())
-    val ketQua = pham.async { 1 }
+    val scope = CoroutineScope(SupervisorJob())
+    val result = scope.async { 1 }
     delay(10)
-    pham.cancel()
+    scope.cancel()
 }`)
-    const ten = t.map(e => (e.k === 'COROUTINE_CREATED' ? e.varName ?? null : null))
-    expect(ten).toContain('pham')
-    expect(ten).toContain('ketQua')
+    const names = t.map(e => (e.k === 'COROUTINE_CREATED' ? e.varName ?? null : null))
+    expect(names).toContain('scope')
+    expect(names).toContain('result')
   })
 
-  it('CoroutineName THẮNG tên biến — cái người học cố ý gõ ra thì được ưu tiên', () => {
-    const t = taoRa(`import kotlinx.coroutines.*
+  it('CoroutineName WINS over the variable name — what the learner deliberately typed takes priority', () => {
+    const t = createdEvents(`import kotlinx.coroutines.*
 
 fun main() = runBlocking {
-    val bien = launch(CoroutineName("thoMay")) { delay(10) }
-    bien.join()
+    val worker = launch(CoroutineName("tailor")) { delay(10) }
+    worker.join()
 }`)
-    const con = t.find(e => e.k === 'COROUTINE_CREATED' && e.builder === 'launch')!
-    if (con.k !== 'COROUTINE_CREATED') throw new Error('sai kind')
-    // Cả hai đều có mặt trong dữ liệu — ưu tiên là việc của jobLabel, không
-    // phải bằng cách vứt bớt thông tin ở tầng engine.
-    expect(con.varName).toBe('bien')
-    expect(con.ctx.name).toBe('thoMay')
-    expect(jobLabel({ id: con.id, builder: con.builder, name: con.ctx.name, varName: con.varName }))
-      .toBe('thoMay')
+    const child = t.find(e => e.k === 'COROUTINE_CREATED' && e.builder === 'launch')!
+    if (child.k !== 'COROUTINE_CREATED') throw new Error('wrong kind')
+    // Both are present in the data — priority is jobLabel's job, not
+    // achieved by throwing away information at the engine layer.
+    expect(child.varName).toBe('worker')
+    expect(child.ctx.name).toBe('tailor')
+    expect(jobLabel({ id: child.id, builder: child.builder, name: child.ctx.name, varName: child.varName }))
+      .toBe('tailor')
   })
 
-  it('launch KHÔNG gán vào biến thì không có varName', () => {
-    const t = taoRa(`import kotlinx.coroutines.*
+  it('launch NOT assigned to a variable has no varName', () => {
+    const t = createdEvents(`import kotlinx.coroutines.*
 
 fun main() = runBlocking {
     launch { delay(10) }
     delay(50)
 }`)
-    const con = t.find(e => e.k === 'COROUTINE_CREATED' && e.builder === 'launch')!
-    expect(con.k === 'COROUTINE_CREATED' && con.varName).toBeUndefined()
+    const child = t.find(e => e.k === 'COROUTINE_CREATED' && e.builder === 'launch')!
+    expect(child.k === 'COROUTINE_CREATED' && child.varName).toBeUndefined()
   })
 
-  it('tên biến KHÔNG rò sang coroutine sinh ra BÊN TRONG lời gọi ở vế phải', () => {
-    // Chỗ dễ sai nhất của cách cài: nếu chỉ nhớ "tên biến đang chờ" rồi dán cho
-    // spawn KẾ TIẾP, thì coroutine sinh ra bên trong `taoViec()` — chạy TRONG
-    // lúc đánh giá vế phải — sẽ cướp mất tên `ketQua`.
+  it('variable name does NOT leak into a coroutine spawned INSIDE a right-hand-side call', () => {
+    // The easiest place for this implementation to get it wrong: if it only
+    // remembers "a variable name is pending" and pastes it onto the NEXT
+    // spawn, then the coroutine spawned INSIDE `createWork()` — which runs
+    // WHILE the right-hand side is being evaluated — would steal the name
+    // `result`.
     //
-    // Hàm ở đây BẮT BUỘC phải thật sự spawn. Bản đầu của test này gọi một hàm
-    // không spawn gì, nên gỡ hẳn phép kiểm cú pháp ra nó vẫn xanh — canh gác
-    // rỗng. Đã đo lại: với hàm có spawn thì nó đỏ đúng như phải thế.
+    // The function here MUST actually spawn something. The first version of
+    // this test called a function that spawns nothing, so removing the
+    // syntax check entirely still left it green — an empty guard. Re-measured:
+    // with a function that does spawn, it goes red exactly as it should.
     const r = runSource(`import kotlinx.coroutines.*
 
-suspend fun taoViec(): Int {
+suspend fun createWork(): Int {
     coroutineScope {
         launch { delay(1) }
     }
@@ -84,26 +87,27 @@ suspend fun taoViec(): Int {
 }
 
 fun main() = runBlocking {
-    val ketQua = taoViec()
-    println(ketQua)
+    val result = createWork()
+    println(result)
 }`)
     expect(r.diagnostics).toEqual([])
-    const cacCon = r.events.filter(e => e.k === 'COROUTINE_CREATED')
-    for (const c of cacCon) {
+    const children = r.events.filter(e => e.k === 'COROUTINE_CREATED')
+    for (const c of children) {
       expect(c.k === 'COROUTINE_CREATED' && c.varName,
-        `${c.k === 'COROUTINE_CREATED' ? c.builder : '?'} bên trong taoViec() lại mang tên biến của người gọi`)
+        `${c.k === 'COROUTINE_CREATED' ? c.builder : '?'} inside createWork() ended up carrying the caller's variable name`)
         .toBeUndefined()
     }
     expect(r.output).toEqual(['1'])
   })
 
-  it('tên biến không bị coroutine sinh ra khi ĐÁNH GIÁ ĐỐI SỐ cướp mất', () => {
-    // `launch(donDep())` — `donDep()` chạy TRƯỚC khi launch spawn, và nó tự
-    // spawn. Nếu tên biến không được lấy-và-xoá trước lúc đánh giá đối số thì
-    // coroutine bên trong `donDep()` sẽ nhận nhãn `chinh`.
+  it('variable name is NOT stolen by a coroutine spawned while EVALUATING AN ARGUMENT', () => {
+    // `launch(cleanup())` — `cleanup()` runs BEFORE launch spawns, and it
+    // spawns on its own. If the variable name isn't captured-and-cleared
+    // before the argument is evaluated, the coroutine inside `cleanup()`
+    // would receive the label `primary`.
     const r = runSource(`import kotlinx.coroutines.*
 
-suspend fun donDep(): Int {
+suspend fun cleanup(): Int {
     coroutineScope {
         launch { delay(1) }
     }
@@ -111,36 +115,36 @@ suspend fun donDep(): Int {
 }
 
 fun main() = runBlocking {
-    val chinh = launch(donDep()) { delay(10) }
-    chinh.join()
+    val primary = launch(cleanup()) { delay(10) }
+    primary.join()
 }`)
     expect(r.diagnostics).toEqual([])
-    const mangTen = r.events.filter(
-      e => e.k === 'COROUTINE_CREATED' && e.varName === 'chinh')
-    expect(mangTen, 'đúng MỘT coroutine được mang tên `chinh`').toHaveLength(1)
-    // Và nó phải là cái CHẠY 10ms, không phải cái dọn dẹp bên trong donDep().
-    const dung = mangTen[0]!
-    expect(dung.k === 'COROUTINE_CREATED' && dung.builder).toBe('launch')
-    const conCuaDonDep = r.events.filter(
+    const labeledPrimary = r.events.filter(
+      e => e.k === 'COROUTINE_CREATED' && e.varName === 'primary')
+    expect(labeledPrimary, 'exactly ONE coroutine is labeled `primary`').toHaveLength(1)
+    // And it must be the one that RUNS for 10ms, not the cleanup one inside cleanup().
+    const theOne = labeledPrimary[0]!
+    expect(theOne.k === 'COROUTINE_CREATED' && theOne.builder).toBe('launch')
+    const childrenOfCleanup = r.events.filter(
       e => e.k === 'COROUTINE_CREATED' && e.parentId !== null
         && r.events.some(p => p.k === 'COROUTINE_CREATED' && p.id === e.parentId
           && p.builder === 'coroutineScope'))
-    for (const c of conCuaDonDep) {
+    for (const c of childrenOfCleanup) {
       expect(c.k === 'COROUTINE_CREATED' && c.varName,
-        'coroutine bên trong donDep() cướp mất tên biến của người gọi').toBeUndefined()
+        'coroutine inside cleanup() stole the caller\'s variable name').toBeUndefined()
     }
   })
 
-  it('diễn giải gọi coroutine bằng đúng tên biến đó', () => {
+  it('narration calls the coroutine by that exact variable name', () => {
     const r = runSource(`import kotlinx.coroutines.*
 
 fun main() = runBlocking {
-    val thoIn = launch { println("xin chao") }
-    thoIn.join()
+    val printer = launch { println("hello") }
+    printer.join()
 }`)
-    const cau = narrateTrace(r.events).map(l => l.text)
-    expect(cau.some(c => c.includes('thoIn')), 'không câu nào gọi tên biến').toBe(true)
-    // Và KHÔNG còn gọi nó bằng "launch j2" nữa.
-    expect(cau.some(c => c.includes('`launch`'))).toBe(false)
+    const lines = narrateTrace(r.events).map(l => l.text)
+    expect(lines.some(c => c.includes('printer')), 'no sentence calls it by the variable name').toBe(true)
+    // And it's NOT called "launch j2" anymore.
+    expect(lines.some(c => c.includes('`launch`'))).toBe(false)
   })
 })

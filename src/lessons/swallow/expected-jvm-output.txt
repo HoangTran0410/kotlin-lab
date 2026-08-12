@@ -1,4 +1,4 @@
-1. gọi cancelAndJoin()
-2. bắt được Exception — nhưng đây là TÍN HIỆU HUỶ, không phải lỗi
-3. thân vẫn chạy tiếp dù coroutine đã bị huỷ
+1. call cancelAndJoin()
+2. caught an Exception — but this is a CANCELLATION SIGNAL, not an error
+3. the body keeps running even though the coroutine has been cancelled
 4. job.isCancelled = true

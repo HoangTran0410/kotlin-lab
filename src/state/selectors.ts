@@ -2,7 +2,7 @@ import { foldTrace, type WorldState } from '../engine/trace/world'
 import type { Event } from '../engine/trace/events'
 import { memoizeTwo } from './memo'
 
-/** Đếm số lần gập thật. Chỉ để test rào chắn hồi quy đọc. */
+/** Counts real fold calls. Only for the regression-guard test to read. */
 export const foldStats = { calls: 0 }
 
 const foldMemo = memoizeTwo((events: readonly Event[], stepIndex: number): WorldState => {
@@ -22,14 +22,15 @@ export const selectConsole = (s: Parameters<typeof selectWorld>[0]): readonly st
 export interface ConsoleLine { t: number; text: string }
 
 /**
- * `world.output` (foldTrace) chỉ là `string[]` — không mang mốc thời gian ảo
- * để hiện cạnh mỗi dòng console. Quét lại PRINTLN trực tiếp từ `events` để lấy
- * `t` của riêng event đó, KHÔNG lấy `t` cuối cùng của world (world.t là mốc
- * hiện tại của toàn bộ trace tại `stepIndex`, không phải mốc lúc dòng đó được
- * in). Vẫn quét đúng `[0, stepIndex)` như foldTrace — cùng một cách gập, hai
- * hình chiếu khác nhau của cùng một trace. tests/ui/console.test.tsx khẳng
- * định `.map(l => l.text)` khớp `foldTrace(events, stepIndex).output` ở mọi
- * step, để hai đường không trôi lệch nhau.
+ * `world.output` (foldTrace) is just `string[]` — it carries no virtual
+ * timestamp to show next to each console line. Scans PRINTLN directly from
+ * `events` instead, to get that specific event's own `t`, NOT world's final
+ * `t` (world.t is the whole trace's current mark at `stepIndex`, not the mark
+ * at the moment that line was printed). Still scans exactly `[0, stepIndex)`
+ * like foldTrace — the same fold, two different projections of the same
+ * trace. tests/ui/console.test.tsx asserts `.map(l => l.text)` matches
+ * `foldTrace(events, stepIndex).output` at every step, so the two paths can't
+ * drift apart.
  */
 export function selectConsoleLines(events: readonly Event[], stepIndex: number): ConsoleLine[] {
   const n = Math.max(0, Math.min(stepIndex, events.length))

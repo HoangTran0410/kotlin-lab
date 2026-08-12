@@ -1,12 +1,12 @@
 {
   "id": "parallel",
   "order": 9,
-  "title": "Tuần tự hay song song — nhìn đồng hồ mới thấy",
-  "summary": "Cùng một kết quả, nhưng 400ms và 200ms. Khác biệt nằm ở chỗ async đặt TRƯỚC await.",
+  "title": "Sequential or parallel — only the clock tells the truth",
+  "summary": "Same result, but 400ms versus 200ms. The difference is whether async is placed BEFORE await.",
   "concepts": [
     "async",
     "await",
-    "song song",
+    "parallel",
     "suspend fun"
   ]
 }

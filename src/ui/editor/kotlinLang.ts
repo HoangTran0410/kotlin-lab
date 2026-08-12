@@ -4,13 +4,14 @@ import { oneDark } from '@codemirror/theme-one-dark'
 import type { Extension } from '@codemirror/state'
 
 /**
- * `@replit/codemirror-lang-kotlin` KHÔNG tồn tại trên npm (đã tra registry lúc
- * lập kế hoạch). Bản thay thế đã xác minh: @codemirror/legacy-modes@6.5.3 có
- * `mode/clike.d.ts:28` khai báo `export declare const kotlin: StreamParser<unknown>`.
+ * `@replit/codemirror-lang-kotlin` does NOT exist on npm (checked the
+ * registry during planning). Verified replacement:
+ * @codemirror/legacy-modes@6.5.3 has `mode/clike.d.ts:28` declaring
+ * `export declare const kotlin: StreamParser<unknown>`.
  *
- * StreamLanguage tô màu theo dòng, không dựng cây Lezer — nghĩa là không có
- * fold theo cấu trúc và không có indent thông minh. M2 không cần cả hai; phân
- * tích cú pháp THẬT đã do parser của engine làm rồi, và lỗi hiện qua
- * DiagnosticsPanel chứ không qua editor.
+ * StreamLanguage highlights line by line, it doesn't build a Lezer tree —
+ * meaning no structural folding and no smart indentation. M2 needs neither;
+ * REAL parsing is already done by the engine's own parser, and errors surface
+ * through DiagnosticsPanel, not through the editor.
  */
 export const kotlinExtensions: Extension[] = [StreamLanguage.define(kotlin), oneDark]

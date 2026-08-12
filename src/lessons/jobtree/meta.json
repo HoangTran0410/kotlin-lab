@@ -1,12 +1,12 @@
 {
   "id": "jobtree",
   "order": 2,
-  "title": "Job Tree — parent cancel kéo theo children",
-  "summary": "Structured concurrency: cancellation đi xuống toàn bộ cây.",
+  "title": "Job Tree — parent cancel drags down its children",
+  "summary": "Structured concurrency: cancellation goes down the whole tree.",
   "concepts": [
     "Job",
     "structured concurrency",
-    "cancel đi xuống",
+    "cancel goes down",
     "parent-child"
   ]
 }

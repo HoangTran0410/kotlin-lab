@@ -12,7 +12,7 @@ export interface Token {
   text: string
   line: number
   col: number
-  /** Chỉ có ở token STRING. */
+  /** Only present on STRING tokens. */
   parts?: StringPart[]
 }
 
@@ -21,7 +21,7 @@ export const KEYWORDS = new Set([
   'try', 'catch', 'finally', 'throw', 'return', 'when', 'true', 'false', 'null', 'import',
 ])
 
-/** Toán tử nhiều ký tự phải đứng trước toán tử ngắn hơn để khớp tham lam. */
+/** Multi-character operators must come before shorter ones so greedy matching works. */
 export const OPERATORS = [
   '===', '!==', '==', '!=', '<=', '>=', '&&', '||', '..', '?:', '?.',
   '+=', '-=', '*=', '/=', '=', '<', '>', '+', '-', '*', '/', '%', '!', '?',

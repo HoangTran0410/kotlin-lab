@@ -5,13 +5,14 @@ import { renderHook } from '@testing-library/react'
 import { usePlayback, type Speed } from '../../src/ui/timeline/usePlayback'
 
 /**
- * `usePlayback` gọi `setStep` bên trong vòng lặp rAF của chính nó rồi mong
- * đợi `stepIndex` (prop) phản ánh lại thay đổi đó ở lần render kế — đúng như
- * App thật sẽ làm qua store Zustand (setStep -> re-render -> stepIndex mới).
- * Một `vi.fn()` giả không tự gây re-render, nên bọc trong một hook có state
- * THẬT để lần gọi setStep bên trong hook thực sự vòng lại thành prop mới —
- * nếu không, "user kéo trong lúc đang play" (test 5) không thể phân biệt
- * được với "chính play tự tiến step" (cả hai đều chỉ là một lệnh gọi mock).
+ * `usePlayback` calls `setStep` inside its own rAF loop and then expects
+ * `stepIndex` (a prop) to reflect that change back on the next render — just
+ * like the real App will do through the Zustand store (setStep -> re-render
+ * -> new stepIndex). A fake `vi.fn()` doesn't cause a re-render on its own,
+ * so we wrap it in a hook with REAL state so a setStep call inside the hook
+ * actually loops back around as a new prop — otherwise, "user drags while
+ * playing" (test 5) can't be told apart from "playback advances the step on
+ * its own" (both would just be a single mock call).
  */
 function useControlled(initial: number, max: number) {
   const [stepIndex, setStepIndex] = useState(initial)
@@ -24,23 +25,24 @@ beforeEach(() => { vi.useFakeTimers() })
 afterEach(() => { vi.useRealTimers() })
 
 /**
- * Fake rAF (vitest/@sinonjs/fake-timers) tick theo khung ~16ms cố định — đo
- * bằng test thăm dò trước khi viết file này. `vi.advanceTimersByTime(N)` chỉ
- * chạy các khung ĐÃ ĐẾN HẠN trong đúng N ms, nên khung cuối trước mốc N luôn
- * lệch xuống dưới một chút (N không chia hết 16). Cộng thêm một khung dư để
- * chắc chắn ngưỡng interval bị vượt qua, giống cách một UI thật không cam kết
- * chính xác tới mili-giây với rAF (vsync thật cũng dao động ~16.67ms).
+ * Fake rAF (vitest/@sinonjs/fake-timers) ticks on a fixed ~16ms frame —
+ * measured with a probing test before writing this file. `vi.advanceTimersByTime(N)`
+ * only runs the frames that have ALREADY COME DUE within exactly N ms, so the
+ * last frame before the N mark always lands a bit short (N doesn't divide
+ * evenly by 16). Adding one extra frame's worth of margin guarantees the
+ * interval threshold gets crossed, the same way a real UI never promises
+ * millisecond-exact timing with rAF (real vsync also drifts by ~16.67ms).
  */
 const FRAME_MARGIN_MS = 40
 const untilSteps = (n: number, intervalMs: number): number => n * intervalMs + FRAME_MARGIN_MS
 
-describe('usePlayback (Task 17) — play/pause/bước/tốc độ bằng requestAnimationFrame', () => {
-  it('play tiến step theo thời gian', () => {
+describe('usePlayback (Task 17) — play/pause/step/speed via requestAnimationFrame', () => {
+  it('play advances the step over time', () => {
     const { result } = renderHook(() => useControlled(0, 20))
     act(() => { result.current.play() })
     expect(result.current.playing).toBe(true)
 
-    // tốc độ mặc định 1×: 1 step mỗi 1000ms.
+    // default speed 1×: 1 step every 1000ms.
     act(() => { vi.advanceTimersByTime(untilSteps(1, 1000)) })
     expect(result.current.stepIndex).toBe(1)
 
@@ -48,7 +50,7 @@ describe('usePlayback (Task 17) — play/pause/bước/tốc độ bằng reques
     expect(result.current.stepIndex).toBe(3)
   })
 
-  it('pause đứng — không tiến thêm nữa', () => {
+  it('pause holds still — no further advancing', () => {
     const { result } = renderHook(() => useControlled(0, 20))
     act(() => { result.current.play() })
     act(() => { vi.advanceTimersByTime(untilSteps(1, 1000)) })
@@ -58,47 +60,47 @@ describe('usePlayback (Task 17) — play/pause/bước/tốc độ bằng reques
     expect(result.current.playing).toBe(false)
 
     act(() => { vi.advanceTimersByTime(5000) })
-    expect(result.current.stepIndex).toBe(1) // đứng im
+    expect(result.current.stepIndex).toBe(1) // stays put
   })
 
-  it('tới cuối trace tự dừng, bật lại nút play', () => {
+  it('auto-stops at the end of the trace, re-enables the play button', () => {
     const { result } = renderHook(() => useControlled(18, 20))
     act(() => { result.current.play() })
 
-    act(() => { vi.advanceTimersByTime(untilSteps(2, 1000)) }) // đủ 2 step: 18 -> 19 -> 20 (max)
+    act(() => { vi.advanceTimersByTime(untilSteps(2, 1000)) }) // enough for 2 steps: 18 -> 19 -> 20 (max)
     expect(result.current.stepIndex).toBe(20)
-    expect(result.current.playing).toBe(false) // tự dừng
+    expect(result.current.playing).toBe(false) // auto-stopped
 
-    // Không tiến quá max dù thời gian trôi thêm.
+    // Doesn't advance past max no matter how much more time passes.
     act(() => { vi.advanceTimersByTime(5000) })
     expect(result.current.stepIndex).toBe(20)
   })
 
-  it('đổi tốc độ đổi nhịp tiến step', () => {
+  it('changing speed changes the step-advance rate', () => {
     const { result } = renderHook(() => useControlled(0, 20))
     act(() => { result.current.play() })
 
-    act(() => { result.current.setSpeed(4 as Speed) }) // 4 step/giây = 250ms/step
+    act(() => { result.current.setSpeed(4 as Speed) }) // 4 steps/sec = 250ms/step
     act(() => { vi.advanceTimersByTime(untilSteps(4, 250)) })
     expect(result.current.stepIndex).toBe(4)
   })
 
-  it('user kéo thanh trong lúc đang play thì play dừng', () => {
+  it('user dragging the scrubber while playing stops playback', () => {
     const { result } = renderHook(() => useControlled(0, 20))
     act(() => { result.current.play() })
-    act(() => { vi.advanceTimersByTime(500) }) // chưa đủ 1000ms, chưa tự tiến step nào
+    act(() => { vi.advanceTimersByTime(500) }) // not yet 1000ms, hasn't auto-advanced any step
 
-    // User tự kéo Timeline — gọi ĐÚNG cùng setStep mà App thật sẽ gọi.
+    // User drags the Timeline themselves — calls the EXACT SAME setStep the real App would call.
     act(() => { result.current.setStep(15) })
     expect(result.current.stepIndex).toBe(15)
     expect(result.current.playing).toBe(false)
 
-    // Không tự tiến tiếp sau khi đã dừng vì user kéo.
+    // Doesn't keep auto-advancing after stopping because the user dragged.
     act(() => { vi.advanceTimersByTime(5000) })
     expect(result.current.stepIndex).toBe(15)
   })
 
-  it('unmount huỷ requestAnimationFrame đang chờ', () => {
+  it('unmount cancels the pending requestAnimationFrame', () => {
     const cancelSpy = vi.spyOn(window, 'cancelAnimationFrame')
     const { result, unmount } = renderHook(() => useControlled(0, 20))
     act(() => { result.current.play() })
@@ -106,7 +108,7 @@ describe('usePlayback (Task 17) — play/pause/bước/tốc độ bằng reques
     unmount()
     expect(cancelSpy).toHaveBeenCalled()
 
-    // Sau unmount, advance timer không được ném — không còn gì lắng nghe rAF.
+    // After unmount, advancing timers must not throw — nothing is listening for rAF anymore.
     expect(() => { act(() => { vi.advanceTimersByTime(5000) }) }).not.toThrow()
   })
 })

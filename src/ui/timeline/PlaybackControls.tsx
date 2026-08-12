@@ -4,13 +4,13 @@ import './timeline.css'
 const SPEEDS: readonly Speed[] = [0.5, 1, 2, 4]
 
 /**
- * Bọc `usePlayback` (Task 17) thành UI: play/tạm dừng, bước lùi/tiến thủ
- * công, và chọn tốc độ. Không tự cài logic thời gian ở đây — mọi trạng thái
- * (playing/speed) và vòng lặp rAF đều sống trong hook, component chỉ đọc và
- * gọi lại.
+ * Wraps `usePlayback` (Task 17) into UI: play/pause, manual step
+ * back/forward, and speed selection. No time logic is implemented here — all
+ * state (playing/speed) and the rAF loop live in the hook, the component just
+ * reads and calls back into it.
  *
- * `disabled` khi `max === 0` (trace rỗng, giống Timeline.tsx) — tránh phát ra
- * điều khiển bấm được nhưng không có gì để phát.
+ * `disabled` when `max === 0` (empty trace, same as Timeline.tsx) — avoids
+ * exposing clickable controls with nothing to play.
  */
 export function PlaybackControls({ stepIndex, setStep, max }: {
   stepIndex: number
@@ -26,9 +26,9 @@ export function PlaybackControls({ stepIndex, setStep, max }: {
         type="button"
         onClick={() => setStep(Math.max(0, stepIndex - 1))}
         disabled={disabled || stepIndex <= 0}
-        aria-label="Lùi một bước"
+        aria-label="Step back"
       >
-        Lùi
+        Back
       </button>
       <button
         type="button"
@@ -36,17 +36,17 @@ export function PlaybackControls({ stepIndex, setStep, max }: {
         disabled={disabled}
         aria-pressed={playing}
       >
-        {playing ? 'Tạm dừng' : 'Phát'}
+        {playing ? 'Pause' : 'Play'}
       </button>
       <button
         type="button"
         onClick={() => setStep(Math.min(max, stepIndex + 1))}
         disabled={disabled || stepIndex >= max}
-        aria-label="Tiến một bước"
+        aria-label="Step forward"
       >
-        Tiến
+        Forward
       </button>
-      <div className="playback__speed" role="group" aria-label="Tốc độ phát">
+      <div className="playback__speed" role="group" aria-label="Playback speed">
         {SPEEDS.map(s => (
           <button
             key={s}

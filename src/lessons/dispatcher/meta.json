@@ -1,8 +1,8 @@
 {
   "id": "dispatcher",
   "order": 10,
-  "title": "Context và Dispatcher — ai chạy trên thread nào",
-  "summary": "Context cộng bằng +, con thừa kế của cha, withContext đổi thread giữa chừng.",
+  "title": "Context and Dispatcher — who runs on which thread",
+  "summary": "Context combines with +, a child inherits from its parent, withContext switches threads mid-flight.",
   "concepts": [
     "CoroutineContext",
     "Dispatchers",

@@ -3,10 +3,11 @@ import { runSource } from '../../src/engine/run'
 import type { Event } from '../../src/engine/trace/events'
 
 /**
- * `Event` là union phân phối (`EventBody & {seq,t}`), nên `.filter(e => e.k === ...)`
- * KHÔNG thu hẹp kiểu — `e.builder` sau đó là lỗi biên dịch. Hai hàm dưới đây là
- * cùng phép lọc, viết dạng type predicate để phần thân test đọc thẳng được trường
- * riêng của từng loại sự kiện.
+ * `Event` is a distributive union (`EventBody & {seq,t}`), so
+ * `.filter(e => e.k === ...)` does NOT narrow the type — `e.builder` right
+ * after is a compile error. The two functions below perform the same
+ * filter, written as type predicates so the test bodies can read each
+ * event type's own fields directly.
  */
 type Created = Extract<Event, { k: 'COROUTINE_CREATED' }>
 type Propagated = Extract<Event, { k: 'FAILURE_PROPAGATED' }>
@@ -19,14 +20,15 @@ const statesOf = (events: readonly Event[]): StateEv[] =>
   events.filter((e): e is StateEv => e.k === 'JOB_STATE')
 
 /**
- * Mọi cặp (cha, con) mà con được TẠO RA khi cha ĐÃ ở trạng thái kết thúc, kèm
- * trạng thái cuối cùng của con.
+ * Every (parent, child) pair where the child was CREATED while the parent
+ * was ALREADY in an end state, along with the child's final state.
  *
- * Đây là hình dạng trace mà Kotlin thật không bao giờ sinh ra: gắn coroutine mới
- * vào một Job đã chết thì nó chết theo trước khi thân kịp chạy, nên con KHÔNG
- * BAO GIỜ về 'Completed'. So sánh theo `seq` chứ không theo trạng thái cuối của
- * cha: cha chết SAU khi sinh con là chuyện bình thường và hợp lệ (sibling
- * fail kéo cả nhà xuống), chỉ "chết TRƯỚC khi sinh" mới là thứ bất khả thi.
+ * This is a trace shape real Kotlin never produces: attaching a new
+ * coroutine to an already-dead Job kills it before its body gets a chance
+ * to run, so the child NEVER reaches 'Completed'. Compared by `seq`, not by
+ * the parent's final state: the parent dying AFTER spawning the child is
+ * normal and valid (a sibling failing drags the whole family down), only
+ * "died BEFORE spawning" is the impossible case.
  */
 function childrenBornUnderDeadParent(
   events: readonly Event[],
@@ -50,165 +52,175 @@ function childrenBornUnderDeadParent(
   return out
 }
 
-describe('CoroutineScope(ctx) là một Job gốc thật', () => {
-  it('scope.launch là CON của scope, không phải job mồ côi', () => {
+describe('CoroutineScope(ctx) is a real root Job', () => {
+  it('scope.launch is a CHILD of the scope, not an orphan job', () => {
     const r = runSource(`fun main() = runBlocking {
     val scope = CoroutineScope(SupervisorJob())
     scope.launch { delay(10) }
     delay(100)
 }`)
-    const tạo = createdOf(r.events)
-    const scope = tạo.find(e => e.builder === 'scope')!
+    const created = createdOf(r.events)
+    const scope = created.find(e => e.builder === 'scope')!
     expect(scope).toBeDefined()
     expect(scope.parentId).toBeNull()
     expect(scope.ctx.isSupervisor).toBe(true)
-    const con = tạo.find(e => e.builder === 'launch')!
-    expect(con.parentId).toBe(scope.id)
+    const child = created.find(e => e.builder === 'launch')!
+    expect(child.parentId).toBe(scope.id)
   })
 
-  it('SupervisorJob của scope CHẶN failure của con, sibling vẫn sống', () => {
+  it("the scope's SupervisorJob BLOCKS a child's failure, siblings stay alive", () => {
     const r = runSource(`fun main() = runBlocking {
     val scope = CoroutineScope(SupervisorJob())
     scope.launch { throw RuntimeException("boom") }
-    scope.launch { delay(300); println("B vẫn sống") }
+    scope.launch { delay(300); println("B still alive") }
     delay(500)
-    println("main xong")
+    println("main done")
 }`)
-    expect(r.output).toEqual(['B vẫn sống', 'main xong'])
-    // Phải có ranh giới supervisor THẬT trên trace, không phải "sống vì không
-    // có quan hệ cha con nào".
-    const chặn = propagatedOf(r.events).filter(e => e.blockedBySupervisor)
-    expect(chặn.length).toBeGreaterThan(0)
+    expect(r.output).toEqual(['B still alive', 'main done'])
+    // There must be a REAL supervisor boundary on the trace, not "survived
+    // because there's no parent-child relationship at all".
+    const blocked = propagatedOf(r.events).filter(e => e.blockedBySupervisor)
+    expect(blocked.length).toBeGreaterThan(0)
   })
 
-  it('Job() thường (không supervisor): một con fail kéo theo sibling bị huỷ', () => {
-    // Cặp đối chứng của ca trên. Nếu cài kiểu "scope luôn là supervisor" thì
-    // ca trên xanh còn ca này đỏ.
+  it("an ordinary Job() (not a supervisor): one child failing drags its sibling down too", () => {
+    // The control case for the one above. An implementation like "the
+    // scope is always a supervisor" would pass the case above but fail
+    // this one.
     const r = runSource(`fun main() = runBlocking {
     val scope = CoroutineScope(Job())
     scope.launch { delay(50); throw RuntimeException("boom") }
-    scope.launch { delay(300); println("B không nên in") }
+    scope.launch { delay(300); println("B should not print") }
     delay(500)
-    println("main xong")
+    println("main done")
 }`)
-    expect(r.output).toEqual(['main xong'])
+    expect(r.output).toEqual(['main done'])
   })
 
-  it('GlobalScope VẪN không cha — khác hẳn CoroutineScope', () => {
-    // Bảo vệ sự khác biệt đang đúng. Nếu ai đó "thống nhất" hai đường này thì
-    // bài học "GlobalScope thoát khỏi structured concurrency" biến mất.
+  it('GlobalScope STILL has no parent — completely unlike CoroutineScope', () => {
+    // Guards a distinction that's already correct. If someone "unified"
+    // these two paths, the "GlobalScope escapes structured concurrency"
+    // lesson would disappear.
     const r = runSource(`fun main() = runBlocking {
     GlobalScope.launch { delay(10) }
     delay(100)
 }`)
-    const tạo = createdOf(r.events)
-    expect(tạo.some(e => e.builder === 'scope')).toBe(false)
-    const con = tạo.find(e => e.builder === 'launch')!
-    expect(con.parentId).toBeNull()
+    const created = createdOf(r.events)
+    expect(created.some(e => e.builder === 'scope')).toBe(false)
+    const child = created.find(e => e.builder === 'launch')!
+    expect(child.parentId).toBeNull()
   })
 
-  it('scope.cancel() huỷ mọi con', () => {
+  it('scope.cancel() cancels every child', () => {
     const r = runSource(`fun main() = runBlocking {
     val scope = CoroutineScope(SupervisorJob())
-    scope.launch { delay(1000); println("A không nên in") }
-    scope.launch { delay(1000); println("B không nên in") }
+    scope.launch { delay(1000); println("A should not print") }
+    scope.launch { delay(1000); println("B should not print") }
     delay(50)
     scope.cancel()
     delay(2000)
-    println("xong")
+    println("done")
 }`)
-    expect(r.output).toEqual(['xong'])
+    expect(r.output).toEqual(['done'])
   })
 
-  it('MainScope() cũng là Job gốc, và là SUPERVISOR — không chỉ mỗi Dispatchers.Main', () => {
-    // `MainScope()` là pattern Android kinh điển thứ hai (sau
-    // `CoroutineScope(SupervisorJob() + Dispatchers.Main)`). Đối chiếu Kotlin
-    // thật: `MainScope().coroutineContext[Job]` in ra `SupervisorJobImpl{Active}`
-    // và interceptor là `Dispatchers.Main`. Engine trước Task 5 chỉ mang mỗi
-    // Dispatchers.Main sang, nên nếu bỏ vế SupervisorJob thì Job gốc dựng ra là
-    // Job THƯỜNG và một con fail sẽ giết cả scope — dạy ngược đúng pattern này.
+  it('MainScope() is also a root Job, and it is a SUPERVISOR — not just a Dispatchers.Main holder', () => {
+    // `MainScope()` is the second classic Android pattern (after
+    // `CoroutineScope(SupervisorJob() + Dispatchers.Main)`). Verified
+    // against real Kotlin: `MainScope().coroutineContext[Job]` prints
+    // `SupervisorJobImpl{Active}` and the interceptor is `Dispatchers.Main`.
+    // Before Task 5, the engine only carried Dispatchers.Main across, so
+    // dropping the SupervisorJob half would build an ORDINARY root Job, and
+    // one child failing would kill the whole scope — teaching the exact
+    // opposite of this pattern.
     const r = runSource(`fun main() = runBlocking {
     val scope = MainScope()
     scope.launch { delay(10) }
     delay(100)
 }`)
-    const tạo = createdOf(r.events)
-    const scope = tạo.find(e => e.builder === 'scope')!
+    const created = createdOf(r.events)
+    const scope = created.find(e => e.builder === 'scope')!
     expect(scope).toBeDefined()
     expect(scope.ctx.isSupervisor).toBe(true)
     expect(scope.ctx.dispatcher).toBe('Main')
-    const con = tạo.find(e => e.builder === 'launch')!
-    expect(con.parentId).toBe(scope.id)
-    expect(con.ctx.dispatcher).toBe('Main')
+    const child = created.find(e => e.builder === 'launch')!
+    expect(child.parentId).toBe(scope.id)
+    expect(child.ctx.dispatcher).toBe('Main')
   })
 
-  it('scope đã cancel: launch sau đó KHÔNG chạy thân, job sinh ra đã bị huỷ sẵn', () => {
-    // Đối chiếu Kotlin thật (2.1.20), đúng chương trình này:
-    //   isCancelled=true / isActive=false / xong
-    // Thân lambda KHÔNG in gì. Gắn coroutine mới vào một Job đã huỷ thì nó bị
-    // huỷ trước khi thân kịp chạy — cũng chính là lý do Kotlin phải có
-    // `withContext(NonCancellable)` cho việc dọn dẹp.
+  it('an already-cancelled scope: a subsequent launch does NOT run its body, the job is born already cancelled', () => {
+    // Verified against real Kotlin (2.1.20), this exact program:
+    //   isCancelled=true / isActive=false / done
+    // The lambda body prints NOTHING. Attaching a new coroutine to an
+    // already-cancelled Job cancels it before the body gets a chance to
+    // run — this is exactly why Kotlin needs `withContext(NonCancellable)`
+    // for cleanup work.
     const r = runSource(`fun main() = runBlocking {
     val scope = CoroutineScope(Job())
     scope.cancel()
-    val j = scope.launch { println("KHONG NEN IN") }
+    val j = scope.launch { println("SHOULD-NOT-PRINT") }
     println("isCancelled=" + j.isCancelled)
     println("isActive=" + j.isActive)
     delay(50)
-    println("xong")
+    println("done")
 }`)
-    expect(r.output).toEqual(['isCancelled=true', 'isActive=false', 'xong'])
+    expect(r.output).toEqual(['isCancelled=true', 'isActive=false', 'done'])
 
-    // Và hình dạng trace phải là thứ Kotlin có thể sinh ra. Trước guard này,
-    // engine vẽ ra một node cha 'Cancelled' chứa con 'Completed' — bất khả thi
-    // trong Kotlin, và UI thì vẽ đúng cái đó ra màn hình.
-    const dưới = childrenBornUnderDeadParent(r.events)
-    expect(dưới.length).toBeGreaterThan(0) // chương trình này PHẢI có ca đó...
-    expect(dưới.filter(x => x.childFinal === 'Completed')).toEqual([]) // ...và không con nào Completed
+    // And the trace shape must be something Kotlin could actually produce.
+    // Before this guard, the engine drew a 'Cancelled' parent node
+    // containing a 'Completed' child node — impossible in Kotlin, and the
+    // UI drew exactly that onto the screen.
+    const underDeadParent = childrenBornUnderDeadParent(r.events)
+    expect(underDeadParent.length).toBeGreaterThan(0) // this program MUST have that case...
+    expect(underDeadParent.filter(x => x.childFinal === 'Completed')).toEqual([]) // ...and no child should be Completed
   })
 
-  it('cặp đối chứng: scope CHƯA cancel thì launch vẫn chạy bình thường', () => {
-    // Nếu guard viết quá tay thành "mọi con của scope đều bị huỷ" thì ca trên
-    // vẫn xanh, chỉ ca này đỏ.
+  it('control case: a scope that has NOT been cancelled still runs launch normally', () => {
+    // If the guard were overzealous — "every child of a scope is
+    // cancelled" — the case above would still pass, and only this one
+    // would fail.
     const r = runSource(`fun main() = runBlocking {
     val scope = CoroutineScope(Job())
-    val j = scope.launch { println("CO CHAY") }
+    val j = scope.launch { println("DOES-RUN") }
     delay(50)
     println("isCancelled=" + j.isCancelled)
-    println("xong")
+    println("done")
 }`)
-    expect(r.output).toEqual(['CO CHAY', 'isCancelled=false', 'xong'])
+    expect(r.output).toEqual(['DOES-RUN', 'isCancelled=false', 'done'])
   })
 
-  it('scope root KHÔNG bao giờ tự về trạng thái kết thúc khi không ai cancel', () => {
-    // Ghim thẳng ngữ nghĩa "scope sống cho tới khi bị cancel" (brief Step 5).
-    // Không có ca này thì việc cho scope root tự Completed chỉ bị bắt gián tiếp
-    // qua ca `scope.cancel() huỷ mọi con`, và bắt vì lý do khác.
+  it('a scope root NEVER transitions to an end state on its own when nobody cancels it', () => {
+    // Pins down directly the "a scope lives until it's cancelled"
+    // semantics (spec Step 5). Without this case, a scope root
+    // auto-Completing would only be caught indirectly via the
+    // `scope.cancel() cancels every child` case, and caught for an
+    // unrelated reason.
     const r = runSource(`fun main() = runBlocking {
     val scope = CoroutineScope(SupervisorJob())
-    scope.launch { delay(10); println("con xong") }
+    scope.launch { delay(10); println("child done") }
     delay(100)
-    println("xong")
+    println("done")
 }`)
-    expect(r.output).toEqual(['con xong', 'xong'])
+    expect(r.output).toEqual(['child done', 'done'])
     const scope = createdOf(r.events).find(e => e.builder === 'scope')!
-    const của = statesOf(r.events).filter(e => e.id === scope.id)
-    // Có sinh ra và có Active — nếu không thì phép khẳng định dưới đây rỗng tuếch.
-    expect(của.map(e => e.to)).toEqual(['Active'])
-    // Con của nó thì CÓ về Completed: chứng minh chương trình đã chạy tới nơi,
-    // scope root đứng yên không phải vì trace bị cắt ngắn.
-    const con = createdOf(r.events).find(e => e.builder === 'launch')!
-    expect(statesOf(r.events).some(e => e.id === con.id && e.to === 'Completed')).toBe(true)
+    const scopeStates = statesOf(r.events).filter(e => e.id === scope.id)
+    // It was created and went Active — otherwise the assertion below would be vacuous.
+    expect(scopeStates.map(e => e.to)).toEqual(['Active'])
+    // Its child DOES reach Completed: proving the program actually ran to
+    // completion, and the scope root staying put isn't just because the
+    // trace got cut short.
+    const child = createdOf(r.events).find(e => e.builder === 'launch')!
+    expect(statesOf(r.events).some(e => e.id === child.id && e.to === 'Completed')).toBe(true)
   })
 
-  it('dispatcher trong context của scope truyền xuống con', () => {
+  it("the scope context's dispatcher propagates down to the child", () => {
     const r = runSource(`fun main() = runBlocking {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("worker"))
     scope.launch { delay(10) }
     delay(100)
 }`)
-    const con = createdOf(r.events).find(e => e.builder === 'launch')!
-    expect(con.ctx.dispatcher).toBe('IO')
-    expect(con.ctx.name).toBe('worker')
+    const child = createdOf(r.events).find(e => e.builder === 'launch')!
+    expect(child.ctx.dispatcher).toBe('IO')
+    expect(child.ctx.name).toBe('worker')
   })
 })

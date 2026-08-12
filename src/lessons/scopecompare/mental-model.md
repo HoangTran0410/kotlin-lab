@@ -1,28 +1,32 @@
-## Mô hình tư duy
+## Mental model
 
-Hai khối có **thân giống hệt nhau**, khác đúng một từ trong tên hàm, và cho ra hai
-kết quả ngược nhau. Đây là bài để thấy rằng thứ quyết định hành vi không nằm trong
-code bạn viết ra, mà nằm ở **loại Job của cha**.
+Two blocks with **an identical body**, differing by exactly one word in the
+function name, produce two opposite results. This lesson exists to show that what
+decides the behavior isn't in the code you write, it's in **the parent's kind of
+Job**.
 
-- `coroutineScope` → Job thường → con fail thì cả nhóm chết, và lỗi **ném ra cho
-  người gọi** (bắt được bằng `try/catch`).
-- `supervisorScope` → ranh giới supervisor → con fail thì dừng tại đó, người gọi
-  **không thấy gì**.
+- `coroutineScope` → a regular Job → if a child fails, the whole group dies, and
+  the error gets **thrown to the caller** (catchable with `try/catch`).
+- `supervisorScope` → a supervisor boundary → if a child fails, it stops right
+  there, and the caller **sees nothing**.
 
-## Vì sao Kotlin làm thế
+## Why Kotlin works this way
 
-Hai nhu cầu thật, đối lập nhau: "tất cả hoặc không gì cả" (tải một trang cần đủ ba
-mảnh dữ liệu) và "ai hỏng người nấy chịu" (ba widget độc lập). Cả hai đều đúng, tuỳ
-việc — nên Kotlin cho hai hàm, không cho một hàm với một cờ.
+Two real, opposing needs: "all or nothing" (loading a page needs all three pieces
+of data) and "whoever breaks, breaks alone" (three independent widgets). Both are
+correct, depending on the situation — so Kotlin gives you two functions, not one
+function with a flag.
 
-## Chỗ hay sai
+## Where people get it wrong
 
-- Dùng `supervisorScope` chỉ vì không muốn thấy crash. Failure bị nuốt vẫn là
-  failure; bạn cần một chỗ để **xử lý** nó, không chỉ một chỗ để nó biến mất.
-- Tưởng `try/catch` quanh `supervisorScope` sẽ bắt được lỗi của con. Không có gì
-  ném ra ngoài để mà bắt.
+- Using `supervisorScope` just to avoid seeing a crash. A swallowed failure is
+  still a failure; you need somewhere to **handle** it, not just somewhere for it
+  to disappear.
+- Assuming `try/catch` around `supervisorScope` will catch a child's error. There
+  is nothing thrown outward to catch.
 
-## Nhìn gì trên đồ thị
+## What to look for on the graph
 
-Chạy tới cuối rồi tua ngược: nửa trên có cạnh cancel toả xuống anh em, nửa dưới thì
-không. Cùng một hình cây, khác nhau ở đúng những cạnh đó.
+Run to the end, then scrub backward: the top half has cancel edges fanning down
+to the siblings, the bottom half doesn't. Same tree shape, different only in
+exactly those edges.

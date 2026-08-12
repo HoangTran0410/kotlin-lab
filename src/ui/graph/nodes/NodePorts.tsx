@@ -1,26 +1,28 @@
 import { Handle, Position } from '@xyflow/react'
 
 /**
- * Điểm nối cạnh, dùng chung cho JobNode và ScopeNode.
+ * Edge connection points, shared by JobNode and ScopeNode.
  *
- * Hai làn riêng cho hai hướng lan truyền, và đó là quyết định DẠY HỌC chứ
- * không phải trang trí:
+ * Two separate lanes for the two propagation directions, and that's a
+ * TEACHING decision, not decoration:
  *
- *   - failure đi LÊN (con → cha) chạy dọc mép PHẢI
- *   - cancel đi XUỐNG (cha → con) chạy dọc mép TRÁI
+ *   - failure goes UP (child → parent), runs along the RIGHT edge
+ *   - cancel goes DOWN (parent → child), runs along the LEFT edge
  *
- * Bản đầu nối mọi cạnh vào handle đỉnh/đáy giữa hộp. Với đồ thị lồng nhau,
- * một cạnh failure từ node ở tầng sâu lên tổ tiên phải đi ngược chiều bố cục
- * (ELK xếp hướng DOWN), nên React Flow kéo một đường bezier vòng ngược qua
- * giữa mọi thứ nằm chắn đường — chính là các node anh em. Tách hai hướng ra
- * hai mép làm chúng không bao giờ chạy đè lên nhau, và người học đọc được
- * hướng lan truyền chỉ bằng việc nhìn đường đó nằm ở bên nào.
+ * The first version connected every edge to the top/bottom handle in the
+ * middle of the box. With a nested graph, a failure edge from a
+ * deeply-nested node up to an ancestor has to go against the layout direction
+ * (ELK lays out DOWN), so React Flow would drag a bezier curve back around
+ * through everything in the way — namely, sibling nodes. Splitting the two
+ * directions onto two edges means they never overlap, and a learner can read
+ * the propagation direction just by seeing which side the line runs on.
  *
- * `CONTAINER_PADDING` trái/phải (dimensions.ts) chừa sẵn chỗ cho hai làn này
- * bên trong lòng mỗi scope.
+ * The left/right `CONTAINER_PADDING` (dimensions.ts) already reserves room
+ * for these two lanes inside each scope.
  *
- * Mọi handle đều ẩn (graph.css): công cụ này chỉ ĐỌC, không cho kéo để tự nối
- * cạnh mới, nên để lộ chấm kéo thả sẽ gây hiểu lầm là tương tác được.
+ * Every handle is hidden (graph.css): this tool is READ-ONLY, dragging to
+ * connect new edges isn't supported, so exposing the drag dots would suggest
+ * an interaction that doesn't exist.
  */
 export function NodePorts() {
   return (

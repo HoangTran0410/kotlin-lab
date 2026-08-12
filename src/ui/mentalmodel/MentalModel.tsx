@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
-import { docMarkdown, type DoanInline, type Khoi } from './markdown'
+import { parseMarkdown, type InlineSpan, type MdBlock } from './markdown'
 import { lessonMentalModel, LESSON_LIST } from '../../lessons/registry'
 import './mental-model.css'
 
-const KHOA = 'kcl.mentalModel.v1'
+const STORAGE_KEY = 'kcl.mentalModel.v1'
 
-function Inline({ noi }: { noi: DoanInline[] }) {
+function Inline({ content }: { content: InlineSpan[] }) {
   return (
     <>
-      {noi.map((d, i) => {
+      {content.map((d, i) => {
         if (d.t === 'code') return <code key={i}>{d.v}</code>
         if (d.t === 'bold') return <strong key={i}>{d.v}</strong>
         return <span key={i}>{d.v}</span>
@@ -17,55 +17,56 @@ function Inline({ noi }: { noi: DoanInline[] }) {
   )
 }
 
-function Khoi({ khoi }: { khoi: Khoi }) {
-  if (khoi.k === 'h') return <h4><Inline noi={khoi.noi} /></h4>
-  if (khoi.k === 'ul') {
+function MdBlockView({ block }: { block: MdBlock }) {
+  if (block.k === 'h') return <h4><Inline content={block.content} /></h4>
+  if (block.k === 'ul') {
     return (
       <ul>
-        {khoi.items.map((it, i) => <li key={i}><Inline noi={it} /></li>)}
+        {block.items.map((it, i) => <li key={i}><Inline content={it} /></li>)}
       </ul>
     )
   }
-  if (khoi.k === 'code') return <pre>{khoi.text}</pre>
-  return <p><Inline noi={khoi.noi} /></p>
+  if (block.k === 'code') return <pre>{block.text}</pre>
+  return <p><Inline content={block.content} /></p>
 }
 
 /**
- * Mô hình tư duy của bài đang mở — đặt NGAY TRÊN editor, trong cùng một cột.
+ * The mental model for the currently open lesson — placed RIGHT ABOVE the
+ * editor, in the same column.
  *
- * Chỗ đặt là một phần của thiết kế: người học đọc mô hình, rồi mắt đi thẳng
- * xuống đúng đoạn code hiện thân cho nó, rồi mới sang đồ thị. Nếu để nó ở cột
- * bên phải thì đây là góc màn hình thứ năm phải liếc — đúng thứ đã khiến luồng
- * học bị phân tán trước đây.
+ * The placement is part of the design: the learner reads the model, then
+ * their eyes go straight down to the code that embodies it, then over to the
+ * graph. Putting it in the right column would make it the fifth corner of the
+ * screen to glance at — exactly what used to fragment the learning flow.
  *
- * Gấp/mở được và NHỚ lựa chọn qua các lần mở bài: người đọc lại lần hai không
- * cần đọc lại phần chữ, nhưng người đọc lần đầu thì cần nó mở sẵn — nên mặc
- * định là mở.
+ * Collapsible, and REMEMBERS the choice across lesson opens: a second-time
+ * reader doesn't need to read the text again, but a first-time reader needs
+ * it open by default — so the default is open.
  */
 export function MentalModel({ lessonId }: { lessonId: string | null }) {
-  const [mo, setMo] = useState<boolean>(() => {
-    try { return localStorage.getItem(KHOA) !== 'dong' } catch { return true }
+  const [open, setOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem(STORAGE_KEY) !== 'closed' } catch { return true }
   })
   useEffect(() => {
-    try { localStorage.setItem(KHOA, mo ? 'mo' : 'dong') } catch { /* chế độ riêng tư */ }
-  }, [mo])
-  const bat = useCallback(() => setMo(v => !v), [])
+    try { localStorage.setItem(STORAGE_KEY, open ? 'open' : 'closed') } catch { /* private mode */ }
+  }, [open])
+  const toggle = useCallback(() => setOpen(v => !v), [])
 
   if (lessonId === null) return null
   const md = lessonMentalModel(lessonId)
   if (md === null) return null
-  const tieuDe = LESSON_LIST.find(l => l.id === lessonId)?.title ?? lessonId
+  const title = LESSON_LIST.find(l => l.id === lessonId)?.title ?? lessonId
 
   return (
-    <section className="mm" aria-label="Mô hình tư duy của bài học">
-      <button type="button" className="mm__head" onClick={bat} aria-expanded={mo}>
-        <span className="mm__caret" aria-hidden="true">{mo ? '▾' : '▸'}</span>
-        <span className="mm__title">{tieuDe}</span>
-        <span className="mm__hint">{mo ? 'thu gọn' : 'mô hình tư duy'}</span>
+    <section className="mm" aria-label="Lesson mental model">
+      <button type="button" className="mm__head" onClick={toggle} aria-expanded={open}>
+        <span className="mm__caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
+        <span className="mm__title">{title}</span>
+        <span className="mm__hint">{open ? 'collapse' : 'mental model'}</span>
       </button>
-      {mo && (
+      {open && (
         <div className="mm__body">
-          {docMarkdown(md).map((k, i) => <Khoi key={i} khoi={k} />)}
+          {parseMarkdown(md).map((k, i) => <MdBlockView key={i} block={k} />)}
         </div>
       )}
     </section>

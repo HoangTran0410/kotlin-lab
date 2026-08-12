@@ -1,8 +1,8 @@
 {
   "id": "scopecompare",
   "order": 11,
-  "title": "coroutineScope vs supervisorScope — khác đúng một từ",
-  "summary": "Cùng một thân, một bên fail-fast kéo cả nhóm, một bên cô lập.",
+  "title": "coroutineScope vs supervisorScope — one word apart",
+  "summary": "Same body, one side fail-fasts the whole group down, the other isolates it.",
   "concepts": [
     "coroutineScope",
     "supervisorScope",

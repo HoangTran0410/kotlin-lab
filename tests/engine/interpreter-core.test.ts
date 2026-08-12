@@ -3,16 +3,16 @@ import { runSource } from '../../src/engine/run'
 
 const printsOf = (src: string) => runSource(src).output
 
-describe('interpreter — lõi', () => {
-  it('println với literal', () => {
+describe('interpreter — core', () => {
+  it('println with a literal', () => {
     expect(printsOf('fun main() {\n  println("hi")\n}')).toEqual(['hi'])
   })
 
-  it('val và string template', () => {
+  it('val and a string template', () => {
     expect(printsOf('fun main() {\n  val x = 3\n  println("x=$x")\n}')).toEqual(['x=3'])
   })
 
-  it('số học theo đúng độ ưu tiên', () => {
+  it('arithmetic follows the correct precedence', () => {
     expect(printsOf('fun main() {\n  println("${1 + 2 * 3}")\n}')).toEqual(['7'])
   })
 
@@ -20,32 +20,33 @@ describe('interpreter — lõi', () => {
     expect(printsOf('fun main() {\n  if (1 < 2) { println("a") } else { println("b") }\n}')).toEqual(['a'])
   })
 
-  it('for trên khoảng', () => {
+  it('for over a range', () => {
     expect(printsOf('fun main() {\n  for (i in 1..3) { println("$i") }\n}')).toEqual(['1', '2', '3'])
   })
 
-  it('repeat(n) chạy đủ n lần', () => {
-    // repeat(n) nằm trong subset §4.1 và không có trong danh mục hoãn nào, nhưng
-    // chưa được cài: nó rơi xuống nhánh "gọi hàm không biết" và trả Unit im lặng,
-    // nên `repeat(3) { println("x") }` không in gì và cũng không báo gì.
+  it('repeat(n) runs exactly n times', () => {
+    // repeat(n) is part of subset §4.1 and is not on any deferred list, but
+    // wasn't implemented yet: it fell into the "unknown function call" branch
+    // and returned Unit silently, so `repeat(3) { println("x") }` printed
+    // nothing and reported nothing.
     expect(printsOf('fun main() {\n  repeat(3) { println("x") }\n}')).toEqual(['x', 'x', 'x'])
   })
 
-  it('repeat gán chỉ số vào `it`', () => {
+  it('repeat assigns the index into `it`', () => {
     expect(printsOf('fun main() {\n  repeat(3) { println("$it") }\n}')).toEqual(['0', '1', '2'])
   })
 
-  it('repeat nhận tên tham số lambda tự đặt', () => {
+  it('repeat accepts a custom lambda parameter name', () => {
     expect(printsOf('fun main() {\n  repeat(2) { i -> println("v$i") }\n}')).toEqual(['v0', 'v1'])
   })
 
-  it('repeat(0) không chạy lần nào', () => {
+  it('repeat(0) runs zero times', () => {
     expect(printsOf('fun main() {\n  repeat(0) { println("x") }\n}')).toEqual([])
   })
 
-  it('repeat chứa điểm suspend vẫn chạy đúng thứ tự', () => {
-    // repeat phải là generator delegation (yield*), không phải vòng lặp thường:
-    // nếu nuốt điểm suspend thì delay bên trong nó không nhường quyền được.
+  it('repeat containing a suspend point still runs in the right order', () => {
+    // repeat must be generator delegation (yield*), not a plain loop: if it
+    // swallowed the suspend point, a delay inside it couldn't yield control.
     expect(printsOf(
       'fun main() = runBlocking {\n' +
       '  launch { repeat(2) { delay(10); println("B$it") } }\n' +
@@ -53,30 +54,31 @@ describe('interpreter — lõi', () => {
       '}')).toEqual(['A0', 'B0', 'A1', 'B1'])
   })
 
-  it('while với var', () => {
+  it('while with a var', () => {
     expect(printsOf('fun main() {\n  var i = 0\n  while (i < 3) { println("$i")\n    i = i + 1 }\n}'))
       .toEqual(['0', '1', '2'])
   })
 
-  it('gọi hàm do user định nghĩa', () => {
+  it('calling a user-defined function', () => {
     expect(printsOf('fun greet(n: String) {\n  println("hi $n")\n}\nfun main() {\n  greet("An")\n}'))
       .toEqual(['hi An'])
   })
 
-  it('tham số mặc định', () => {
+  it('a default parameter', () => {
     expect(printsOf('fun f(n: Int = 5) {\n  println("$n")\n}\nfun main() {\n  f()\n}')).toEqual(['5'])
   })
 
-  it('try/catch bắt được throw', () => {
+  it('try/catch catches a throw', () => {
     expect(printsOf(
       'fun main() {\n  try { throw RuntimeException("boom") } catch (e: Exception) { println("caught") }\n}'))
       .toEqual(['caught'])
   })
 
-  it('return bên trong try KHÔNG bị catch của Kotlin nuốt', () => {
-    // ReturnSignal cố ý KHÔNG kế thừa KotlinThrow. Nếu cho nó kế thừa thì
-    // 'return 1' bị chính khối catch bắt và hàm trả về 2 — sai lặng lẽ, không
-    // exception nào lọt ra. Đã kiểm chứng bằng repro thật, không phải suy đoán.
+  it('return inside try is NOT swallowed by Kotlin\'s catch', () => {
+    // ReturnSignal deliberately does NOT extend KotlinThrow. If it did,
+    // 'return 1' would get caught by the catch block itself and the function
+    // would return 2 — silently wrong, with no exception ever escaping.
+    // Verified with an actual repro, not just reasoned about.
     expect(printsOf(
       'fun f(): Int {\n' +
       '  try { return 1 } catch (e: Exception) { return 2 }\n' +
@@ -84,15 +86,15 @@ describe('interpreter — lõi', () => {
       'fun main() {\n  println("${f()}")\n}')).toEqual(['1'])
   })
 
-  it('finally vẫn chạy khi thoát bằng return', () => {
+  it('finally still runs when exiting via return', () => {
     expect(printsOf(
       'fun f(): Int {\n' +
-      '  try { return 1 } finally { println("dọn dẹp") }\n' +
+      '  try { return 1 } finally { println("cleanup") }\n' +
       '}\n' +
-      'fun main() {\n  println("${f()}")\n}')).toEqual(['dọn dẹp', '1'])
+      'fun main() {\n  println("${f()}")\n}')).toEqual(['cleanup', '1'])
   })
 
-  it('finally chạy kể cả khi có exception', () => {
+  it('finally runs even when there is an exception', () => {
     expect(printsOf(
       'fun main() {\n  try { throw RuntimeException("x") } catch (e: Exception) { println("c") } finally { println("f") }\n}'))
       .toEqual(['c', 'f'])

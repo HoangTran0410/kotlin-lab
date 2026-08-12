@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { runSource } from '../../src/engine/run'
 
-describe('job.isActive / isCancelled / isCompleted đọc trạng thái THẬT', () => {
-  it('coroutine đang SUSPENDED thì Job vẫn ACTIVE — lõi của lesson suspend', () => {
+describe('job.isActive / isCancelled / isCompleted read the REAL state', () => {
+  it('a SUSPENDED coroutine still has an ACTIVE Job — the core of the suspend lesson', () => {
     const r = runSource(`fun main() = runBlocking {
     val job = launch {
         println("A")
@@ -10,19 +10,19 @@ describe('job.isActive / isCancelled / isCompleted đọc trạng thái THẬT',
         println("B")
     }
     delay(10)
-    println("đang delay, isActive = " + job.isActive)
+    println("mid-delay, isActive = " + job.isActive)
     job.join()
-    println("xong, isActive = " + job.isActive)
+    println("done, isActive = " + job.isActive)
 }`)
     expect(r.output).toEqual([
       'A',
-      'đang delay, isActive = true',
+      'mid-delay, isActive = true',
       'B',
-      'xong, isActive = false',
+      'done, isActive = false',
     ])
   })
 
-  it('sau khi cancel: isCancelled true, isActive false, isCompleted true', () => {
+  it('after cancel: isCancelled true, isActive false, isCompleted true', () => {
     const r = runSource(`fun main() = runBlocking {
     val job = launch { delay(1000) }
     delay(10)
@@ -34,9 +34,10 @@ describe('job.isActive / isCancelled / isCompleted đọc trạng thái THẬT',
     expect(r.output).toEqual(['false', 'true', 'true'])
   })
 
-  it('job xong bình thường: isCancelled false nhưng isCompleted true', () => {
-    // Phân biệt hai cái này chính là bài học. Nếu cài sai kiểu "isCompleted =
-    // !isActive" thì ca trên vẫn xanh còn ca này đỏ.
+  it('a job that finishes normally: isCancelled false but isCompleted true', () => {
+    // Distinguishing these two is exactly the lesson. An incorrect
+    // implementation like "isCompleted = !isActive" would still pass the
+    // case above but fail this one.
     const r = runSource(`fun main() = runBlocking {
     val job = launch { delay(10) }
     job.join()
@@ -46,30 +47,34 @@ describe('job.isActive / isCancelled / isCompleted đọc trạng thái THẬT',
     expect(r.output).toEqual(['false', 'true'])
   })
 
-  it('isCompleted false ngay sau launch, trước khi job kịp chạy', () => {
-    // LỊCH SỬ (trước Task 19): vòng review đầu tiên (Task 4) kết luận sai rằng
-    // KHÔNG có ca nào bằng Kotlin nguồn phân biệt được `isCompleted` với
-    // `!isActive`, vì lý luận mã Kotlin chỉ quan sát job ở
-    // Active/Completed/Cancelled — bỏ sót state `New` mà engine (trước khi
-    // sửa) để lộ ra: `Scheduler.spawn` đẩy job vào `ready` mà KHÔNG chuyển
-    // state, `New -> Active` chỉ xảy ra ở lần step() ĐẦU TIÊN, nên ngay sau
-    // `val job = launch { ... }` job vẫn ở `New` — và đó từng là ca DUY NHẤT
-    // trong cả bộ test phân biệt được `isCompleted` với mutation
-    // `!isActive` (New: isActive false -> !isActive true, SAI).
+  it('isCompleted is false right after launch, before the job gets a chance to run', () => {
+    // HISTORY (before Task 19): the first review pass (Task 4) wrongly
+    // concluded that NO case using Kotlin source code could distinguish
+    // `isCompleted` from `!isActive`, because that reasoning only
+    // considered a job being observed at Active/Completed/Cancelled — it
+    // missed the `New` state that the engine (before the fix) exposed:
+    // `Scheduler.spawn` pushed the job into `ready` WITHOUT transitioning
+    // its state, `New -> Active` only happened on the FIRST step(), so
+    // right after `val job = launch { ... }` the job was still `New` — and
+    // that used to be the ONLY case in the whole test suite that
+    // distinguished `isCompleted` from the mutation `!isActive` (New:
+    // isActive false -> !isActive true, WRONG).
     //
-    // Task 19 sửa đúng chỗ lệch đó: `isActive` bây giờ true ngay từ lúc tạo
-    // (khớp CoroutineStart.DEFAULT thật), nên `New` không còn quan sát được
-    // từ Kotlin nữa — cửa sổ mà ca này từng dùng để bắt mutation đã đóng lại.
-    // Đã đo: sau khi sửa, áp mutation "isCompleted = !isActive" vào job.ts
-    // rồi chạy TOÀN BỘ 510 test — không cái nào đỏ, kể cả ca này. Guard cho
-    // mutation đó đã dời xuống tầng unit test của Job
-    // (runtime-job.test.ts, 'isCompleted KHÁC !isActive — job mới tạo (New)
-    // cả hai đều false'), nơi `New` vẫn quan sát được trực tiếp trên chính
-    // đối tượng Job. Ca dưới đây giờ chỉ còn khẳng định giá trị isCompleted
-    // đúng theo Kotlin thật, không còn vai trò bắt mutation.
+    // Task 19 fixed exactly that gap: `isActive` is now true from the
+    // moment of creation (matching real CoroutineStart.DEFAULT), so `New`
+    // is no longer observable from Kotlin code — the window this case used
+    // to exploit to catch the mutation has closed. Measured: after the
+    // fix, applying the "isCompleted = !isActive" mutation to job.ts and
+    // running ALL 510 tests — none of them went red, including this one.
+    // The guard for that mutation moved down to Job's own unit tests
+    // (runtime-job.test.ts, 'isCompleted DIFFERS from !isActive — a
+    // freshly created job (New) has both false'), where `New` is still
+    // directly observable on the Job object itself. The case below now
+    // only asserts the isCompleted value matches real Kotlin, no longer
+    // serving as a mutation guard.
     //
-    // Đối chiếu Kotlin thật (api.kotlinlang.org, cùng chương trình): in
-    // "false" rồi "true" — khớp đúng assertion dưới đây.
+    // Verified against real Kotlin (api.kotlinlang.org, same program):
+    // prints "false" then "true" — matching the assertion below exactly.
     const r = runSource(`fun main() = runBlocking {
     val job = launch { delay(10) }
     println(job.isCompleted)
@@ -80,8 +85,8 @@ describe('job.isActive / isCancelled / isCompleted đọc trạng thái THẬT',
   })
 })
 
-describe('isActive trần và ensureActive() trong thân coroutine', () => {
-  it('vòng lặp isActive dừng khi bị cancel', () => {
+describe('bare isActive and ensureActive() inside a coroutine body', () => {
+  it('an isActive loop stops when cancelled', () => {
     const r = runSource(`fun main() = runBlocking {
     val job = launch {
         var i = 0
@@ -90,80 +95,87 @@ describe('isActive trần và ensureActive() trong thân coroutine', () => {
             i = i + 1
             delay(100)
         }
-        println("thoát vòng lặp")
+        println("exited the loop")
     }
     delay(250)
     job.cancelAndJoin()
-    println("đã huỷ")
+    println("cancelled")
 }`)
-    // t=0,100,200 in ba tick; t=250 cancel; vòng lặp không chạy tick thứ tư.
+    // t=0,100,200 print three ticks; t=250 cancel; the loop never runs a fourth tick.
     expect(r.output.filter(l => l.startsWith('tick'))).toEqual(['tick 0', 'tick 1', 'tick 2'])
-    expect(r.output[r.output.length - 1]).toBe('đã huỷ')
+    expect(r.output[r.output.length - 1]).toBe('cancelled')
   })
 
-  it('isActive trần đọc job của coroutine BAO QUANH THEO TỪ VỰNG, không phải job đang chạy', () => {
-    // Nếu cài bằng scheduler.currentJob thì sau lần suspend đầu tiên giá trị
-    // này trỏ nhầm job và ca trên có thể vẫn xanh trong khi ngữ nghĩa đã sai.
+  it("bare isActive reads the LEXICALLY ENCLOSING coroutine's job, not whichever job is currently running", () => {
+    // An implementation based on scheduler.currentJob would, after the
+    // first suspend, point at the wrong job — and the case above could
+    // still stay green while the semantics are wrong.
     //
-    // Định danh `ngoai` KHÔNG dấu — lexer chỉ nhận [A-Za-z0-9_]. Brief gốc
-    // dùng `ngoài` (có dấu), lexer báo lỗi thật (dòng 2 cột 12): "Lexer: ký tự
-    // không nhận diện được 'à'". Đây là lỗi trong brief, không phải lỗi cài
-    // đặt — đã sửa tên biến, giữ nguyên tiếng Việt có dấu trong string literal.
+    // The identifier is spelled `outer` — the lexer only accepts
+    // [A-Za-z0-9_] for identifiers (this was originally discovered because
+    // the source spec used the accented Vietnamese name `ngoài`, which the
+    // lexer rejected with a real error at line 2, column 12: "Lexer:
+    // unrecognized character 'à'" — a bug in the spec, not in the
+    // implementation; string literals, by contrast, can contain any
+    // character).
     const r = runSource(`fun main() = runBlocking {
-    val ngoai = launch {
+    val outer = launch {
         delay(10)
         launch { delay(500) }
-        println("trong launch ngoài: " + isActive)
+        println("inside outer launch: " + isActive)
     }
-    ngoai.join()
+    outer.join()
 }`)
-    expect(r.output).toEqual(['trong launch ngoài: true'])
+    expect(r.output).toEqual(['inside outer launch: true'])
   })
 
-  it('isActive trần đọc false sau khi job bị huỷ — không phải true cứng', () => {
-    // Vòng review đầu tiên (Task 4) chỉ ra: hai ca isActive-trần ở trên KHÔNG
-    // phân biệt được cài đặt thật với `return { t: 'bool', v: true }` cứng —
-    // ca "vòng lặp" thoát bằng CancellationException ném thẳng vào generator
-    // tại delay() (while (isActive) chưa từng được ĐÁNH GIÁ ra false), còn ca
-    // "BAO QUANH THEO TỪ VỰNG" chỉ assert đúng giá trị `true`, cũng là thứ mà
-    // nhánh "không tìm thấy job" (env.enclosingJobId === null) trả về.
+  it('bare isActive reads false after the job has been cancelled — not a hard-coded true', () => {
+    // The first review pass (Task 4) pointed out: the two bare-isActive
+    // cases above do NOT distinguish a real implementation from a
+    // hard-coded `return { t: 'bool', v: true }` — the "loop" case exits
+    // via a CancellationException thrown straight into the generator at
+    // delay() (the while (isActive) condition is never actually EVALUATED
+    // to false), and the "LEXICALLY ENCLOSING" case only asserts the value
+    // `true`, which is also what the "no job found" branch
+    // (env.enclosingJobId === null) returns.
     //
-    // Ca này đọc isActive trần bên trong catch (e: CancellationException) của
-    // MỘT job đã bị huỷ — job.isActive lúc đó THẬT SỰ là false. Cùng hình
-    // dạng với ca ensureActive() ngay dưới. Đối chiếu Kotlin thật
-    // (api.kotlinlang.org): in "caught", "isActive after cancel = false",
-    // "done" — khớp đúng assertion dưới đây.
+    // This case reads bare isActive inside a catch (e: CancellationException)
+    // of a job that HAS ALREADY been cancelled — job.isActive at that point
+    // is GENUINELY false. Same shape as the ensureActive() case right
+    // below. Verified against real Kotlin (api.kotlinlang.org): prints
+    // "caught", "isActive after cancel = false", "done" — matching the
+    // assertion below exactly.
     const r = runSource(`fun main() = runBlocking {
     val job = launch {
         try {
             delay(1000)
         } catch (e: CancellationException) {
-            println("bắt được huỷ")
-            println("isActive sau huỷ = " + isActive)
+            println("caught cancellation")
+            println("isActive after cancel = " + isActive)
         }
     }
     delay(10)
     job.cancelAndJoin()
-    println("xong")
+    println("done")
 }`)
-    expect(r.output).toEqual(['bắt được huỷ', 'isActive sau huỷ = false', 'xong'])
+    expect(r.output).toEqual(['caught cancellation', 'isActive after cancel = false', 'done'])
   })
 
-  it('ensureActive() ném CancellationException khi job đã bị huỷ', () => {
+  it('ensureActive() throws CancellationException when the job has already been cancelled', () => {
     const r = runSource(`fun main() = runBlocking {
     val job = launch {
         try {
             delay(1000)
         } catch (e: CancellationException) {
-            println("bắt được huỷ")
+            println("caught cancellation")
         }
         ensureActive()
-        println("không tới đây")
+        println("never reached")
     }
     delay(10)
     job.cancelAndJoin()
-    println("xong")
+    println("done")
 }`)
-    expect(r.output).toEqual(['bắt được huỷ', 'xong'])
+    expect(r.output).toEqual(['caught cancellation', 'done'])
   })
 })

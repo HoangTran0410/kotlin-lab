@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react'
 
 /**
- * `tone="error"` tô đỏ tiêu đề. Dùng cho ô lỗi dưới editor: nó chỉ xuất hiện
- * khi có lỗi, nên phải nhìn ra ngay là chuyện cần xử lý chứ không phải một
- * panel thông tin như mọi panel khác.
+ * `tone="error"` paints the title red. Used for the error box under the
+ * editor: it only appears when there are errors, so it has to read
+ * immediately as something to deal with, not just another informational
+ * panel.
  */
 export function Panel({ title, children, grow = false, tone = 'normal' }: {
   title: string; children: ReactNode; grow?: boolean; tone?: 'normal' | 'error'

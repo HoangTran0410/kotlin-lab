@@ -2,10 +2,11 @@ import { KEYWORDS, OPERATORS, type StringPart, type Token, type TokenKind } from
 import type { Pos } from '../ast/nodes'
 
 /**
- * Lỗi lexer PHẢI mang vị trí có cấu trúc. Trước đây bốn chỗ dưới đây ném
- * `Error` trần với dòng/cột nhét trong chuỗi thông điệp — DiagnosticsPanel
- * không có gì để nhảy tới, và cách duy nhất lấy lại vị trí là regex ngược
- * thông điệp tiếng Việt. Kiểu hoá nó, đừng parse chuỗi.
+ * Lexer errors MUST carry a structured position. The four spots below used to
+ * throw a bare `Error` with the line/column stuffed into the message string —
+ * DiagnosticsPanel had nothing to jump to, and the only way to recover the
+ * position was to regex the message text apart. Type it properly, don't parse
+ * the string.
  */
 export class LexError extends Error {
   constructor(message: string, readonly pos: Pos) { super(message) }
@@ -45,7 +46,7 @@ export function tokenize(src: string): Token[] {
       advance(2)
       while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) advance(1)
       if (i >= src.length) {
-        throw new LexError(`Lexer: chú thích khối chưa được đóng, bắt đầu ở dòng ${l}, cột ${c}`, { line: l, col: c })
+        throw new LexError(`Lexer: unterminated block comment, starting at line ${l}, column ${c}`, { line: l, col: c })
       }
       advance(2)
       continue
@@ -53,8 +54,8 @@ export function tokenize(src: string): Token[] {
 
     if (ch === '-' && src[i + 1] === '>') { push('ARROW', '->'); advance(2); continue }
 
-    // '..' PHẢI xét trước SINGLE, nếu không '.' bị nuốt thành DOT và toán tử
-    // khoảng không bao giờ tới lượt được khớp.
+    // '..' MUST be checked before SINGLE, otherwise '.' gets swallowed as DOT
+    // and the range operator never gets a chance to match.
     if (ch === '.' && src[i + 1] === '.') { push('OP', '..'); advance(2); continue }
 
     const single = SINGLE[ch]
@@ -75,9 +76,10 @@ export function tokenize(src: string): Token[] {
           advance(2)
           continue
         }
-        // '$' chỉ mở template khi theo sau là '{' hoặc ký tự bắt đầu định danh.
-        // Nếu không ('giá 5$ thôi', '$5') thì nó là ký tự thường — nếu bỏ điều
-        // kiện này sẽ sinh ra part expr rỗng và parser ở Task 3 sẽ chết.
+        // '$' only opens a template when followed by '{' or an identifier-start
+        // character. Otherwise ('costs 5$ only', '$5') it's a plain character —
+        // dropping this condition would produce an empty expr part and the
+        // parser in Task 3 would blow up.
         if (src[i] === '$' && (src[i + 1] === '{' || /[A-Za-z_]/.test(src[i + 1] ?? ''))) {
           flush()
           if (src[i + 1] === '{') {
@@ -91,14 +93,14 @@ export function tokenize(src: string): Token[] {
               advance(1)
             }
             if (depth > 0) {
-              throw new LexError(`Lexer: thiếu '}' đóng cho \${...} bắt đầu ở dòng ${sl}, cột ${sc}`, { line: sl, col: sc })
+              throw new LexError(`Lexer: missing closing '}' for \${...} starting at line ${sl}, column ${sc}`, { line: sl, col: sc })
             }
             parts.push({ type: 'expr', source: src.slice(start, i), line: sl, col: sc })
-            advance(1) // dấu }
+            advance(1) // the closing }
           } else {
-            advance(1) // bỏ qua '$'
-            // sl/sc lấy TRƯỚC vòng quét: part phải trỏ vào vị trí BẮT ĐẦU của
-            // biểu thức, đồng nhất với nhánh ${...} ở trên.
+            advance(1) // skip past '$'
+            // sl/sc are captured BEFORE the scan loop: the part must point at the
+            // START position of the expression, consistent with the ${...} branch above.
             const sl = line, sc = col
             const start = i
             while (i < src.length && /[A-Za-z0-9_]/.test(src[i]!)) advance(1)
@@ -110,10 +112,10 @@ export function tokenize(src: string): Token[] {
         advance(1)
       }
       if (i >= src.length) {
-        throw new LexError(`Lexer: chuỗi chưa được đóng, bắt đầu ở dòng ${l}, cột ${c}`, { line: l, col: c })
+        throw new LexError(`Lexer: unterminated string, starting at line ${l}, column ${c}`, { line: l, col: c })
       }
       flush()
-      advance(1) // dấu " đóng
+      advance(1) // closing " mark
       toks.push({ kind: 'STRING', text: '', line: l, col: c, parts })
       continue
     }
@@ -121,9 +123,9 @@ export function tokenize(src: string): Token[] {
     if (/[0-9]/.test(ch)) {
       const start = i, l = line, c = col
       while (i < src.length && /[0-9_]/.test(src[i]!)) advance(1)
-      // Chỉ nuốt dấu chấm thập phân khi SAU nó là chữ số. Nếu quét cả '.' một
-      // cách tham lam thì '1..3' biến thành một token NUMBER "1..3" và vòng
-      // for (i in 1..3) không bao giờ parse được.
+      // Only consume the decimal point when it's FOLLOWED by a digit. Scanning
+      // '.' greedily would turn '1..3' into a single NUMBER token "1..3", and
+      // for (i in 1..3) would never parse.
       if (src[i] === '.' && /[0-9]/.test(src[i + 1] ?? '')) {
         advance(1)
         while (i < src.length && /[0-9_]/.test(src[i]!)) advance(1)
@@ -143,7 +145,7 @@ export function tokenize(src: string): Token[] {
     const op = OPERATORS.find(o => src.startsWith(o, i))
     if (op) { push('OP', op); advance(op.length); continue }
 
-    throw new LexError(`Lexer: ký tự không nhận diện được '${ch}' tại dòng ${line}, cột ${col}`, { line, col })
+    throw new LexError(`Lexer: unrecognized character '${ch}' at line ${line}, column ${col}`, { line, col })
   }
 
   push('EOF', '')

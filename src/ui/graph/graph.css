@@ -1,8 +1,9 @@
-/* Task 13. Kích thước hộp là HẰNG SỐ (dimensions.ts) — CSS ở đây KHÔNG được
-   đổi width/height, chỉ đổi màu/nét/opacity theo state. Đổi kích thước ở CSS
-   là đúng kiểu rung mà Quyết định 2 (Task 11/12) chặn: ELK đã bố cục theo
-   NODE_W/NODE_H cố định, "làm đẹp" bằng CSS sẽ làm hộp lệch khỏi toạ độ ELK
-   tính. Nhãn dài thì cắt (text-overflow), không nới hộp. */
+/* Task 13. Box dimensions are CONSTANTS (dimensions.ts) — the CSS here must
+   NOT change width/height, only color/stroke/opacity by state. Changing size
+   in CSS is exactly the kind of jitter Decision 2 (Task 11/12) blocks: ELK
+   already laid out using fixed NODE_W/NODE_H, "prettifying" with CSS would
+   make the box drift away from the coordinates ELK computed. Long labels get
+   cut (text-overflow), the box never grows. */
 
 .k-job-node,
 .k-scope-node {
@@ -12,8 +13,9 @@
   border-radius: 6px;
   font-size: 12px;
   color: var(--fg);
-  /* opacity/border-style đổi theo state qua transition ngắn — chỉ là hiệu ứng
-     hình ảnh, KHÔNG đụng tới position (đến từ layout, không phải ở đây). */
+  /* opacity/border-style change with state via a short transition — purely a
+     visual effect, does NOT touch position (that comes from layout, not
+     here). */
   transition: opacity 120ms ease, border-color 120ms ease;
 }
 
@@ -31,10 +33,11 @@
 
 .k-job-node--unborn,
 .k-scope-node--unborn {
-  /* Nodes chưa sinh ra (world.jobs chưa có): bóng mờ, viền đứt — chỗ dành sẵn
-     để vị trí không nhảy khi node đó thật sự xuất hiện (xem toReactFlow.ts).
-     Đây là hình ảnh có CHỦ Ý, không phải lỗi hiển thị: bất kỳ ai nhìn đồ thị
-     phải đọc ra ngay "cái này sẽ tới, chưa tới" chứ không tưởng là rác/vỡ. */
+  /* Nodes not born yet (not in world.jobs): faded, dashed border — a
+     pre-reserved spot so position doesn't jump when the node actually appears
+     (see toReactFlow.ts). This is INTENTIONAL visual design, not a display
+     bug: anyone looking at the graph must immediately read "this is coming,
+     not here yet" rather than mistaking it for clutter or breakage. */
   opacity: 0.18;
   border-style: dashed;
 }
@@ -53,9 +56,10 @@
   text-overflow: ellipsis;
 }
 
-/* Id job (`j4`). Mờ và nhỏ để không tranh chỗ với tên, nhưng LUÔN hiện: đây
-   là thứ duy nhất phân biệt ba node cùng ghi "launch", và là cái tên mà phần
-   diễn giải dùng khi nhắc tới job. */
+/* Job id (`j4`). Faded and small so it doesn't compete for space with the
+   name, but ALWAYS shown: this is the only thing that distinguishes three
+   nodes that all say "launch", and it's the name the narration uses when it
+   refers to a job. */
 .k-job-node__id,
 .k-scope-node__id {
   flex: none;
@@ -65,9 +69,10 @@
   opacity: 0.75;
 }
 
-/* Nhãn "supervisor" trên tiêu đề scope: nói thẳng bằng CHỮ điều mà nét viền
-   đôi đang nói bằng hình. Ranh giới supervisor là bài học quan trọng nhất của
-   công cụ này, không nên bắt người học phải suy ra từ độ dày viền. */
+/* The "supervisor" tag on the scope title: says in WORDS what the double
+   border is already saying in shape. The supervisor boundary is the most
+   important lesson this tool teaches, and learners shouldn't have to infer
+   it from border thickness alone. */
 .k-scope-node__tag {
   flex: none;
   padding: 0 6px;
@@ -97,9 +102,10 @@
   text-overflow: ellipsis;
 }
 
-/* Message nhạt hơn kiểu exception: kiểu là thứ phân loại, message là thứ đọc
-   khi đã biết node nào hỏng. Node hẹp thì message bị cắt trước — `title` trên
-   thẻ cha vẫn giữ đủ cả hai. */
+/* Message is fainter than the exception type: the type is what classifies
+   it, the message is what you read once you already know which node broke.
+   A narrow node clips the message first — the `title` on the parent element
+   still keeps both in full. */
 .k-job-node__msg {
   color: var(--fg-dim);
   font-style: italic;
@@ -112,8 +118,9 @@
 }
 
 .k-scope-node--supervisor {
-  /* Nét đôi: phân biệt supervisor bằng HÌNH DẠNG, không chỉ màu — người học mù
-     màu (hoặc chỉ nhìn ảnh chụp đen trắng) vẫn thấy ranh giới supervisor. */
+  /* Double border: distinguish supervisors by SHAPE, not just color — a
+     colorblind learner (or anyone only seeing a black-and-white printout)
+     still sees the supervisor boundary. */
   border-style: double;
   border-width: 5px;
 }
@@ -130,17 +137,19 @@
   text-overflow: ellipsis;
 }
 
-/* Handle của React Flow: bắt buộc phải có để cạnh nối được vào đúng điểm
-   (@xyflow/system getEdgePosition() cần handleBounds.source/target, xem
-   GraphCanvas.tsx), nhưng công cụ này chỉ ĐỌC — không kéo để tự nối cạnh mới
-   — nên ẩn hẳn đi, không để lộ chấm kéo thả gây hiểu lầm là tương tác được. */
+/* React Flow handles: required to exist so edges connect at the right point
+   (@xyflow/system getEdgePosition() needs handleBounds.source/target, see
+   GraphCanvas.tsx), but this tool is READ-ONLY — no dragging to connect new
+   edges — so they're hidden entirely, so the drag dots don't suggest an
+   interaction that isn't there. */
 .k-job-node .react-flow__handle,
 .k-scope-node .react-flow__handle {
   opacity: 0;
   pointer-events: none;
 }
 
-/* Task 14: dấu chặn failure bị supervisor — đoạn ngang đặc thay cho mũi tên. */
+/* Task 14: block mark for a failure blocked by a supervisor — a solid
+   crossbar instead of an arrow. */
 .k-edge-block-mark {
   position: absolute;
   width: 14px;
@@ -161,8 +170,9 @@
   pointer-events: none;
 }
 
-/* println hiện ngay trên node đã in nó — không phải liếc sang panel console
-   rồi tự ghép "dòng này của ai". PRINTLN mang `id` chính xác, tận dụng nó. */
+/* println shows up right on the node that printed it — not glancing over to
+   the console panel and piecing together "whose line was this". PRINTLN
+   carries the exact `id`, so make use of it. */
 .k-job-node__print {
   display: flex;
   align-items: baseline;
@@ -181,8 +191,9 @@
 
 .k-job-node__print-mark { color: var(--k-launch); flex: none; }
 
-/* Đã in nhiều dòng: hiện dòng mới nhất + số dòng trước đó, thay vì im lặng
-   nuốt mất phần còn lại. Console đầy đủ vẫn ở bảng gỡ lỗi. */
+/* Printed more than one line: show the latest line + a count of the earlier
+   ones, instead of silently swallowing the rest. The full console is still
+   available in the debug panel. */
 .k-job-node__print-n {
   flex: none;
   margin-left: auto;
@@ -202,20 +213,54 @@
   text-overflow: ellipsis;
 }
 
-/* Node mà bước đang xem NÓI VỀ. Vòng ngoài chứ không đổi màu viền: viền đã
-   mang nghĩa "trạng thái vòng đời" rồi, chồng thêm nghĩa thứ hai lên nó là
-   làm hỏng cả hai. */
+/* The node the step being viewed is TALKING ABOUT. An outer ring, not a
+   border color change: the border already carries the meaning "lifecycle
+   state" — stacking a second meaning onto it would ruin both. */
 .k-job-node--current,
 .k-scope-node--current {
   box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--k-launch);
 }
 
-/* Builder khi nhãn chính là tên biến hoặc CoroutineName. Nhỏ và mờ: nó là
-   phân loại, không phải danh tính. */
+/* Builder shown when the main label is a variable name or CoroutineName.
+   Small and faded: it's a classification, not an identity. */
 .k-job-node__builder {
   flex: none;
   font-size: 9.5px;
   letter-spacing: 0.02em;
   color: var(--fg-dim);
   text-transform: lowercase;
+}
+
+/* Badge row: suspend reason and thread sit on one line so a node doesn't grow
+   taller when both are present — box height is a constant (dimensions.ts) and
+   the layout was computed against it. */
+.k-job-node__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* The thread this coroutine holds. Same colour per dispatcher as the pool
+   strip below the graph, so a slot there and a badge here read as one thing. */
+.k-job-node__thread {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-family: ui-monospace, monospace;
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.k-job-node__thread--Main { color: var(--k-runBlocking); }
+.k-job-node__thread--Default { color: var(--k-launch); }
+.k-job-node__thread--IO { color: var(--k-async); }
+.k-job-node__thread--Unconfined { color: var(--fg-dim); }
+
+/* Suspended: it belongs to a pool but holds no thread. Dimmed and dashed, not
+   hidden — "holding nothing" is the lesson, and blank space doesn't teach it. */
+.k-job-node__thread--idle {
+  border-style: dashed;
+  opacity: 0.5;
 }

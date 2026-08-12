@@ -21,8 +21,8 @@ export class VirtualClock {
   }
 
   /**
-   * Nhảy tới mốc thời gian gần nhất và chạy MỌI timer đúng mốc đó,
-   * theo thứ tự đăng ký. Trả false nếu không còn timer nào.
+   * Jump to the nearest time point and run EVERY timer due at that point,
+   * in registration order. Returns false if there are no timers left.
    */
   advanceToNextTimer(): boolean {
     if (this.timers.length === 0) return false

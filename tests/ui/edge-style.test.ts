@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { edgeStyle } from '../../src/ui/graph/edges/edgeStyle'
 
-describe('edgeStyle — ánh xạ thuần kind/blocked -> hình dáng cạnh (Task 14)', () => {
-  it('ba kind cho ba hình dáng khác nhau đôi một', () => {
+describe('edgeStyle — pure kind/blocked -> edge shape mapping (Task 14)', () => {
+  it('the three kinds give three pairwise-different shapes', () => {
     const child = edgeStyle('child', false)
     const cancel = edgeStyle('cancel', false)
     const failure = edgeStyle('failure', false)
@@ -11,7 +11,7 @@ describe('edgeStyle — ánh xạ thuần kind/blocked -> hình dáng cạnh (Ta
     expect(child).not.toEqual(failure)
   })
 
-  it('child: xám mảnh, nét liền, không mũi tên', () => {
+  it('child: thin gray, solid line, no arrow', () => {
     const v = edgeStyle('child', false)
     expect(v.stroke).toBe('var(--fg-dim)')
     expect(v.strokeWidth).toBe(1)
@@ -19,14 +19,14 @@ describe('edgeStyle — ánh xạ thuần kind/blocked -> hình dáng cạnh (Ta
     expect(v.markerVariant).toBe('none')
   })
 
-  it('cancel: cam, nét đứt, có mũi tên', () => {
+  it('cancel: orange, dashed line, has an arrow', () => {
     const v = edgeStyle('cancel', false)
     expect(v.stroke).toBe('var(--edge-cancel)')
     expect(v.strokeDasharray).toBeDefined()
     expect(v.markerVariant).toBe('arrow')
   })
 
-  it('failure không bị chặn: đỏ, nét liền, có mũi tên, không nhãn', () => {
+  it('failure not blocked: red, solid line, has an arrow, no label', () => {
     const v = edgeStyle('failure', false)
     expect(v.stroke).toBe('var(--state-cancelled)')
     expect(v.strokeDasharray).toBeUndefined()
@@ -34,19 +34,19 @@ describe('edgeStyle — ánh xạ thuần kind/blocked -> hình dáng cạnh (Ta
     expect(v.label).toBeUndefined()
   })
 
-  it('blocked đổi kiểu dáng — failure bị chặn dùng dấu chặn thay mũi tên, kèm nhãn tiếng Việt', () => {
+  it('blocked changes the shape — a blocked failure uses a block mark instead of an arrow, with a label', () => {
     const v = edgeStyle('failure', true)
     expect(v.markerVariant).toBe('block')
-    expect(v.label).toBe('bị supervisor chặn')
-    // Vẫn cùng gam đỏ với failure không bị chặn — chỉ ĐỔI HÌNH DÁNG, không đổi kind.
+    expect(v.label).toBe('blocked by supervisor')
+    // Still the same red hue as an unblocked failure — only the SHAPE changes, not the kind.
     expect(v.stroke).toBe(edgeStyle('failure', false).stroke)
   })
 
-  it('blocked chỉ có nghĩa với failure — child bỏ qua tham số này', () => {
+  it('blocked only matters for failure — child ignores this parameter', () => {
     expect(edgeStyle('child', true)).toEqual(edgeStyle('child', false))
   })
 
-  it('blocked chỉ có nghĩa với failure — cancel bỏ qua tham số này', () => {
+  it('blocked only matters for failure — cancel ignores this parameter', () => {
     expect(edgeStyle('cancel', true)).toEqual(edgeStyle('cancel', false))
   })
 })

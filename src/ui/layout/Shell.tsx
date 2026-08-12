@@ -5,13 +5,15 @@ import { MAX_LEFT, MAX_RIGHT, MIN_LEFT, MIN_RIGHT, usePanelWidths } from './useP
 import './shell.css'
 
 /**
- * `debugOpen` quyết định có hiện cột phải (console + chẩn đoán + diễn giải đầy
- * đủ) và thanh timeline từng-event ở đáy hay không.
+ * `debugOpen` decides whether the right column (console + diagnostics + full
+ * narration) and the bottom per-event timeline bar are shown.
  *
- * Mặc định TẮT. Đồ thị đã mang sẵn câu giải thích của bước đang xem, nút tua,
- * và `println` ngay trên node — đủ để theo dõi mà không phải nhìn đi bốn góc.
- * Bảng gỡ lỗi là chỗ đào sâu (từng event một, console đầy đủ, lịch sử diễn
- * giải), không phải chỗ bắt buộc phải liếc để hiểu chuyện gì đang xảy ra.
+ * Defaults to OFF. The graph already carries the explanation for the step
+ * being viewed, a scrub control, and `println` right on the node — enough to
+ * follow along without looking at four corners of the screen. The debug panel
+ * is where you go to dig deeper (event by event, full console, narration
+ * history), not somewhere you're forced to glance at to understand what's
+ * happening.
  */
 export function Shell({ nav, editor, graph, timeline, side, debugOpen }: {
   nav: ReactNode; editor: ReactNode; graph: ReactNode
@@ -24,16 +26,17 @@ export function Shell({ nav, editor, graph, timeline, side, debugOpen }: {
       <header className="shell__head">
         <h1>Kotlin Coroutines Lab</h1>
         {nav}
-        <button type="button" className="shell__reset" onClick={reset} title="Đưa bề rộng các cột về mặc định">
-          Bố cục mặc định
+        <button type="button" className="shell__reset" onClick={reset} title="Reset column widths to their defaults">
+          Reset layout
         </button>
       </header>
       <SimulationNotice />
       <div
         className="shell__main"
-        // Bề rộng đi qua biến CSS chứ không viết thẳng grid-template vào style:
-        // cách này giữ định nghĩa lưới ở một chỗ duy nhất trong CSS, và biểu
-        // thức `1fr` cho cột giữa không phải dựng lại bằng chuỗi trong TSX.
+        // Widths go through a CSS variable instead of writing grid-template
+        // straight into style: this keeps the grid definition in exactly one
+        // place in the CSS, and the `1fr` expression for the middle column
+        // doesn't have to be rebuilt as a string in TSX.
         style={{
           '--w-left': `${left}px`,
           '--w-right': `${right}px`,
@@ -41,12 +44,12 @@ export function Shell({ nav, editor, graph, timeline, side, debugOpen }: {
         data-debug={debugOpen ? 'open' : 'closed'}
       >
         <div className="shell__left">{editor}</div>
-        <Splitter label="Bề rộng cột mã" width={left} setWidth={setLeft} min={MIN_LEFT} max={MAX_LEFT} />
+        <Splitter label="Code column width" width={left} setWidth={setLeft} min={MIN_LEFT} max={MAX_LEFT} />
         <div className="shell__center">{graph}</div>
         {debugOpen && (
           <>
             <Splitter
-              label="Bề rộng cột gỡ lỗi" width={right} setWidth={setRight}
+              label="Debug column width" width={right} setWidth={setRight}
               min={MIN_RIGHT} max={MAX_RIGHT} invert
             />
             <div className="shell__right">{side}</div>

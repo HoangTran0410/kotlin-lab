@@ -1,0 +1,127 @@
+/* Dispatcher pools. Sits under the graph, above the caption bar: it answers a
+   different question from the graph ("which thread is this on right now")
+   rather than a different aspect of the same one, so it gets its own band
+   instead of more badges crowding the nodes. */
+.pools {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  font-size: 11px;
+}
+
+.pools__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.pools__head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: none;
+  /* Fixed width so every pool's slots start on the same vertical line —
+     comparing 4 slots against 8 is the entire point, and a ragged left edge
+     makes that comparison harder than it needs to be. */
+  width: 240px;
+}
+
+.pools__name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 700;
+  color: var(--fg);
+}
+
+/* Each pool keeps ONE colour everywhere it appears, so a slot in the strip and
+   a thread badge on a node read as the same thing. */
+.pools__name--Main { color: var(--k-runBlocking); }
+.pools__name--Default { color: var(--k-launch); }
+.pools__name--IO { color: var(--k-async); }
+.pools__name--Unconfined { color: var(--fg-dim); }
+
+.pools__size { flex: none; color: var(--fg-dim); }
+
+.pools__note {
+  color: var(--fg-dim);
+  opacity: 0.75;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pools__slots {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.pools__slot {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 74px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 7px;
+  line-height: 1.3;
+}
+
+.pools__slot--free {
+  opacity: 0.45;
+  border-style: dashed;
+}
+
+.pools__slot--busy {
+  border-color: var(--state-active);
+  background: rgba(88, 166, 255, 0.1);
+}
+
+/* The coroutine landed on this thread at the step being viewed — the hop
+   itself, not just its result. Without this the switch is only visible as a
+   layout that quietly changed between two scrub positions. */
+.pools__slot--arrived {
+  border-color: var(--k-async);
+  background: rgba(188, 140, 255, 0.18);
+  box-shadow: 0 0 0 2px rgba(188, 140, 255, 0.35);
+}
+
+.pools__slotId {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9.5px;
+  color: var(--fg-dim);
+}
+
+.pools__holder {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+
+.pools__slot--free .pools__holder {
+  color: var(--fg-dim);
+  font-style: italic;
+}
+
+/* Suspended coroutines hold no thread at all. Shown next to the slots rather
+   than as a slot, because that is precisely the point: they are not occupying
+   anything. */
+.pools__waiting {
+  display: flex;
+  align-items: center;
+  padding: 3px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  color: var(--fg-dim);
+  font-style: italic;
+}

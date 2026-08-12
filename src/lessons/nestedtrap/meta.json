@@ -1,12 +1,12 @@
 {
   "id": "nestedtrap",
   "order": 12,
-  "title": "Cái bẫy lồng nhau — supervisor chỉ cứu con trực tiếp",
-  "summary": "Một launch thường nằm giữa là đủ để cả nhánh con fail-fast trở lại.",
+  "title": "The nested trap — supervisor only saves the direct child",
+  "summary": "One regular launch sitting in between is enough to bring the whole child branch back to fail-fast.",
   "concepts": [
     "supervisorScope",
     "direct child",
     "supervisor boundary",
-    "cancel đi xuống"
+    "cancel goes down"
   ]
 }

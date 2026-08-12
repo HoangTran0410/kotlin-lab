@@ -1,12 +1,12 @@
 {
   "id": "swallow",
   "order": 4,
-  "title": "catch (e: Exception) nuốt mất tín hiệu huỷ",
-  "summary": "CancellationException cũng là Exception. Bắt nó bằng catch rộng là bắt luôn lệnh huỷ.",
+  "title": "catch (e: Exception) swallows the cancellation signal",
+  "summary": "CancellationException is also an Exception. Catching it with a broad catch also catches the cancellation itself.",
   "concepts": [
     "CancellationException",
     "try/catch",
-    "huỷ là hợp tác",
+    "cancellation is cooperative",
     "isCancelled"
   ]
 }

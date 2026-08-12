@@ -1,6 +1,7 @@
-/* Hộp phủ toàn màn hình: đây là thứ người ta đọc MỘT LẦN, đọc kỹ, rồi đóng —
-   không phải một panel sống chung với đồ thị. Nhét nó vào cột bên sẽ vừa chật
-   vừa cạnh tranh chú ý với thứ đang chạy. */
+/* Full-screen overlay: this is something people read ONCE, read carefully,
+   then close — not a panel that lives alongside the graph. Stuffing it into a
+   side column would be both cramped and competing for attention with what's
+   running. */
 .mdl {
   position: fixed;
   inset: 0;
@@ -32,8 +33,9 @@
   border-bottom: 1px solid var(--border);
 }
 
-/* Tab thay cho tiêu đề: hai danh sách là hai nửa của cùng một câu hỏi, nên
-   chuyển qua lại phải rẻ hơn là đóng hộp rồi mở hộp khác. */
+/* Tabs instead of a title: the two lists are two halves of the same question,
+   so switching between them has to be cheaper than closing this box and
+   opening another one. */
 .mdl__tabs { display: flex; gap: 6px; }
 
 .mdl__tab {
@@ -111,8 +113,9 @@
   margin: 0;
   padding: 0;
   display: grid;
-  /* auto-fill chứ không phải số cột cố định: hộp này rộng 980px trên màn to
-     nhưng chỉ còn một cột trên màn hẹp, và thẻ ví dụ không được bóp ngang. */
+  /* auto-fill instead of a fixed column count: this box is 980px wide on a
+     large screen but drops to a single column on a narrow one, and example
+     cards must never be squeezed horizontally. */
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 10px;
 }
@@ -158,8 +161,9 @@
   font-size: 13px;
 }
 
-/* Output của ví dụ, không phải mã nguồn: mã nằm trong editor sau khi bấm "Mở
-   ví dụ". Hiện kết quả ở đây để lướt qua là biết ví dụ đó chứng minh điều gì. */
+/* The example's output, not its source: the source lives in the editor after
+   clicking "Open example". Showing the result here means a glance is enough
+   to know what the example proves. */
 .about__ra {
   margin: 0;
   padding: 8px 10px;
@@ -206,10 +210,11 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-/* ---- Thẻ bài học (tab Lộ trình) ---- */
+/* ---- Lesson cards (Lessons tab) ---- */
 
-/* Dùng lại .mdl__cards/.mdl__card của tab kia — đó là cả điểm của việc gộp
-   hai danh sách vào một hộp: cùng lưới, cùng nền, cùng bo góc. */
+/* Reuses .mdl__cards/.mdl__card from the other tab — that's the whole point
+   of merging the two lists into one box: same grid, same background, same
+   rounded corners. */
 .les__card {
   display: flex;
   flex-direction: column;
@@ -250,8 +255,9 @@
 
 .les__title { font-weight: 600; font-size: 13px; }
 
-/* Bài đã so từng dòng với JVM thật — thông tin về ĐỘ TIN CẬY của bài đó, nên
-   nó thuộc về thẻ chứ không phải một dòng thống kê ở đâu khác. */
+/* A lesson checked line-by-line against a real JVM — this is information
+   about that lesson's RELIABILITY, so it belongs on the card, not in some
+   stats line elsewhere. */
 .les__jvm {
   margin-left: auto;
   flex: none;

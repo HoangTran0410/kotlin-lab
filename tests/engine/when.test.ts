@@ -4,8 +4,8 @@ import { runSource } from '../../src/engine/run'
 const out = (src: string): string[] => runSource(src).output
 const diags = (src: string): unknown[] => runSource(src).diagnostics
 
-describe('when có subject — so sánh subject với giá trị nhánh', () => {
-  it('chọn nhánh khớp giá trị, không phải nhánh đầu tiên', () => {
+describe('when with a subject — compares the subject against each branch value', () => {
+  it('picks the branch matching the value, not the first branch', () => {
     const src = `fun main() = runBlocking {
     val x = 2
     when (x) {
@@ -18,8 +18,8 @@ describe('when có subject — so sánh subject với giá trị nhánh', () => 
     expect(out(src)).toEqual(['two'])
   })
 
-  it('không nhánh nào khớp thì chạy else', () => {
-    // Ca này là ca PHÁT HIỆN bug gốc: trước khi sửa, x=99 vẫn in "one".
+  it('runs else when no branch matches', () => {
+    // This is the case that CAUGHT the original bug: before the fix, x=99 still printed "one".
     const src = `fun main() = runBlocking {
     val x = 99
     when (x) {
@@ -31,7 +31,7 @@ describe('when có subject — so sánh subject với giá trị nhánh', () => 
     expect(out(src)).toEqual(['other'])
   })
 
-  it('so sánh được cả chuỗi', () => {
+  it('can compare strings too', () => {
     const src = `fun main() = runBlocking {
     val s = "b"
     when (s) {
@@ -43,35 +43,35 @@ describe('when có subject — so sánh subject với giá trị nhánh', () => 
     expect(out(src)).toEqual(['B'])
   })
 
-  it('không có else và không nhánh nào khớp thì không in gì, không nổ', () => {
+  it('with no else and no branch matching, prints nothing and does not blow up', () => {
     const src = `fun main() = runBlocking {
     val x = 7
     when (x) {
         1 -> println("one")
     }
-    println("sống sót")
+    println("survived")
 }`
-    expect(out(src)).toEqual(['sống sót'])
+    expect(out(src)).toEqual(['survived'])
   })
 })
 
-describe('when không subject — mỗi nhánh là một điều kiện boolean', () => {
-  it('giữ nguyên ngữ nghĩa cũ: chọn điều kiện đúng đầu tiên', () => {
+describe('when with no subject — each branch is a boolean condition', () => {
+  it('keeps the old semantics: picks the first true condition', () => {
     const src = `fun main() = runBlocking {
     val n = 5
     when {
-        n > 10 -> println("lớn")
-        n > 3 -> println("vừa")
-        else -> println("nhỏ")
+        n > 10 -> println("big")
+        n > 3 -> println("medium")
+        else -> println("small")
     }
 }`
-    expect(out(src)).toEqual(['vừa'])
+    expect(out(src)).toEqual(['medium'])
   })
 })
 
-describe('when — vế phải là biểu thức, không bắt buộc ngoặc nhọn', () => {
-  it('nhánh dạng biểu thức parse sạch và chạy đúng', () => {
-    // Trước khi sửa: "Mong đợi LBRACE nhưng gặp 'println'".
+describe('when — the right-hand side is an expression, braces are not required', () => {
+  it('an expression-form branch parses cleanly and runs correctly', () => {
+    // Before the fix: "Expected LBRACE but found 'println'".
     const src = `fun main() = runBlocking {
     val x = 2
     when (x) {
@@ -83,48 +83,49 @@ describe('when — vế phải là biểu thức, không bắt buộc ngoặc nh
     expect(out(src)).toEqual(['two'])
   })
 
-  it('trộn nhánh block và nhánh biểu thức trong cùng một when', () => {
+  it('mixing a block branch and an expression branch in the same when', () => {
     const src = `fun main() = runBlocking {
     val x = 1
     when (x) {
-        1 -> { println("một"); println("vẫn một") }
-        2 -> println("hai")
-        else -> println("khác")
+        1 -> { println("one"); println("still one") }
+        2 -> println("two")
+        else -> println("other")
     }
 }`
-    expect(out(src)).toEqual(['một', 'vẫn một'])
+    expect(out(src)).toEqual(['one', 'still one'])
   })
 
-  it('when dùng làm biểu thức gán được vào val', () => {
-    // Định danh 'ten' viết không dấu: lexer hiện tại chỉ nhận [A-Za-z0-9_],
-    // Unicode trong định danh (vd. 'tên') là giới hạn CÓ SẴN của lexer, không
-    // liên quan tới hai lỗi when đang vá — xem task-1-report.md.
+  it('when used as an expression can be assigned to a val', () => {
+    // Identifier deliberately ASCII: the lexer currently only accepts
+    // [A-Za-z0-9_] — Unicode in identifiers (e.g. accented names) is an
+    // EXISTING limitation of the lexer, unrelated to the two when-bugs being
+    // patched here — see task-1-report.md.
     const src = `fun main() = runBlocking {
     val x = 2
-    val ten = when (x) {
-        1 -> "một"
-        2 -> "hai"
-        else -> "khác"
+    val name = when (x) {
+        1 -> "one"
+        2 -> "two"
+        else -> "other"
     }
-    println(ten)
+    println(name)
 }`
-    expect(out(src)).toEqual(['hai'])
+    expect(out(src)).toEqual(['two'])
   })
 
-  it('nhánh biểu thức có điểm suspend vẫn suspend đúng', () => {
-    // Vế phải chạy bằng yield* chứ không phải gọi thường — nếu cài sai,
-    // delay bên trong nhánh sẽ không nhường quyền và đồng hồ ảo không nhích.
+  it('an expression branch containing a suspend point still suspends correctly', () => {
+    // The right-hand side runs via yield*, not a plain call — if implemented
+    // wrong, a delay inside the branch wouldn't yield control and the virtual clock wouldn't advance.
     const src = `fun main() = runBlocking {
     val x = 1
     when (x) {
         1 -> delay(100)
-        else -> println("không tới")
+        else -> println("not reached")
     }
-    println("sau when")
+    println("after when")
 }`
     const r = runSource(src)
-    expect(r.output).toEqual(['sau when'])
-    const cuối = r.events[r.events.length - 1]!
-    expect(cuối.t).toBeGreaterThanOrEqual(100)
+    expect(r.output).toEqual(['after when'])
+    const last = r.events[r.events.length - 1]!
+    expect(last.t).toBeGreaterThanOrEqual(100)
   })
 })

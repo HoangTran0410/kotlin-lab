@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-/** step mỗi giây. */
+/** steps per second. */
 export type Speed = 0.5 | 1 | 2 | 4
 
 export interface PlaybackApi {
@@ -12,29 +12,31 @@ export interface PlaybackApi {
 }
 
 /**
- * Phát tiến `stepIndex` tự động bằng `requestAnimationFrame` — không
- * `setInterval`: chạy đúng theo khung hình và TỰ DỪNG khi tab ẩn (trình
- * duyệt ngưng cấp rAF cho tab nền). Ràng buộc cấm `setTimeout` chỉ áp cho
- * `src/engine/**`; UI được phép dùng timer thật, nhưng rAF vẫn tốt hơn cho
- * đúng việc này.
+ * Advances `stepIndex` automatically using `requestAnimationFrame` — not
+ * `setInterval`: runs in sync with the frame and AUTO-STOPS when the tab is
+ * hidden (the browser stops handing out rAF callbacks to background tabs).
+ * The ban on `setTimeout` only applies to `src/engine/**`; the UI is allowed
+ * to use real timers, but rAF is still the better fit for this specific job.
  *
- * `stepIndex`/`setStep`/`max` được đọc qua ref bên trong vòng lặp rAF, KHÔNG
- * liệt kê vào deps của effect chạy vòng lặp: nếu liệt kê, effect huỷ + lập
- * lại `requestAnimationFrame` mỗi khi `stepIndex` đổi — tức là MỖI STEP —
- * phá nhịp thời gian tích luỹ giữa `lastTickRef` và `now`.
+ * `stepIndex`/`setStep`/`max` are read through a ref inside the rAF loop, NOT
+ * listed in the deps of the effect that runs the loop: if they were listed,
+ * the effect would tear down and re-schedule `requestAnimationFrame` every
+ * time `stepIndex` changes — that is, on EVERY STEP — breaking the
+ * accumulated timing between `lastTickRef` and `now`.
  *
- * Tới cuối trace (`stepIndex === max`) thì tự dừng — không có thêm step nào
- * để phát, và giữ vậy thì nút play vẫn hiện "Phát" (không đứng ở trạng thái
- * "đang phát" treo mãi).
+ * On reaching the end of the trace (`stepIndex === max`) it auto-stops — no
+ * more step to play, and staying stopped means the play button keeps showing
+ * "Play" (instead of being stuck showing "currently playing" forever).
  */
 /**
- * `advance` quyết định bước KẾ TIẾP từ bước hiện tại. Mặc định `cur + 1`
- * (từng event một, dùng cho thanh timeline gỡ lỗi).
+ * `advance` decides the NEXT step from the current one. Defaults to `cur + 1`
+ * (one event at a time, used by the debug panel's timeline).
  *
- * Sân khấu đồ thị truyền hàm khác: nhảy tới mốc có DIỄN GIẢI kế tiếp. Hơn nửa
- * số event trong một trace là hạ tầng (`THREAD_STATE`, `JOB_STATE`) — phát
- * từng event một thì phần lớn thời gian màn hình đứng yên, và người xem tưởng
- * công cụ treo. Vòng lặp thời gian vẫn chỉ có MỘT bản, ở đây.
+ * The graph stage passes a different function: jump to the next NARRATED
+ * step. More than half the events in a trace are infrastructure
+ * (`THREAD_STATE`, `JOB_STATE`) — playing one event at a time would leave the
+ * screen frozen most of the time, and viewers would think the tool had
+ * hung. There's still only ONE copy of the time loop, right here.
  */
 export function usePlayback(
   stepIndex: number,
@@ -53,9 +55,9 @@ export function usePlayback(
   const speedRef = useRef(speed)
   const lastTickRef = useRef<number | null>(null)
   const rafRef = useRef<number | null>(null)
-  // true đúng một lần đổi `stepIndex` kế tiếp: đánh dấu lần đổi đó là do
-  // CHÍNH vòng lặp play gây ra, để effect theo dõi bên dưới phân biệt được
-  // với user tự kéo thanh Timeline trong lúc đang play.
+  // true for exactly one `stepIndex` change: marks that change as caused by
+  // the play loop ITSELF, so the watcher effect below can tell it apart from
+  // the user dragging the Timeline while playing.
   const ownUpdateRef = useRef(false)
 
   useEffect(() => { stepIndexRef.current = stepIndex }, [stepIndex])
@@ -63,9 +65,9 @@ export function usePlayback(
   useEffect(() => { maxRef.current = max }, [max])
   useEffect(() => { speedRef.current = speed }, [speed])
 
-  // User kéo thanh Timeline trong lúc đang play -> phải dừng play, nếu không
-  // thanh sẽ giằng co với ngón tay (play tiếp tục ghi đè vị trí user vừa kéo
-  // tới ở khung hình kế tiếp).
+  // User drags the Timeline while playing -> playback must stop, otherwise
+  // the scrubber would fight the user's finger (playback keeps overwriting
+  // the position the user just dragged to on the next frame).
   useEffect(() => {
     if (ownUpdateRef.current) { ownUpdateRef.current = false; return }
     setPlaying(prev => (prev ? false : prev))
@@ -75,13 +77,14 @@ export function usePlayback(
     if (!playing) { lastTickRef.current = null; return }
 
     let cancelled = false
-    // Đọc thời gian bằng Date.now(), KHÔNG dùng tham số `now` mà rAF truyền
-    // vào callback: đã đo bằng test thăm dò — dưới fake timer (vitest,
-    // @sinonjs/fake-timers) tham số đó vẫn là performance.now() THẬT (đồng hồ
-    // hệ thống thật), không đồng bộ với đồng hồ ảo mà vi.advanceTimersByTime
-    // điều khiển, nên hiệu số `now - lastTick` gần như luôn bằng 0 và
-    // playback không bao giờ tiến được trong test. Date.now() thì fake timer
-    // CÓ giả lập (mặc định trong toFake) và tăng đúng nhịp khi advance.
+    // Read time with Date.now(), NOT the `now` parameter rAF passes to the
+    // callback: measured with a probing test — under fake timers (vitest,
+    // @sinonjs/fake-timers) that parameter is still the REAL
+    // performance.now() (the real system clock), not synced with the virtual
+    // clock that vi.advanceTimersByTime controls, so the `now - lastTick`
+    // difference is almost always 0 and playback never advances in tests.
+    // Date.now(), on the other hand, IS faked by fake timers (by default in
+    // toFake) and advances in step when you advance them.
     const tick = (): void => {
       if (cancelled) return
       const now = Date.now()
@@ -90,12 +93,13 @@ export function usePlayback(
       const intervalMs = 1000 / speedRef.current
       if (now - lastTickRef.current >= intervalMs) {
         lastTickRef.current = now
-        const thô = advanceRef.current
+        const raw = advanceRef.current
           ? advanceRef.current(stepIndexRef.current)
           : stepIndexRef.current + 1
-        // Luôn tiến ít nhất một bước: một `advance` trả về giá trị không lớn
-        // hơn hiện tại sẽ làm vòng phát đứng im mà nút vẫn hiện "đang phát".
-        const next = Math.min(maxRef.current, Math.max(stepIndexRef.current + 1, thô))
+        // Always advance at least one step: an `advance` that returns a value
+        // no greater than the current one would leave the play loop stuck in
+        // place while the button still shows "playing".
+        const next = Math.min(maxRef.current, Math.max(stepIndexRef.current + 1, raw))
         if (next !== stepIndexRef.current) {
           ownUpdateRef.current = true
           stepIndexRef.current = next
@@ -103,7 +107,7 @@ export function usePlayback(
         }
         if (next >= maxRef.current) {
           setPlaying(false)
-          return // tới cuối: tự dừng, không xin thêm khung hình
+          return // reached the end: auto-stop, don't request another frame
         }
       }
       rafRef.current = requestAnimationFrame(tick)
@@ -118,7 +122,7 @@ export function usePlayback(
   }, [playing])
 
   const play = useCallback(() => {
-    if (stepIndexRef.current >= maxRef.current) return // đã ở cuối, không có gì để phát
+    if (stepIndexRef.current >= maxRef.current) return // already at the end, nothing to play
     setPlaying(true)
   }, [])
   const pause = useCallback(() => setPlaying(false), [])

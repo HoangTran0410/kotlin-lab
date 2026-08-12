@@ -6,15 +6,15 @@ import { NodePorts } from './NodePorts'
 import '../graph.css'
 
 /**
- * Node compound (có con) — hộp trong suốt bao lấy các node con, chỉ có tiêu
- * đề, không nền. Viền màu THEO STATE giống JobNode (cùng nguồn `stateBorder`,
- * để "đang chạy/đã xong/đã huỷ" đọc nhất quán ở cả hai loại node).
+ * Compound node (has children) — a transparent box wrapping child nodes, only
+ * a title, no fill. Border colored BY STATE like JobNode (same `stateBorder`
+ * source, so "running/done/cancelled" reads consistently on both node kinds).
  *
- * `isSupervisor` đổi NÉT viền (đôi thay vì đơn) chứ không chỉ đổi màu — brief
- * Task 13 bước 2 yêu cầu tường minh: phân biệt supervisor bằng HÌNH DẠNG, vì
- * ranh giới supervisor là bài học quan trọng nhất của công cụ (xem
- * FailureEdge.tsx) và không được phép mất đi trên ảnh chụp đen trắng hay với
- * người học mù màu.
+ * `isSupervisor` changes the border STYLE (double instead of single), not
+ * just the color — brief Task 13 step 2 requires this to be explicit:
+ * distinguish supervisors by SHAPE, because the supervisor boundary is the
+ * single most important lesson this tool teaches (see FailureEdge.tsx) and
+ * must not be lost on a black-and-white printout or for a colorblind learner.
  */
 export function ScopeNode({ id, data }: NodeProps<FlowNode>) {
   const unborn = data.phase === 'unborn'

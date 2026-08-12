@@ -1,244 +1,246 @@
 /**
- * Engine này chạy được những gì — dưới dạng DỮ LIỆU, không phải một trang chữ.
+ * What this engine can run — as DATA, not a wall of text.
  *
- * Mỗi mục mang theo một chương trình Kotlin chạy được thật và output mà nó
- * PHẢI in ra. `tests/ui/capabilities.test.ts` chạy từng cái một và so từng
- * dòng, nên danh sách này không thể nói dối: một construct bị gỡ khỏi engine
- * mà còn nằm đây thì test đỏ, chứ không phải người học phát hiện ra bằng cách
- * gõ thử rồi thấy không chạy.
+ * Each entry carries an actual runnable Kotlin program and the output it
+ * MUST print. `tests/ui/capabilities.test.ts` runs every one of them and
+ * compares output line by line, so this list can't lie: a construct that
+ * gets removed from the engine but is still listed here turns the test red,
+ * instead of a learner discovering it by typing it and watching nothing
+ * happen.
  *
- * Đổi lại, mỗi mục cũng là một VÍ DỤ mở được thẳng vào editor — danh sách tính
- * năng và bộ ví dụ là cùng một thứ, không phải hai thứ trôi lệch nhau.
+ * In exchange, every entry is also an EXAMPLE that opens straight into the
+ * editor — the feature list and the example set are the same thing, not two
+ * things that can drift apart.
  *
- * Danh sách "chưa chạy được" KHÔNG nằm ở đây: nó suy thẳng từ bảng UNSUPPORTED
- * của validator (xem AboutPanel), nên cũng không trôi lệch được.
+ * The "doesn't run yet" list is NOT here: it's derived straight from the
+ * validator's UNSUPPORTED table (see AboutPanel), so it can't drift either.
  */
-export interface KhaNang {
-  /** Tên hiện trên thẻ. Gộp vài tên đi liền nhau thì viết cả cụm. */
-  ten: string
-  /** Một câu: nó làm gì, hoặc nó dạy điều gì. */
-  mo: string
-  /** Chương trình đầy đủ, chạy được, mở thẳng vào editor được. */
+export interface Capability {
+  /** Name shown on the card. If several related names belong together, write the whole group. */
+  name: string
+  /** One sentence: what it does, or what it teaches. */
+  summary: string
+  /** A complete, runnable program that can be opened straight into the editor. */
   kotlin: string
-  /** Output PHẢI in ra. Test so từng dòng. */
-  ra: string[]
+  /** Output it MUST print. The test compares line by line. */
+  output: string[]
 }
 
-export interface NhomKhaNang {
-  tieuDe: string
-  items: KhaNang[]
+export interface CapabilityGroup {
+  title: string
+  items: Capability[]
 }
 
-const ct = (than: string): string => `import kotlinx.coroutines.*\n\nfun main() = runBlocking {\n${than}\n}\n`
+const mainBlock = (body: string): string => `import kotlinx.coroutines.*\n\nfun main() = runBlocking {\n${body}\n}\n`
 
-export const CHAY_DUOC: NhomKhaNang[] = [
+export const CAPABILITIES: CapabilityGroup[] = [
   {
-    tieuDe: 'Tạo coroutine',
+    title: 'Create coroutines',
     items: [
       {
-        ten: 'launch { }',
-        mo: 'Tạo một coroutine con chạy song song, trả về Job. Không mang giá trị về.',
-        kotlin: ct(`    val viec = launch {
+        name: 'launch { }',
+        summary: 'Creates a child coroutine that runs concurrently, returns a Job. Carries no return value.',
+        kotlin: mainBlock(`    val job = launch {
         delay(50)
-        println("con chạy xong")
+        println("child finished running")
     }
-    println("cha đi tiếp ngay, không chờ")
-    viec.join()`),
-        ra: ['cha đi tiếp ngay, không chờ', 'con chạy xong'],
+    println("parent moves on immediately, without waiting")
+    job.join()`),
+        output: ['parent moves on immediately, without waiting', 'child finished running'],
       },
       {
-        ten: 'async { } / await()',
-        mo: 'Như launch nhưng trả về Deferred — await() vừa chờ vừa lấy giá trị.',
-        kotlin: ct(`    val so = async {
+        name: 'async { } / await()',
+        summary: 'Like launch but returns a Deferred — await() both waits and retrieves the value.',
+        kotlin: mainBlock(`    val n = async {
         delay(50)
         7
     }
-    println("await() trả về: " + so.await())`),
-        ra: ['await() trả về: 7'],
+    println("await() returns: " + n.await())`),
+        output: ['await() returns: 7'],
       },
       {
-        ten: 'coroutineScope { }',
-        mo: 'Chạy tại chỗ, chỉ trả về khi MỌI con đã xong. Một con fail là cả scope fail.',
-        kotlin: ct(`    coroutineScope {
+        name: 'coroutineScope { }',
+        summary: 'Runs inline, only returns once EVERY child is done. One child failing fails the whole scope.',
+        kotlin: mainBlock(`    coroutineScope {
         launch { delay(80); println("A") }
         launch { delay(20); println("B") }
     }
-    println("scope trả về khi cả A và B đã xong")`),
-        ra: ['B', 'A', 'scope trả về khi cả A và B đã xong'],
+    println("scope returns once both A and B are done")`),
+        output: ['B', 'A', 'scope returns once both A and B are done'],
       },
       {
-        ten: 'supervisorScope { }',
-        mo: 'Như coroutineScope, nhưng failure của con TRỰC TIẾP dừng lại ở ranh giới.',
-        kotlin: ct(`    supervisorScope {
+        name: 'supervisorScope { }',
+        summary: "Like coroutineScope, but a child's failure stops DIRECTLY at the boundary.",
+        kotlin: mainBlock(`    supervisorScope {
         launch { delay(20); throw RuntimeException("boom") }
-        launch { delay(80); println("anh em vẫn sống") }
+        launch { delay(80); println("sibling is still alive") }
     }`),
-        ra: ['anh em vẫn sống'],
+        output: ['sibling is still alive'],
       },
       {
-        ten: 'withContext(...)',
-        mo: 'Đổi dispatcher giữa chừng rồi quay lại. Vẫn CÙNG một coroutine.',
-        kotlin: ct(`    println("thân runBlocking chạy trên Main")
+        name: 'withContext(...)',
+        summary: 'Switches dispatcher partway through, then switches back. Still the SAME coroutine.',
+        kotlin: mainBlock(`    println("runBlocking's body runs on Main")
     withContext(Dispatchers.IO) {
-        println("khối này chạy trên pool IO")
+        println("this block runs on the IO pool")
     }
-    println("ra khỏi withContext là quay lại Main")`),
-        ra: [
-          'thân runBlocking chạy trên Main',
-          'khối này chạy trên pool IO',
-          'ra khỏi withContext là quay lại Main',
+    println("leaving withContext returns to Main")`),
+        output: [
+          "runBlocking's body runs on Main",
+          'this block runs on the IO pool',
+          'leaving withContext returns to Main',
         ],
       },
       {
-        ten: 'CoroutineScope(...) / MainScope()',
-        mo: 'Scope tự quản, có Job gốc riêng — không treo dưới coroutine đang gọi.',
-        kotlin: ct(`    val pham = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    pham.launch { delay(500); println("không kịp in") }
+        name: 'CoroutineScope(...) / MainScope()',
+        summary: "A self-managed scope with its own root Job — it doesn't hang off the calling coroutine.",
+        kotlin: mainBlock(`    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    scope.launch { delay(500); println("doesn't make it in time to print") }
     delay(50)
-    pham.cancel()
-    println("cancel() trên scope huỷ mọi con của nó")`),
-        ra: ['cancel() trên scope huỷ mọi con của nó'],
+    scope.cancel()
+    println("cancel() on a scope cancels all of its children")`),
+        output: ['cancel() on a scope cancels all of its children'],
       },
       {
-        ten: 'GlobalScope.launch { }',
-        mo: 'Không cha. Không ai chờ, không ai huỷ, và chết theo chương trình.',
-        kotlin: ct(`    GlobalScope.launch { delay(500); println("không bao giờ in") }
+        name: 'GlobalScope.launch { }',
+        summary: 'No parent. Nobody waits for it, nobody cancels it, and it dies with the program.',
+        kotlin: mainBlock(`    GlobalScope.launch { delay(500); println("never prints") }
     delay(50)
-    println("main xong, coroutine kia bị bỏ lại")`),
-        ra: ['main xong, coroutine kia bị bỏ lại'],
+    println("main is done, that coroutine gets left behind")`),
+        output: ['main is done, that coroutine gets left behind'],
       },
     ],
   },
   {
-    tieuDe: 'Dừng, chờ, huỷ',
+    title: 'Stop, wait, cancel',
     items: [
       {
-        ten: 'delay(ms) / yield()',
-        mo: 'Hai điểm suspend: nhả thread ra cho người khác dùng, không chặn nó.',
-        kotlin: ct(`    launch { println("A1"); yield(); println("A2") }
+        name: 'delay(ms) / yield()',
+        summary: "Two suspension points: release the thread for someone else to use, don't block it.",
+        kotlin: mainBlock(`    launch { println("A1"); yield(); println("A2") }
     launch { println("B1"); yield(); println("B2") }
     delay(10)`),
-        ra: ['A1', 'B1', 'A2', 'B2'],
+        output: ['A1', 'B1', 'A2', 'B2'],
       },
       {
-        ten: 'join() / cancel() / cancelAndJoin()',
-        mo: 'join chỉ chờ. cancel không chờ. cancelAndJoin huỷ RỒI chờ dọn dẹp xong.',
-        kotlin: ct(`    val viec = launch {
-        try { delay(500) } finally { println("dọn dẹp") }
+        name: 'join() / cancel() / cancelAndJoin()',
+        summary: "join only waits. cancel doesn't wait. cancelAndJoin cancels AND THEN waits for cleanup to finish.",
+        kotlin: mainBlock(`    val job = launch {
+        try { delay(500) } finally { println("cleanup") }
     }
     delay(20)
-    viec.cancelAndJoin()
-    println("chỉ tới đây khi dọn dẹp đã xong")`),
-        ra: ['dọn dẹp', 'chỉ tới đây khi dọn dẹp đã xong'],
+    job.cancelAndJoin()
+    println("only gets here once cleanup is done")`),
+        output: ['cleanup', 'only gets here once cleanup is done'],
       },
       {
-        ten: 'isActive / isCancelled / isCompleted',
-        mo: 'Trạng thái Job đọc được từ code. Coroutine đang SUSPENDED thì Job vẫn Active.',
-        kotlin: ct(`    val viec = launch { delay(100) }
+        name: 'isActive / isCancelled / isCompleted',
+        summary: "Job state readable from code. A coroutine that's SUSPENDED still has an Active Job.",
+        kotlin: mainBlock(`    val job = launch { delay(100) }
     delay(10)
-    println("đang delay: isActive = " + viec.isActive)
-    viec.join()
-    println("xong: isCompleted = " + viec.isCompleted)`),
-        ra: ['đang delay: isActive = true', 'xong: isCompleted = true'],
+    println("mid-delay: isActive = " + job.isActive)
+    job.join()
+    println("done: isCompleted = " + job.isCompleted)`),
+        output: ['mid-delay: isActive = true', 'done: isCompleted = true'],
       },
       {
-        ten: 'ensureActive()',
-        mo: 'Ném ngay tại chỗ nếu đã bị huỷ — không phải chờ tới điểm suspend kế tiếp.',
-        kotlin: ct(`    val viec = launch {
+        name: 'ensureActive()',
+        summary: 'Throws right on the spot if already cancelled — no need to wait for the next suspension point.',
+        kotlin: mainBlock(`    val job = launch {
         try {
             delay(100)
             ensureActive()
-            println("không tới đây")
-        } finally { println("finally vẫn chạy") }
+            println("never gets here")
+        } finally { println("finally still runs") }
     }
     delay(20)
-    viec.cancelAndJoin()`),
-        ra: ['finally vẫn chạy'],
+    job.cancelAndJoin()`),
+        output: ['finally still runs'],
       },
     ],
   },
   {
-    tieuDe: 'Context và dispatcher',
+    title: 'Context and dispatcher',
     items: [
       {
-        ten: 'Dispatchers.Main / Default / IO / Unconfined',
-        mo: 'Bốn pool thread ảo. Con thừa kế dispatcher của cha nếu không nói gì khác.',
-        kotlin: ct(`    launch(Dispatchers.Default) { println("Default") }
+        name: 'Dispatchers.Main / Default / IO / Unconfined',
+        summary: "Four virtual thread pools. A child inherits its parent's dispatcher unless told otherwise.",
+        kotlin: mainBlock(`    launch(Dispatchers.Default) { println("Default") }
     launch(Dispatchers.IO) { println("IO") }
     delay(10)`),
-        ra: ['Default', 'IO'],
+        output: ['Default', 'IO'],
       },
       {
-        ten: 'CoroutineName("...")',
-        mo: 'Đặt tên cho coroutine. Tên này hiện luôn trên node của đồ thị.',
-        kotlin: ct(`    val viec = launch(CoroutineName("thoIn")) { println("nhìn tên node bên phải") }
-    viec.join()`),
-        ra: ['nhìn tên node bên phải'],
+        name: 'CoroutineName("...")',
+        summary: 'Names a coroutine. This name always shows on the graph node.',
+        kotlin: mainBlock(`    val job = launch(CoroutineName("worker")) { println("look at the node name on the right") }
+    job.join()`),
+        output: ['look at the node name on the right'],
       },
       {
-        ten: 'SupervisorJob() / Job() / toán tử +',
-        mo: 'Cộng các element lại thành context. Element bên phải ghi đè bên trái.',
-        kotlin: ct(`    val pham = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("worker"))
-    pham.launch { println("thừa kế cả ba element từ scope") }
+        name: 'SupervisorJob() / Job() / operator +',
+        summary: 'Adds elements together into a context. The element on the right overrides the one on the left.',
+        kotlin: mainBlock(`    val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("worker"))
+    scope.launch { println("inherits all three elements from the scope") }
     delay(10)
-    pham.cancel()`),
-        ra: ['thừa kế cả ba element từ scope'],
+    scope.cancel()`),
+        output: ['inherits all three elements from the scope'],
       },
     ],
   },
   {
-    tieuDe: 'Kotlin thường',
+    title: 'Plain Kotlin',
     items: [
       {
-        ten: 'suspend fun',
-        mo: 'Hàm gọi được điểm suspend. Gọi nó trông y hệt gọi hàm thường.',
+        name: 'suspend fun',
+        summary: 'A function that can call suspension points. Calling it looks exactly like calling a regular function.',
         kotlin: `import kotlinx.coroutines.*
 
-suspend fun tai(ten: String): String {
+suspend fun load(name: String): String {
     delay(50)
-    return "xong " + ten
+    return "done " + name
 }
 
 fun main() = runBlocking {
-    println(tai("anh"))
+    println(load("friend"))
 }
 `,
-        ra: ['xong anh'],
+        output: ['done friend'],
       },
       {
-        ten: 'try / catch / finally, throw, error(...)',
-        mo: 'finally chạy cả khi coroutine bị huỷ — đó là chỗ dọn dẹp.',
-        kotlin: ct(`    try {
-        error("hỏng rồi")
+        name: 'try / catch / finally, throw, error(...)',
+        summary: "finally runs even when the coroutine is cancelled — that's where cleanup happens.",
+        kotlin: mainBlock(`    try {
+        error("broken")
     } catch (e: IllegalStateException) {
-        println("bắt được: " + e.message)
+        println("caught: " + e.message)
     } finally {
         println("finally")
     }`),
-        ra: ['bắt được: hỏng rồi', 'finally'],
+        output: ['caught: broken', 'finally'],
       },
       {
-        ten: 'if / when / while / for / repeat',
-        mo: 'for chạy trên khoảng a..b. repeat(n) { } nhận biến it.',
-        kotlin: ct(`    for (i in 1..3) {
-        val nhan = when (i) {
-            1 -> "một"
-            2 -> "hai"
-            else -> "nhiều"
+        name: 'if / when / while / for / repeat',
+        summary: 'for runs over a range a..b. repeat(n) { } receives the implicit variable it.',
+        kotlin: mainBlock(`    for (i in 1..3) {
+        val label = when (i) {
+            1 -> "one"
+            2 -> "two"
+            else -> "many"
         }
-        println(i.toString() + " = " + nhan)
+        println(i.toString() + " = " + label)
     }
-    repeat(2) { println("lần " + it) }`),
-        ra: ['1 = một', '2 = hai', '3 = nhiều', 'lần 0', 'lần 1'],
+    repeat(2) { println("round " + it) }`),
+        output: ['1 = one', '2 = two', '3 = many', 'round 0', 'round 1'],
       },
       {
-        ten: 'val / var, chuỗi mẫu ${...}',
-        mo: 'Biến, phép toán số nguyên, và chèn biểu thức vào chuỗi.',
-        kotlin: ct(`    val a = 6
+        name: 'val / var, string templates ${...}',
+        summary: 'Variables, integer arithmetic, and embedding expressions in a string.',
+        kotlin: mainBlock(`    val a = 6
     var b = 7
     b = b + 1
     println("\${a} x \${b} = \${a * b}")`),
-        ra: ['6 x 8 = 48'],
+        output: ['6 x 8 = 48'],
       },
     ],
   },

@@ -1,21 +1,23 @@
 /**
- * Kích thước node là HẰNG SỐ, không đo từ DOM.
+ * Node dimensions are CONSTANTS, not measured from the DOM.
  *
- * ELK cần width/height TRƯỚC khi bố cục. Nếu lấy kích thước bằng cách đo text
- * đã render, ta có vòng render → đo → bố cục lại → render, và graph nhảy một
- * khung hình sau mỗi lần render. Đó chính là kiểu rung mà Quyết định 2 tồn tại
- * để chặn. Nhãn dài thì cắt bằng CSS text-overflow, không nới hộp.
+ * ELK needs width/height BEFORE laying out. If sizes were taken by measuring
+ * rendered text, we'd get a render → measure → re-layout → render loop, and
+ * the graph would jump a frame after every render. That's exactly the kind of
+ * jitter Decision 2 exists to block. Long labels get cut with CSS
+ * text-overflow, the box never grows.
  */
 export const NODE_W = 224
 export const NODE_H = 94
 
 /**
- * Chừa chỗ cho tiêu đề của node compound, VÀ cho hai làn cạnh chạy dọc hai
- * bên trong lòng scope.
+ * Leaves room for a compound node's title, AND for the two edge lanes that
+ * run along either side inside the scope.
  *
- * Trái/phải rộng hơn trên/dưới là có chủ ý: cạnh failure đi LÊN dọc mép phải,
- * cạnh cancel đi XUỐNG dọc mép trái (xem GraphCanvas.tsx). Không chừa hai làn
- * này thì đường vòng của chúng bám sát mép hộp và cắt qua node con — đúng
- * hiện tượng "line đè lên node" mà bố cục cũ mắc phải.
+ * Left/right being wider than top/bottom is deliberate: the failure edge runs
+ * UP along the right edge, the cancel edge runs DOWN along the left edge (see
+ * GraphCanvas.tsx). Without these two lanes, their loops would hug the box
+ * edge and cut through child nodes — exactly the "line on top of node"
+ * problem the old layout had.
  */
 export const CONTAINER_PADDING = { top: 44, left: 40, right: 40, bottom: 20 }

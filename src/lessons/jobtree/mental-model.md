@@ -1,26 +1,31 @@
-## Mô hình tư duy
+## Mental model
 
-Mỗi coroutine treo dưới một cha, thành một **cái cây**. Cây này có một chiều duy
-nhất cho lệnh huỷ: **cancel luôn đi XUỐNG**. Huỷ một node là huỷ cả nhánh bên dưới
-nó, tới tận lá. Không có đường nào để cancel đi ngang sang anh em, cũng không có
-đường để nó đi ngược lên cha.
+Every coroutine hangs under a parent, forming **a tree**. This tree has exactly
+one direction for cancellation: **cancel always goes DOWN**. Cancelling a node
+cancels the entire branch below it, all the way to the leaves. There is no path
+for cancel to go sideways to a sibling, and no path for it to go back up to the
+parent.
 
-Nhớ một câu: *cancel đi xuống, failure đi lên.* Bài này chỉ nói nửa đầu.
+Remember one sentence: *cancel goes down, failure goes up.* This lesson only
+covers the first half.
 
-## Vì sao Kotlin làm thế
+## Why Kotlin works this way
 
-Đây là **structured concurrency**. Nếu coroutine con không có cha, mỗi lần bạn rời
-một màn hình là phải tự nhớ huỷ từng tác vụ đã phóng ra — và quên một cái là rò rỉ
-một cái. Có cây thì huỷ gốc là xong: không tác vụ nào sống lâu hơn phạm vi đã sinh
-ra nó.
+This is **structured concurrency**. If a child coroutine had no parent, every time
+you left a screen you'd have to remember to manually cancel every task you'd
+launched — and forgetting one is a leak. With a tree, cancelling the root is
+enough: no task outlives the scope that spawned it.
 
-## Chỗ hay sai
+## Where people get it wrong
 
-- Tưởng `cancel()` giết coroutine ngay lập tức. Không: nó **yêu cầu** huỷ. Coroutine
-  chỉ thật sự dừng khi chạm điểm suspend kế tiếp — xem bài *Huỷ và dọn dẹp*.
-- Tưởng huỷ con thì cha cũng chết theo. Không: huỷ chỉ đi xuống.
+- Assuming `cancel()` kills the coroutine instantly. It doesn't: it **requests**
+  cancellation. The coroutine only actually stops when it hits its next suspend
+  point — see the lesson *Cancellation and cleanup*.
+- Assuming that cancelling a child kills the parent too. It doesn't: cancellation
+  only goes down.
 
-## Nhìn gì trên đồ thị
+## What to look for on the graph
 
-Cạnh cancel màu cam toả từ node bị huỷ xuống **toàn bộ** cây con — mỗi lá một cạnh.
-Đó chính là hình ảnh của "đi xuống, tới tận cùng".
+An orange cancel edge radiates from the cancelled node down to **the entire**
+child subtree — one edge per leaf. That is the picture of "goes down, all the way
+to the end".

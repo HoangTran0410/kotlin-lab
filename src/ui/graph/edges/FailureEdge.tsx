@@ -4,26 +4,28 @@ import { edgeStyle } from './edgeStyle'
 import '../graph.css'
 
 /**
- * Renderer RIÊNG cho cạnh 'failure'. Lý do cần một component thay vì chỉ style
- * trên object Edge (đủ cho 'child'/'cancel'): trường hợp `blockedBySupervisor`
- * cần vẽ DẤU CHẶN — một đoạn ngang đặc tại đầu mũi tên, thay cho mũi tên — thứ
- * marker SVG chuẩn của React Flow không biểu đạt được, và cần một nhãn tiếng
- * Việt đặt cạnh nó. Đây chính là bài học mà progress.md Task 13 nói tới:
- * không có `FAILURE_PROPAGATED.blockedBySupervisor` thì không có gì để vẽ ranh
- * giới supervisor — ở đây nó là DỮ LIỆU (`data.blocked`), không phải một op
- * `block` hard-code như bản HTML cũ.
+ * DEDICATED renderer for the 'failure' edge. Why it needs its own component
+ * instead of just style on the Edge object (which is enough for
+ * 'child'/'cancel'): the `blockedBySupervisor` case needs to draw a BLOCK MARK
+ * — a solid crossbar at the arrow's tip, replacing the arrow — something
+ * React Flow's standard SVG marker can't express, plus a label placed next to
+ * it. This is exactly the lesson progress.md Task 13 talks about: without
+ * `FAILURE_PROPAGATED.blockedBySupervisor` there's nothing to draw the
+ * supervisor boundary with — here it's DATA (`data.blocked`), not a hardcoded
+ * `block` op like the old HTML version.
  *
- * 'child' và 'cancel' KHÔNG cần component riêng: `edgeStyle()` cho đủ
- * stroke/dash/marker để đặt thẳng lên object Edge (xem GraphCanvas.tsx), và
- * edge mặc định của React Flow vẽ chúng đúng.
+ * 'child' and 'cancel' DON'T need their own component: `edgeStyle()` supplies
+ * enough stroke/dash/marker to set directly on the Edge object (see
+ * GraphCanvas.tsx), and React Flow's default edge draws them correctly.
  */
 export function FailureEdge({
   sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, data, markerEnd, style,
 }: EdgeProps<FlowEdge>) {
-  // Bậc vuông, không bezier: cạnh failure chạy trong LÀN dọc mép phải (xem
-  // NodePorts.tsx), và một đường cong tự do sẽ phình ra khỏi làn đó rồi cắt
-  // qua node. `offset` khớp với offset đặt cho các cạnh còn lại ở GraphCanvas,
-  // để hai loại cạnh nằm cùng một khoảng cách so với hộp.
+  // Stepped path, not bezier: the failure edge runs inside the LANE along the
+  // right edge (see NodePorts.tsx), and a free-form curve would bulge out of
+  // that lane and cut through a node. `offset` matches the offset set for the
+  // other edges in GraphCanvas, so both edge kinds sit the same distance from
+  // the box.
   const [path, labelX, labelY] = getSmoothStepPath({
     sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition,
     offset: 28, borderRadius: 10,
@@ -36,7 +38,7 @@ export function FailureEdge({
     <>
       <BaseEdge
         path={path}
-        // Bị chặn -> không mũi tên lọt qua được nữa (xem edgeStyle.ts markerVariant).
+        // Blocked -> no arrow gets through anymore (see edgeStyle.ts markerVariant).
         markerEnd={visual.markerVariant === 'arrow' ? markerEnd : undefined}
         style={{ ...style, stroke: visual.stroke, strokeWidth: visual.strokeWidth, opacity }}
       />

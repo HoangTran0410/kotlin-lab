@@ -1,8 +1,8 @@
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  // Bỏ qua tường minh. eslint 9 flat config KHÔNG tự bỏ qua dist/, và
-  // 'vite build' ghi file vào đó trong lúc lint chạy đã gây đỏ chập chờn.
+  // Explicit ignores. eslint 9 flat config does NOT ignore dist/ on its own,
+  // and 'vite build' writing into it while lint runs caused flaky failures.
   { ignores: ['dist/**', 'coverage/**', 'node_modules/**', '*.timestamp-*'] },
   ...tseslint.configs.recommended,
   {
@@ -12,52 +12,53 @@ export default tseslint.config(
         argsIgnorePattern: '^_',
         varsIgnorePattern: '^_',
       }],
-      // patterns, KHÔNG phải paths: `paths` chỉ khớp ĐÚNG chuỗi module, nên
-      // ranh giới cũ không bắt được đúng những dạng import mà người ta thật sự
-      // viết — 'react-dom/client', 'react/jsx-runtime', 'zustand/middleware'
-      // đều lọt. Đã đo bằng file probe dưới src/engine/ trước khi sửa.
+      // patterns, NOT paths: `paths` matches the module string EXACTLY, so the
+      // old boundary missed precisely the import forms people actually write —
+      // 'react-dom/client', 'react/jsx-runtime' and 'zustand/middleware' all
+      // slipped through. Measured with a probe file under src/engine/ before
+      // the fix.
       'no-restricted-imports': ['error', {
         patterns: [
           {
             group: ['react', 'react/*', 'react-dom', 'react-dom/*'],
-            message: 'engine phải thuần TypeScript, không phụ thuộc UI',
+            message: 'engine must stay pure TypeScript, no UI dependencies',
           },
           {
             group: ['zustand', 'zustand/*', '@xyflow/*'],
-            message: 'engine phải thuần TypeScript, không phụ thuộc UI',
+            message: 'engine must stay pure TypeScript, no UI dependencies',
           },
         ],
       }],
       'no-restricted-globals': ['error',
-        { name: 'window', message: 'engine không được chạm DOM' },
-        { name: 'document', message: 'engine không được chạm DOM' },
-        { name: 'setTimeout', message: 'engine dùng thời gian ảo, không ngủ thật' },
+        { name: 'window', message: 'the engine must not touch the DOM' },
+        { name: 'document', message: 'the engine must not touch the DOM' },
+        { name: 'setTimeout', message: 'the engine uses virtual time, it never really sleeps' },
       ],
       'no-restricted-syntax': ['error',
-        // Nguồn phi tất định. Ràng buộc toàn cục của plan cấm chúng, nhưng trước
-        // đây không rule nào canh: no-restricted-globals chỉ khớp định danh trần
-        // nên 'Math'/'Date'/'performance' không bao giờ bị chạm tới.
+        // Nondeterministic sources. The plan's global constraints forbid them,
+        // but until now no rule guarded that: no-restricted-globals only matches
+        // bare identifiers, so 'Math'/'Date'/'performance' were never reached.
         {
           selector: "MemberExpression[object.name='Math'][property.name='random']",
-          message: 'engine phải deterministic: không dùng Math.random',
+          message: 'the engine must be deterministic: no Math.random',
         },
         {
           selector: "MemberExpression[object.name='Date'][property.name='now']",
-          message: 'engine dùng đồng hồ ảo (VirtualClock), không dùng Date.now',
+          message: 'the engine uses a virtual clock (VirtualClock), not Date.now',
         },
         {
           selector: "NewExpression[callee.name='Date']",
-          message: 'engine dùng đồng hồ ảo (VirtualClock), không dùng new Date',
+          message: 'the engine uses a virtual clock (VirtualClock), not new Date',
         },
         {
           selector: "MemberExpression[object.name='performance'][property.name='now']",
-          message: 'engine dùng đồng hồ ảo (VirtualClock), không dùng performance.now',
+          message: 'the engine uses a virtual clock (VirtualClock), not performance.now',
         },
-        // no-restricted-imports không nhìn tới import động, nên không có dòng
-        // này thì `await import("react")` đi thẳng qua ranh giới.
+        // no-restricted-imports does not look at dynamic imports, so without
+        // this line `await import("react")` walks straight through the boundary.
         {
           selector: 'ImportExpression[source.value=/^(react|react-dom|zustand|@xyflow)(\\u002F|$)/]',
-          message: 'engine phải thuần TypeScript, không phụ thuộc UI',
+          message: 'engine must stay pure TypeScript, no UI dependencies',
         },
       ],
     },
@@ -65,14 +66,14 @@ export default tseslint.config(
   {
     files: ['src/ui/**/*.{ts,tsx}', 'src/state/**/*.ts', 'src/lessons/registry.ts'],
     rules: {
-      // Code này chạy trong browser. `src/lessons/index.ts` (node:fs) CỐ Ý
-      // không nằm trong danh sách trên — nó là bản dành cho test Node.
+      // This code runs in the browser. `src/lessons/index.ts` (node:fs) is
+      // DELIBERATELY absent from the list above — it is the Node-test variant.
       'no-restricted-imports': ['error', {
         patterns: [
           { group: ['node:*', 'fs', 'path', 'url'],
-            message: 'code UI chạy trong browser, không có Node API' },
+            message: 'UI code runs in the browser, no Node API here' },
           { group: ['**/lessons/index'],
-            message: 'dùng lessons/registry (browser-safe), không dùng lessons/index (node:fs)' },
+            message: 'use lessons/registry (browser-safe), not lessons/index (node:fs)' },
         ],
       }],
     },

@@ -9,10 +9,11 @@ export class TraceEmitter {
   get clock(): number { return this.t }
 
   /**
-   * Lưu ý cho bên GỌI: body được spread NÔNG, nên object lồng bên trong
-   * (vd ctx của COROUTINE_CREATED) được giữ theo THAM CHIẾU. Luôn dựng
-   * object mới cho mỗi lần emit; dùng lại rồi sửa sẽ làm event lịch sử
-   * đổi theo, phá vỡ tính 'trace là nguồn sự thật duy nhất'.
+   * Note for CALLERS: body is spread SHALLOWLY, so nested objects inside it
+   * (e.g. the `ctx` of COROUTINE_CREATED) are kept BY REFERENCE. Always build
+   * a fresh object for every emit; reusing one and mutating it later would
+   * change history events along with it, breaking the invariant that 'the
+   * trace is the one source of truth'.
    */
   emit(body: EventBody, srcLine?: number): void {
     const e = { ...body, seq: this.seq++, t: this.t } as Event

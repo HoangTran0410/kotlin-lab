@@ -1,92 +1,93 @@
 /**
- * Bộ đọc Markdown tối giản, đúng bằng tập cú pháp mà `mental-model.md` dùng:
- * `## tiêu đề`, đoạn văn, danh sách `- `, khối mã ```, và trong dòng thì
- * `**đậm**` với `` `mã` ``.
+ * A minimal Markdown reader, exactly matching the syntax subset that
+ * `mental-model.md` uses: `## heading`, paragraphs, `- ` lists, ``` code
+ * blocks, and inline `**bold**` with `` `code` ``.
  *
- * Vì sao không kéo một thư viện markdown về: cả bộ này gói gọn trong một file
- * đọc hết được trong một phút, và nó trả ra DỮ LIỆU để React dựng element —
- * không có HTML thô nào được sinh ra, nên cũng không có đường nào để nội dung
- * bài học chèn được thẻ vào trang. Một thư viện markdown đầy đủ đem theo cả
- * `dangerouslySetInnerHTML` lẫn nhu cầu làm sạch HTML, đổi lấy hàng chục cú
- * pháp mà không file nào ở đây dùng tới.
+ * Why not pull in a markdown library: this whole reader fits in one file
+ * that's readable in a minute, and it returns DATA for React to build
+ * elements from — no raw HTML is ever generated, so there's also no path for
+ * lesson content to inject a tag into the page. A full markdown library
+ * brings along both `dangerouslySetInnerHTML` and the need to sanitize HTML,
+ * in exchange for dozens of syntax forms that nothing here ever uses.
  *
- * Cú pháp không nhận ra thì rơi xuống đoạn văn thường — hiện nguyên văn chứ
- * không biến mất. Mất chữ là kiểu hỏng tệ nhất cho một trang toàn chữ.
+ * Syntax it doesn't recognize falls through to a plain paragraph — shown
+ * verbatim, not dropped. Losing text is the worst kind of broken for a page
+ * that's all text.
  */
 
-export type DoanInline =
+export type InlineSpan =
   | { t: 'text'; v: string }
   | { t: 'code'; v: string }
   | { t: 'bold'; v: string }
 
-export type Khoi =
-  | { k: 'h'; noi: DoanInline[] }
-  | { k: 'p'; noi: DoanInline[] }
-  | { k: 'ul'; items: DoanInline[][] }
+export type MdBlock =
+  | { k: 'h'; content: InlineSpan[] }
+  | { k: 'p'; content: InlineSpan[] }
+  | { k: 'ul'; items: InlineSpan[][] }
   | { k: 'code'; text: string }
 
-/** Tách `**đậm**` và `` `mã` `` khỏi chữ thường. Dấu lẻ thì giữ nguyên văn. */
-export function inline(s: string): DoanInline[] {
-  const ra: DoanInline[] = []
+/** Splits `**bold**` and `` `code` `` out of plain text. Unmatched marks are kept verbatim. */
+export function parseInline(s: string): InlineSpan[] {
+  const out: InlineSpan[] = []
   let i = 0
-  let dem = ''
-  const xa = (): void => { if (dem !== '') { ra.push({ t: 'text', v: dem }); dem = '' } }
+  let buf = ''
+  const flush = (): void => { if (buf !== '') { out.push({ t: 'text', v: buf }); buf = '' } }
 
   while (i < s.length) {
     if (s.startsWith('**', i)) {
-      const het = s.indexOf('**', i + 2)
-      if (het > i + 2) { xa(); ra.push({ t: 'bold', v: s.slice(i + 2, het) }); i = het + 2; continue }
+      const end = s.indexOf('**', i + 2)
+      if (end > i + 2) { flush(); out.push({ t: 'bold', v: s.slice(i + 2, end) }); i = end + 2; continue }
     }
     if (s[i] === '`') {
-      const het = s.indexOf('`', i + 1)
-      if (het > i + 1) { xa(); ra.push({ t: 'code', v: s.slice(i + 1, het) }); i = het + 1; continue }
+      const end = s.indexOf('`', i + 1)
+      if (end > i + 1) { flush(); out.push({ t: 'code', v: s.slice(i + 1, end) }); i = end + 1; continue }
     }
-    dem += s[i]
+    buf += s[i]
     i++
   }
-  xa()
-  return ra
+  flush()
+  return out
 }
 
-export function docMarkdown(src: string): Khoi[] {
-  const ra: Khoi[] = []
-  const dong = src.split('\n')
-  let doan: string[] = []
-  let ds: string[] | null = null
+export function parseMarkdown(src: string): MdBlock[] {
+  const out: MdBlock[] = []
+  const lines = src.split('\n')
+  let para: string[] = []
+  let list: string[] | null = null
 
-  const chotDoan = (): void => {
-    if (doan.length > 0) { ra.push({ k: 'p', noi: inline(doan.join(' ')) }); doan = [] }
+  const flushPara = (): void => {
+    if (para.length > 0) { out.push({ k: 'p', content: parseInline(para.join(' ')) }); para = [] }
   }
-  const chotDs = (): void => {
-    if (ds !== null) { ra.push({ k: 'ul', items: ds.map(inline) }); ds = null }
+  const flushList = (): void => {
+    if (list !== null) { out.push({ k: 'ul', items: list.map(parseInline) }); list = null }
   }
-  const chot = (): void => { chotDoan(); chotDs() }
+  const flush = (): void => { flushPara(); flushList() }
 
-  for (let i = 0; i < dong.length; i++) {
-    const l = dong[i]!
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i]!
     if (l.startsWith('```')) {
-      chot()
-      const than: string[] = []
+      flush()
+      const body: string[] = []
       i++
-      while (i < dong.length && !dong[i]!.startsWith('```')) { than.push(dong[i]!); i++ }
-      ra.push({ k: 'code', text: than.join('\n') })
+      while (i < lines.length && !lines[i]!.startsWith('```')) { body.push(lines[i]!); i++ }
+      out.push({ k: 'code', text: body.join('\n') })
       continue
     }
-    if (l.trim() === '') { chot(); continue }
-    if (l.startsWith('## ')) { chot(); ra.push({ k: 'h', noi: inline(l.slice(3).trim()) }); continue }
+    if (l.trim() === '') { flush(); continue }
+    if (l.startsWith('## ')) { flush(); out.push({ k: 'h', content: parseInline(l.slice(3).trim()) }); continue }
     if (l.startsWith('- ')) {
-      chotDoan()
-      ds ??= []
-      ds.push(l.slice(2).trim())
+      flushPara()
+      list ??= []
+      list.push(l.slice(2).trim())
       continue
     }
-    // Dòng thụt vào ngay dưới một gạch đầu dòng là phần TIẾP của mục đó, không
-    // phải một đoạn mới. Bỏ luật này thì mọi mục dài hai dòng bị cắt làm đôi và
-    // nửa sau rơi ra ngoài danh sách.
-    if (ds !== null && l.startsWith('  ')) { ds[ds.length - 1] += ` ${l.trim()}`; continue }
-    chotDs()
-    doan.push(l.trim())
+    // A line indented right under a list item is the CONTINUATION of that
+    // item, not a new paragraph. Drop this rule and any two-line list item
+    // gets cut in half, with the second half falling out of the list.
+    if (list !== null && l.startsWith('  ')) { list[list.length - 1] += ` ${l.trim()}`; continue }
+    flushList()
+    para.push(l.trim())
   }
-  chot()
-  return ra
+  flush()
+  return out
 }

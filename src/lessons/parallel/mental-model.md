@@ -1,32 +1,35 @@
-## Mô hình tư duy
+## Mental model
 
-`async` **không** làm gì chạy nhanh hơn. Cái làm mọi thứ nhanh hơn là **khoảng cách
-giữa chỗ khởi động và chỗ chờ**.
+`async` does **not** make anything run faster by itself. What makes things faster
+is **the gap between where you start it and where you wait for it**.
 
 ```
-val a = async { ... }   ← khởi động
-val b = async { ... }   ← khởi động (a vẫn đang chạy)
-a.await() + b.await()   ← giờ mới chờ
+val a = async { ... }   ← starts
+val b = async { ... }   ← starts (a is still running)
+a.await() + b.await()   ← only now do we wait
 ```
 
-Viết `async { }.await()` liền một dòng là quay về đúng tuần tự — chỉ tốn thêm một
-object.
+Writing `async { }.await()` on a single line collapses right back into sequential
+— it just costs one extra object.
 
-## Vì sao Kotlin làm thế
+## Why Kotlin works this way
 
-`async` trả về ngay lập tức, và nó phải như vậy: nếu nó chờ sẵn thì không có cách
-nào diễn đạt "chạy hai việc cùng lúc" nữa. Việc quyết định *chờ ở đâu* được để lại
-cho người viết — đó chính là chỗ đặt được song song.
+`async` returns immediately, and it has to: if it waited before returning, there
+would be no way left to express "run two things at the same time". The decision
+of *where to wait* is left to the person writing the code — that's exactly the
+spot where parallelism gets placed.
 
-## Chỗ hay sai
+## Where people get it wrong
 
-- `val a = async { ... }.await()` rồi `val b = async { ... }.await()`: tuần tự trá
-  hình, và đây là lỗi phổ biến nhất khi mới dùng `async`.
-- Bọc mọi thứ trong `async` để "cho nhanh". Với việc đã tuần tự về mặt dữ liệu (b
-  cần kết quả của a) thì không có gì để song song cả.
+- `val a = async { ... }.await()` followed by `val b = async { ... }.await()`:
+  sequential in disguise, and this is the single most common mistake when people
+  first use `async`.
+- Wrapping everything in `async` "to make it faster". When the work is already
+  sequential in terms of data (b needs a's result), there is nothing left to
+  parallelize.
 
-## Nhìn gì trên đồ thị
+## What to look for on the graph
 
-**Đồng hồ**, không phải output — hai nửa in ra kết quả y hệt nhau. Nửa đầu tốn
-400ms, nửa sau tốn 200ms. Kéo dòng thời gian và nhìn hai node `async` chồng nhau
-trên cùng một quãng.
+**The clock**, not the output — both halves print the exact same result. The
+first half costs 400ms, the second costs 200ms. Drag the timeline and watch the
+two `async` nodes overlap over the same stretch.

@@ -1,28 +1,33 @@
-## Mô hình tư duy
+## Mental model
 
-Tín hiệu huỷ đi trong hệ thống dưới hình dạng **một exception bình thường**:
-`CancellationException`. Nó là con của `Exception`. Nên `catch (e: Exception)` bắt
-nó — bắt luôn cả lệnh huỷ mà bạn không hề định bắt.
+The cancellation signal travels through the system in the shape of **a perfectly
+ordinary exception**: `CancellationException`. It is a subclass of `Exception`.
+So `catch (e: Exception)` catches it — catching the very cancellation you never
+meant to catch.
 
-Sau khi nuốt, thân coroutine chạy tiếp như chưa có chuyện gì, trong khi Job thì đã
-Cancelled. Hai thứ nói hai câu khác nhau về cùng một coroutine.
+After swallowing it, the coroutine body keeps running as if nothing happened,
+while the Job is already Cancelled. The two are telling two different stories
+about the same coroutine.
 
-## Vì sao Kotlin làm thế
+## Why Kotlin works this way
 
-Dùng chính cơ chế exception để mang tín hiệu huỷ là cách để `finally` và
-`try/finally` sẵn có tự động chạy đúng — không cần một đường unwind thứ hai song
-song với đường của ngôn ngữ. Cái giá phải trả đúng là chỗ này: nó bắt được.
+Using the exception mechanism itself to carry the cancellation signal is how
+`finally` and existing `try/finally` blocks automatically run correctly — without
+needing a second unwind path running parallel to the language's own. The price
+paid is exactly this: it can be caught.
 
-## Chỗ hay sai
+## Where people get it wrong
 
-- `try { ... } catch (e: Exception) { log(e) }` bọc quanh một khối có điểm suspend.
-  Đây là bug im lặng phổ biến nhất khi làm việc với coroutine.
-- Bắt hẹp lại vẫn chưa đủ nếu bạn `catch (e: Throwable)`.
+- `try { ... } catch (e: Exception) { log(e) }` wrapped around a block containing
+  a suspend point. This is the single most common silent bug when working with
+  coroutines.
+- Narrowing the catch still isn't enough if you `catch (e: Throwable)`.
 
-Cách đúng: bắt đúng loại lỗi bạn xử lý được, hoặc ném lại khi gặp
-`CancellationException`.
+The correct approach: catch exactly the kind of error you can handle, or re-throw
+when you encounter a `CancellationException`.
 
-## Nhìn gì trên đồ thị
+## What to look for on the graph
 
-Node đổi sang trạng thái huỷ **trước**, rồi vẫn tiếp tục in ra hai dòng nữa. Trạng
-thái và hành vi lệch nhau — chính là thứ khiến bug này khó thấy trong log.
+The node switches to a cancelled state **first**, then keeps printing two more
+lines anyway. State and behavior diverge — that's exactly what makes this bug
+hard to spot in logs.

@@ -6,23 +6,34 @@ import type { LayoutResult } from './elkLayout'
 import { phase, type Phase } from './nodeStyle'
 
 export interface FlowNodeData extends Record<string, unknown> {
-  /** Tên người dùng đặt (`CoroutineName(...)`), hoặc null. Hiển thị là việc của Task 13. */
+  /** The name the user gave it (`CoroutineName(...)`), or null. Displaying it is Task 13's job. */
   name: string | null
-  /** Tên biến người học gán coroutine này vào (`val job = launch {}`). */
+  /** The variable name the learner assigned this coroutine to (`val job = launch {}`). */
   varName: string | null
   builder: string
   isSupervisor: boolean
   phase: Phase
-  /** null ⟺ chưa sinh ra (world.jobs chưa có). */
+  /** null ⟺ not born yet (world.jobs doesn't have it). */
   state: JobState | null
-  /** Chỉ khác null khi state ∈ {Cancelling, Cancelled} — khoá tồn đọng B4, xem bên dưới. */
+  /** Only non-null when state ∈ {Cancelling, Cancelled} — locks down backlog item B4, see below. */
   cause: string | null
   suspendReason: string | null
-  /** Dòng println gần nhất do CHÍNH node này in, và tổng số dòng đã in. */
+  /** The most recent println line printed by THIS node itself, and the total number of lines printed. */
   lastPrint: string | null
   printCount: number
-  loi: { exType: string; message: string } | null
-  /** Node mà bước đang xem NÓI VỀ — vẽ vòng nhấn mạnh. */
+  failure: { exType: string; message: string } | null
+  /**
+   * Which dispatcher this coroutine belongs to, and the thread it holds RIGHT
+   * NOW (null while suspended — the thread went back to the pool).
+   *
+   * Neither reached the screen before: the engine models pools, acquire and
+   * release carefully, and `threadId` was rendered nowhere in the UI at all.
+   * So "withContext moved this coroutine to another pool" — the entire point
+   * of the dispatcher lesson — showed up on the graph as nothing.
+   */
+  dispatcher: string | null
+  threadId: string | null
+  /** The node the step being viewed is TALKING ABOUT — drawn with an emphasis ring. */
   isCurrent: boolean
 }
 
@@ -31,13 +42,13 @@ export type FlowNode = Node<FlowNodeData, FlowNodeType>
 
 export interface FlowEdgeData extends Record<string, unknown> {
   kind: GraphEdgeSpec['kind']
-  /** Chỉ có nghĩa với kind 'failure' — xem GraphEdgeSpec.blocked. */
+  /** Only meaningful when kind is 'failure' — see GraphEdgeSpec.blocked. */
   blocked: boolean
   /**
-   * 0.18 khi cạnh 'child' trỏ tới một node CHƯA sinh ra (khớp opacity bóng mờ
-   * của node unborn, Quyết định 2 lựa chọn b); 1 trong mọi trường hợp khác.
-   * Cạnh failure/cancel chỉ có mặt trong mảng SAU KHI đã xảy ra (xem dưới),
-   * nên luôn full opacity khi có mặt.
+   * 0.18 when a 'child' edge points to a node that HASN'T been born yet
+   * (matches the ghost opacity of an unborn node, Decision 2 option b); 1 in
+   * every other case. failure/cancel edges only appear in the array AFTER
+   * they've happened (see below), so they're always full opacity when present.
    */
   opacity: number
 }
@@ -49,29 +60,34 @@ export interface ReactFlowGraph {
 }
 
 /**
- * Hàm THUẦN, trái tim của việc chống rung (Quyết định 2). Ba đối số vào, node/
- * edge của React Flow ra — không side effect, không async, không chạm DOM.
+ * A PURE function, the heart of the anti-jitter mechanism (Decision 2). Three
+ * arguments in, React Flow nodes/edges out — no side effects, no async, no
+ * touching the DOM.
  *
- * `position` LẤY TỪ `layout`, KHÔNG BAO GIỜ từ `world`. Đây là bất biến trung
- * tâm của Quyết định 2: layout tính một lần cho mỗi lần compile, còn `world`
- * đổi ở mỗi step. Cho `world` chạm vào toạ độ là graph rung ngay — kéo qua N
- * step là N lần bố cục nhảy.
+ * `position` COMES FROM `layout`, NEVER from `world`. This is the central
+ * invariant of Decision 2: layout is computed once per compile, while `world`
+ * changes on every step. Letting `world` touch coordinates makes the graph
+ * jitter immediately — scrubbing through N steps means N layout jumps.
  *
- * Node chưa sinh ra (`world.jobs` chưa có) vẫn được PHÁT RA, dưới dạng bóng mờ
- * (`data.phase === 'unborn'`). Bỏ nó đi thì React Flow bỏ node khỏi cây, và
- * khi nó xuất hiện lại thì React Flow gắn lại node MỚI — mất hiệu ứng chuyển,
- * và với node compound thì con bị mồ côi một khung hình.
+ * A node that hasn't been born yet (not in `world.jobs`) is still EMITTED, as
+ * a ghost (`data.phase === 'unborn'`). Dropping it would make React Flow
+ * remove the node from the tree, and when it reappears React Flow would mount
+ * a NEW node — losing the transition effect, and for a compound node its
+ * children would be orphaned for one frame.
  *
- * State đọc theo TỪNG node từ `world.jobs`. KHÔNG suy state con từ state cha:
- * tồn đọng M1 (A1) cho phép cha phát `Completed` TRƯỚC KHI `finally` của con
- * chạy xong, nên "cha xong ⇒ con xong" là SAI trên trace này. Không thu gọn,
- * không làm mờ cả subtree khi cha Completed.
+ * State is read PER NODE from `world.jobs`. Child state is NEVER inferred
+ * from the parent's state: backlog item M1 (A1) lets a parent emit
+ * `Completed` BEFORE the child's `finally` finishes running, so "parent done
+ * ⇒ child done" is WRONG on this trace. No collapsing, no fading the whole
+ * subtree when the parent is Completed.
  *
- * Thứ tự mảng trả về giữ NGUYÊN `spec.nodes` (Task 4 đã khoá cha luôn đứng
- * trước con). Bắt buộc: React Flow đọc `parentId` và đặt toạ độ con TƯƠNG ĐỐI
- * với cha, nên nếu cha xuất hiện SAU con trong mảng thì mọi node lồng nhau
- * lệch vị trí — layoutGraph (Task 11) lại hoàn toàn không nhạy với thứ tự này
- * (nó dựng cây bằng tra `parentId`), nên đây là tầng DUY NHẤT còn canh được.
+ * The returned array's order PRESERVES `spec.nodes` (Task 4 already locked
+ * down that a parent always comes before its children). This is mandatory:
+ * React Flow reads `parentId` and positions a child RELATIVE TO its parent,
+ * so if the parent appeared AFTER the child in the array, every nested node
+ * would end up mispositioned — layoutGraph (Task 11) is completely
+ * insensitive to this order (it builds the tree by looking up `parentId`), so
+ * this is the ONLY layer left that can enforce it.
  */
 export function toReactFlow(spec: GraphSpec, layout: LayoutResult, world: WorldState): ReactFlowGraph {
   const nodes: FlowNode[] = []
@@ -79,16 +95,18 @@ export function toReactFlow(spec: GraphSpec, layout: LayoutResult, world: WorldS
 
   for (const n of spec.nodes) {
     const box = layout.get(n.id)
-    // Layout thiếu box cho node này (vd elkLayout lỗi/spec-layout lệch nhau) —
-    // bỏ qua CHỨ KHÔNG NÉM. Một node không vẽ được vẫn hơn cả graph vỡ.
+    // Layout is missing a box for this node (e.g. elkLayout error / spec-layout
+    // mismatch) — skip it, DON'T THROW. A node that can't be drawn is still
+    // better than a broken graph.
     if (!box) continue
 
     const job = world.jobs.get(n.id)
     const ph = phase(n, world)
     const state: JobState | null = job?.state ?? null
-    // B4: cause tồn tại trên job xuyên qua các transition không mang cause
-    // (foldTrace chỉ ghi đè khi e.cause truthy). Chỉ tin nó khi state đang
-    // Cancelling/Cancelled; state khác thì coi cause là rác còn sót lại.
+    // B4: cause survives on the job across transitions that don't carry a
+    // cause (foldTrace only overwrites it when e.cause is truthy). Only trust
+    // it when state is currently Cancelling/Cancelled; for any other state,
+    // treat cause as leftover garbage.
     const cause = job !== undefined && (job.state === 'Cancelling' || job.state === 'Cancelled')
       ? job.cause
       : null
@@ -110,7 +128,9 @@ export function toReactFlow(spec: GraphSpec, layout: LayoutResult, world: WorldS
         suspendReason: job?.suspendReason ?? null,
         lastPrint: job?.lastPrint ?? null,
         printCount: job?.printCount ?? 0,
-        loi: job?.loi ?? null,
+        failure: job?.failure ?? null,
+        dispatcher: job?.dispatcher ?? null,
+        threadId: job?.threadId ?? null,
         isCurrent: world.activeJobId === n.id,
       },
     }
@@ -122,23 +142,27 @@ export function toReactFlow(spec: GraphSpec, layout: LayoutResult, world: WorldS
     present.add(n.id)
   }
 
-  // Cạnh failure/cancel chỉ "đã xảy ra" (và do đó chỉ được vẽ) khi event sinh
-  // ra nó không muộn hơn event cuối cùng đã áp dụng ở step đang xem.
+  // A failure/cancel edge has only "happened" (and is therefore only drawn)
+  // when the event that produced it is no later than the last event applied
+  // at the step being viewed.
   const lastSeq = world.lastEvent?.seq ?? -1
 
   const edges: FlowEdge[] = []
   for (const e of spec.edges) {
-    // Cạnh 'child' KHÔNG được vẽ. Quan hệ cha-con đã được thể hiện bằng việc
-    // node con NẰM TRONG hộp cha (`parentId` + `extent: 'parent'` ở trên) —
-    // vẽ thêm một mũi tên từ hộp cha tới thứ nằm bên trong chính nó vừa thừa
-    // vừa là nguồn gốc chính của việc đường kẻ đè lên node: React Flow nối
-    // handle đáy của cha tới handle đỉnh của con, mà con thì ở TRONG cha, nên
-    // đường đó bắt buộc phải cắt ngang qua thân hộp và qua mọi node anh em nằm
-    // giữa. ELK cũng đã cố ý không nhận cạnh này (xem elkLayout.ts), nên nó
-    // chưa bao giờ được định tuyến — chỉ là một đường bezier vẽ bừa.
+    // 'child' edges are NOT drawn. The parent-child relationship is already
+    // expressed by the child node BEING INSIDE the parent box (`parentId` +
+    // `extent: 'parent'` above) — drawing an extra arrow from the parent box
+    // to something already inside it would be both redundant and the main
+    // source of lines overlapping nodes: React Flow connects the parent's
+    // bottom handle to the child's top handle, and since the child sits
+    // INSIDE the parent, that line is forced to cut straight through the
+    // box's body and through every sibling node in between. ELK also
+    // deliberately doesn't accept this edge (see elkLayout.ts), so it has
+    // never been routed — it would just be a bezier drawn blindly.
     if (e.kind === 'child') continue
-    // Node đầu/cuối bị bỏ qua ở trên (thiếu box) thì cạnh trỏ tới nó cũng bỏ
-    // qua — React Flow không chấp nhận cạnh mồ côi.
+    // A source/target node skipped above (missing box) means any edge
+    // pointing to it is skipped too — React Flow won't accept an orphaned
+    // edge.
     if (!present.has(e.source) || !present.has(e.target)) continue
     if (e.firstSeq > lastSeq) continue
 

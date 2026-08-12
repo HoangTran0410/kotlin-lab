@@ -6,10 +6,10 @@ import { LESSON_IDS, loadLessonSource } from '../../src/lessons'
 
 const ev = (id: string) => runSource(loadLessonSource(id)).events
 
-describe('buildGraphSpec — hình dạng KHÔNG phụ thuộc step', () => {
-  it('spec dựng từ tiền tố bất kỳ là TẬP CON của spec đầy đủ, cùng thứ tự', () => {
-    // Đây chính là bất biến chống rung: node đã có không bao giờ biến mất
-    // hay đổi chỗ trong mảng khi trace dài thêm.
+describe('buildGraphSpec — shape does NOT depend on step', () => {
+  it('the spec built from any prefix is a SUBSET of the full spec, same order', () => {
+    // This is exactly the anti-jitter invariant: a node that already exists
+    // never disappears or moves in the array as the trace grows longer.
     for (const id of LESSON_IDS) {
       const events = ev(id)
       const full = buildGraphSpec(events).nodes.map(n => n.id)
@@ -20,7 +20,7 @@ describe('buildGraphSpec — hình dạng KHÔNG phụ thuộc step', () => {
     }
   })
 
-  it('tập node của spec đầy đủ = tập job của foldTrace ở step cuối', () => {
+  it('the node set of the full spec = the job set of foldTrace at the last step', () => {
     for (const id of LESSON_IDS) {
       const events = ev(id)
       const w = foldTrace(events, events.length)
@@ -29,7 +29,7 @@ describe('buildGraphSpec — hình dạng KHÔNG phụ thuộc step', () => {
     }
   })
 
-  it('node CHA luôn đứng trước con trong mảng — React Flow bắt buộc', () => {
+  it('a PARENT node always precedes its child in the array — React Flow requires this', () => {
     for (const id of LESSON_IDS) {
       const nodes = buildGraphSpec(ev(id)).nodes
       const seen = new Set<string>()
@@ -40,20 +40,20 @@ describe('buildGraphSpec — hình dạng KHÔNG phụ thuộc step', () => {
     }
   })
 
-  it('isContainer = có ít nhất một con, không theo builder', () => {
+  it('isContainer = has at least one child, not derived from builder', () => {
     const spec = buildGraphSpec(ev('supervisor'))
     for (const n of spec.nodes) {
       expect(n.isContainer).toBe(spec.nodes.some(c => c.parentId === n.id))
     }
   })
 
-  it('cạnh cấu trúc nối đúng cha-con', () => {
+  it('structural edges connect the right parent-child pairs', () => {
     const spec = buildGraphSpec(ev('supervisor'))
     const structural = spec.edges.filter(e => e.kind === 'child')
     expect(structural.length).toBe(spec.nodes.filter(n => n.parentId !== null).length)
   })
 
-  it('gom cạnh failure của cả trace, giữ cờ blockedBySupervisor', () => {
+  it('collects failure edges across the whole trace, keeping the blockedBySupervisor flag', () => {
     const sup = buildGraphSpec(ev('supervisor')).edges.filter(e => e.kind === 'failure')
     expect(sup.length).toBeGreaterThan(0)
     expect(sup.some(e => e.blocked === true)).toBe(true)
@@ -63,20 +63,23 @@ describe('buildGraphSpec — hình dạng KHÔNG phụ thuộc step', () => {
     expect(nor.every(e => e.blocked === false)).toBe(true)
   })
 
-  it('id cạnh là duy nhất — React Flow bỏ cạnh trùng id trong im lặng', () => {
+  it('edge ids are unique — React Flow silently drops edges with duplicate ids', () => {
     for (const id of LESSON_IDS) {
       const ids = buildGraphSpec(ev(id)).edges.map(e => e.id)
       expect(new Set(ids).size, id).toBe(ids.length)
     }
   })
 
-  it('deterministic — id DUY NHẤT, không phụ thuộc thứ tự chạy trong file', () => {
-    // Hai bản trước đều mù. So hai lần gọi liên tiếp: state hỏng như nhau nên
-    // vẫn bằng nhau. Xen dữ liệu khác vào giữa: vẫn mù khi chạy CẢ FILE, vì
-    // các test trước đã làm bão hoà Set dùng chung cho mọi lesson.
-    // Cách duy nhất độc lập thứ tự: dùng id không test nào khác chạm tới.
-    // Nếu buildGraphSpec giữ state qua lời gọi, lần gọi thứ hai trên CÙNG dữ
-    // liệu sẽ thấy mọi cạnh "đã gặp" và bỏ hết -> khác lần đầu ngay.
+  it('deterministic — ids are UNIQUE, independent of run order within the file', () => {
+    // The previous two versions were both blind to this. Comparing two
+    // consecutive calls: broken state stays broken the same way, so they
+    // still match. Interleaving other data in between: still blind when
+    // running the WHOLE FILE, because earlier tests have already saturated
+    // the Set shared across every lesson.
+    // The only order-independent way: use an id no other test touches.
+    // If buildGraphSpec kept state across calls, the second call on the SAME
+    // data would see every edge as "already seen" and drop all of them ->
+    // immediately different from the first call.
     const mk = () => ([
       { seq: 0, t: 0, k: 'COROUTINE_CREATED', id: 'det-root', parentId: null,
         builder: 'runBlocking',
@@ -91,36 +94,40 @@ describe('buildGraphSpec — hình dạng KHÔNG phụ thuộc step', () => {
     const first = JSON.stringify(buildGraphSpec(mk()))
     const second = JSON.stringify(buildGraphSpec(mk()))
     expect(second).toBe(first)
-    // Phải CÓ cạnh thì việc mất cạnh mới lộ ra được.
+    // There has to BE an edge for a lost edge to be detectable.
     expect(JSON.parse(first).edges.length).toBeGreaterThan(0)
   })
 
-  it('GraphSpec KHÔNG phụ thuộc step — cơ sở của toàn bộ chống rung', () => {
-    // Bất biến thật KHÔNG phải "đừng đụng foldTrace" (fold tới step CUỐI thì
-    // mọi job đã tồn tại nên tương đương quét toàn trace). Bất biến là: hình
-    // dạng lấy từ TOÀN trace, không phải từ trạng thái ở step hiện tại.
-    // Nếu ai đó đổi sang foldTrace(events, n) với n là step đang xem, số node
-    // sẽ tụt theo n và ELK sẽ cho layout khác mỗi tick.
+  it('GraphSpec does NOT depend on step — the basis of all anti-jitter behavior', () => {
+    // The real invariant is NOT "don't touch foldTrace" (folding to the LAST
+    // step means every job already exists, so it's equivalent to scanning
+    // the whole trace). The invariant is: shape is derived from the WHOLE
+    // trace, not from the state at the currently-viewed step. If someone
+    // switches to foldTrace(events, n) with n as the currently-viewed step,
+    // the node count would drop along with n and ELK would produce a
+    // different layout every tick.
     for (const id of LESSON_IDS) {
       const events = ev(id)
       const full = buildGraphSpec(events)
 
-      // Mốc cắt phải SUY RA TỪ DỮ LIỆU, không phải một phân số đoán bừa.
-      // Đã đo: mọi coroutine được tạo rất sớm (COROUTINE_CREATED cuối ở seq
-      // 8-12 trên tổng 48-64), nên "một phần ba đầu" đã chứa 100% node và
-      // phép so sẽ luôn bằng nhau — test vô nghĩa. Cắt ngay TRƯỚC lần tạo
-      // cuối cùng thì chắc chắn thiếu đúng một node.
+      // The cutoff point must be DERIVED FROM THE DATA, not a guessed
+      // fraction. Measured: every coroutine is created very early
+      // (COROUTINE_CREATED last at seq 8-12 out of 48-64 total), so "the
+      // first third" would already contain 100% of the nodes and the
+      // comparison would always be equal — a meaningless test. Cutting right
+      // BEFORE the last creation guarantees exactly one missing node.
       const creationIdx = events
         .map((e, i) => (e.k === 'COROUTINE_CREATED' ? i : -1))
         .filter(i => i >= 0)
-      expect(creationIdx.length, `${id}: fixture cần >= 2 coroutine`).toBeGreaterThan(1)
+      expect(creationIdx.length, `${id}: fixture needs >= 2 coroutines`).toBeGreaterThan(1)
       const early = buildGraphSpec(events.slice(0, creationIdx[creationIdx.length - 1]!))
 
-      // Tiền tố cho ÍT node hơn — nếu bằng nhau thì test này vô nghĩa.
+      // The prefix must give FEWER nodes — if they're equal, this test is meaningless.
       expect(early.nodes.length, id).toBeLessThan(full.nodes.length)
 
-      // Spec đầy đủ CHỨA trọn spec sớm, và giữ nguyên THỨ TỰ tương đối của
-      // phần chung. Thứ tự đổi là ELK ra layout khác, tức là rung.
+      // The full spec CONTAINS the entire early spec, and preserves the
+      // RELATIVE ORDER of the shared part. A changed order means ELK
+      // produces a different layout, i.e. jitter.
       const fullIds = full.nodes.map(n => n.id)
       const earlyIds = early.nodes.map(n => n.id)
       for (const nid of earlyIds) expect(fullIds, id).toContain(nid)
@@ -128,25 +135,26 @@ describe('buildGraphSpec — hình dạng KHÔNG phụ thuộc step', () => {
     }
   })
 
-  it('cạnh sinh từ event MUỘN vẫn có mặt — đây mới là thứ bắt được cắt cụt trace', () => {
-    // Node được tạo rất sớm (COROUTINE_CREATED cuối ở seq <= 12), nên cắt cụt
-    // trace KHÔNG làm mất node và mọi assertion dựa trên .nodes đều mù.
-    // Cạnh cancel/failure thì sinh ra ở CUỐI — kiểm .edges mới bắt được.
+  it('edges produced by a LATE event are still present — this is what actually catches a truncated trace', () => {
+    // Nodes are created very early (COROUTINE_CREATED last at seq <= 12), so
+    // truncating the trace does NOT lose any node and every assertion based
+    // on .nodes is blind to it. Cancel/failure edges are produced at the
+    // END — only checking .edges catches this.
     const events = ev('jobtree')
     const cancelIdx = events
       .map((e, i) => (e.k === 'CANCEL_REQUESTED' ? i : -1))
       .filter(i => i >= 0)
-    expect(cancelIdx.length, 'fixture cần có CANCEL_REQUESTED').toBeGreaterThan(0)
-    // Ghim rằng chúng THẬT SỰ nằm ở nửa sau — nếu không, test này lại mù.
+    expect(cancelIdx.length, 'fixture needs a CANCEL_REQUESTED').toBeGreaterThan(0)
+    // Pin down that they REALLY sit in the second half — otherwise this test is blind too.
     expect(cancelIdx[cancelIdx.length - 1]!).toBeGreaterThan(events.length / 2)
 
     const spec = buildGraphSpec(events)
     expect(spec.edges.filter(e => e.kind === 'cancel').length).toBeGreaterThan(0)
   })
 
-  it('cạnh trùng bị gộp — dựng event thủ công vì lesson thật không sinh ra ca này', () => {
-    // edgeSeen chưa từng được kiểm: không fixture nào phát cạnh trùng.
-    // Dựng tay hai event cùng ngụ ý một cạnh.
+  it('duplicate edges get merged — events built by hand since no real lesson produces this case', () => {
+    // edgeSeen has never been exercised: no fixture emits a duplicate edge.
+    // Build two events by hand that both imply the same edge.
     const evs = [
       { seq: 0, t: 0, k: 'COROUTINE_CREATED', id: 'p', parentId: null, builder: 'runBlocking',
         ctx: { dispatcher: 'Main', name: null, isSupervisor: false, hasHandler: false } },
@@ -161,7 +169,7 @@ describe('buildGraphSpec — hình dạng KHÔNG phụ thuộc step', () => {
     expect(cancelEdges).toHaveLength(1)
   })
 
-  it('trace rỗng cho spec rỗng, không ném', () => {
+  it('an empty trace gives an empty spec, no throw', () => {
     expect(buildGraphSpec([])).toEqual({ nodes: [], edges: [] })
   })
 })

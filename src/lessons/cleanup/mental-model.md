@@ -1,30 +1,33 @@
-## Mô hình tư duy
+## Mental model
 
-`cancel()` không phải một phát súng. Nó là **một lá thư**: đánh dấu Job là đang huỷ,
-rồi chờ. Lá thư chỉ được đọc khi coroutine chạm điểm suspend kế tiếp (`delay`,
-`yield`, `join`, `await`) — lúc đó điểm suspend ấy **ném** `CancellationException`.
+`cancel()` is not a gunshot. It is **a letter**: it marks the Job as cancelling,
+then waits. The letter is only read when the coroutine hits its next suspend point
+(`delay`, `yield`, `join`, `await`) — that's when the suspend point **throws**
+`CancellationException`.
 
-Đã là một exception bay lên thì mọi khối `finally` trên đường đi đều chạy. Đó là chỗ
-duy nhất bạn được phép tin để đóng file, huỷ đăng ký, trả kết nối.
+Once it's an exception flying up the stack, every `finally` block on the way runs.
+That is the one place you're allowed to trust for closing a file, unregistering, or
+returning a connection.
 
-## Vì sao Kotlin làm thế
+## Why Kotlin works this way
 
-Giết một luồng đang chạy giữa chừng là nguồn gốc của tài nguyên rò rỉ và trạng thái
-hỏng — đó là lý do `Thread.stop()` bị khai tử. Huỷ **hợp tác** đổi lại: coroutine
-được báo, được unwind tử tế, được dọn dẹp.
+Killing a thread mid-run is where leaked resources and corrupted state come from —
+that's why `Thread.stop()` was put to death. Cancellation is **cooperative** in
+exchange: the coroutine gets notified, unwinds cleanly, and gets to clean up.
 
-`cancelAndJoin()` khác `cancel()` đúng ở một chỗ: nó **chờ** phần dọn dẹp chạy xong
-rồi mới trả về.
+`cancelAndJoin()` differs from `cancel()` in exactly one place: it **waits** for the
+cleanup to finish before returning.
 
-## Chỗ hay sai
+## Where people get it wrong
 
-- Gọi `cancel()` rồi lập tức đóng tài nguyên dùng chung, tưởng coroutine đã dừng.
-  Nó chưa — `finally` của nó có thể chạy **sau** dòng tiếp theo của bạn. Dùng
-  `cancelAndJoin()`.
-- Gọi hàm suspend trong `finally` để dọn dẹp: coroutine đã bị huỷ nên hàm đó ném
-  ngay. (Kotlin thật giải quyết bằng `withContext(NonCancellable)` — chưa có ở đây.)
+- Calling `cancel()` and immediately closing a shared resource, assuming the
+  coroutine has already stopped. It hasn't — its `finally` might run **after**
+  your very next line. Use `cancelAndJoin()`.
+- Calling a suspend function inside `finally` to clean up: the coroutine is
+  already cancelled, so that call throws immediately. (Real Kotlin solves this with
+  `withContext(NonCancellable)` — not covered here yet.)
 
-## Nhìn gì trên đồ thị
+## What to look for on the graph
 
-Sau cạnh cancel màu cam, node **vẫn in ra** dòng dọn dẹp. Đó là bằng chứng nhìn
-thấy được rằng huỷ không phải là chết ngay.
+After the orange cancel edge, the node **still prints** the cleanup line. That is
+visible proof that cancellation is not instant death.

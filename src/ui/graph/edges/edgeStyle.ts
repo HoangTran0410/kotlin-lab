@@ -1,25 +1,28 @@
 import type { GraphEdgeSpec } from '../../../engine/trace/graph'
 
 /**
- * 'none'  — cạnh 'child': quan hệ chứa đựng, không phải hành động, nên không
- *           cần mũi tên chỉ hướng.
- * 'arrow' — mũi tên thường, tại đầu TARGET (React Flow đặt marker ở target).
- *           cancel: target = job bị huỷ (luôn NẰM DƯỚI job huỷ nó trong cây,
- *           layout ELK hướng DOWN) -> mũi tên tự nhiên chỉ XUỐNG.
- *           failure: target = job CHA nhận exception (FAILURE_PROPAGATED đi
- *           từ con lên cha, xem propagation.ts) -> mũi tên tự nhiên chỉ LÊN.
- * 'block' — thay mũi tên bằng dấu chặn (đoạn ngang đặc): supervisor đã chặn
- *           failure tại đây, không có gì "lọt qua" để vẽ mũi tên nữa.
+ * 'none'  — the 'child' edge: a containment relationship, not an action, so
+ *           it needs no directional arrow.
+ * 'arrow' — a regular arrow, at the TARGET end (React Flow places the marker
+ *           on the target). cancel: target = the job being cancelled (always
+ *           BELOW the job that cancels it in the tree, ELK layout direction
+ *           DOWN) -> the arrow naturally points DOWN.
+ *           failure: target = the PARENT job receiving the exception
+ *           (FAILURE_PROPAGATED goes from child up to parent, see
+ *           propagation.ts) -> the arrow naturally points UP.
+ * 'block' — replaces the arrow with a block mark (a solid crossbar):
+ *           the supervisor blocked the failure here, so there's nothing
+ *           "getting through" for an arrow to draw anymore.
  */
 export type EdgeMarkerVariant = 'none' | 'arrow' | 'block'
 
 export interface EdgeVisual {
   stroke: string
   strokeWidth: number
-  /** SVG stroke-dasharray. undefined ⟺ nét liền. */
+  /** SVG stroke-dasharray. undefined ⟺ solid line. */
   strokeDasharray?: string
   markerVariant: EdgeMarkerVariant
-  /** Nhãn tiếng Việt hiện cạnh cạnh. Chỉ có khi bị supervisor chặn. */
+  /** The label shown next to the edge. Only present when blocked by a supervisor. */
   label?: string
 }
 
@@ -31,19 +34,20 @@ const FAILURE_STYLE: EdgeVisual = { stroke: 'var(--state-cancelled)', strokeWidt
 const FAILURE_BLOCKED_STYLE: EdgeVisual = {
   ...FAILURE_STYLE,
   markerVariant: 'block',
-  label: 'bị supervisor chặn',
+  label: 'blocked by supervisor',
 }
 
 /**
- * Ánh xạ THUẦN kind + blocked -> hình dáng cạnh. Không React, không DOM —
- * GraphCanvas (cạnh 'child'/'cancel', dùng edge mặc định của React Flow) và
- * FailureEdge (cạnh 'failure') đều gọi hàm này, để cả hai nơi vẽ luôn khớp
- * nhau thay vì mỗi nơi tự chọn màu.
+ * PURE mapping from kind + blocked -> edge shape. No React, no DOM —
+ * GraphCanvas (for 'child'/'cancel' edges, using React Flow's default edge)
+ * and FailureEdge (for 'failure' edges) both call this function, so both
+ * places always draw in agreement instead of each picking its own colors.
  *
- * `blocked` CHỈ có ý nghĩa khi `kind === 'failure'` — 'child' và 'cancel' bỏ
- * qua tham số này hoàn toàn. Đúng với dữ liệu nguồn: buildGraphSpec (Task 4)
- * chỉ gán `blockedBySupervisor` thật cho cạnh 'failure'; cạnh 'child'/'cancel'
- * luôn được tạo với `blocked: false` cứng (xem graph.ts).
+ * `blocked` ONLY matters when `kind === 'failure'` — 'child' and 'cancel'
+ * ignore this parameter entirely. This matches the source data: buildGraphSpec
+ * (Task 4) only ever assigns a real `blockedBySupervisor` to 'failure' edges;
+ * 'child'/'cancel' edges are always created with `blocked: false` hardcoded
+ * (see graph.ts).
  */
 export function edgeStyle(kind: GraphEdgeSpec['kind'], blocked: boolean): EdgeVisual {
   switch (kind) {

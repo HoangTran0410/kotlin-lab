@@ -7,7 +7,7 @@ export interface Compiled {
   events: readonly Event[]
   diagnostics: readonly Diagnostic[]
   spec: GraphSpec
-  /** Tăng mỗi lần compile. Khoá cache layout ở Task 15. */
+  /** Increments on every compile. Used as the layout cache key in Task 15. */
   revision: number
 }
 

@@ -2,84 +2,85 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { App } from '../../src/ui/App'
 import { useLabStore } from '../../src/state/store'
-import { CHAY_DUOC } from '../../src/ui/about/capabilities'
+import { CAPABILITIES } from '../../src/ui/about/capabilities'
 import { UNSUPPORTED } from '../../src/engine/validator/diagnostics'
 import { KOTLIN_VERSION } from '../../src/engine/kotlinVersion'
 
-const mo = (): HTMLElement => {
-  const nav = screen.getByRole('navigation', { name: 'Lộ trình bài học' })
-  fireEvent.click(within(nav).getByRole('button', { name: 'Chạy được gì?' }))
+const openAbout = (): HTMLElement => {
+  const nav = screen.getByRole('navigation', { name: 'Lesson path' })
+  fireEvent.click(within(nav).getByRole('button', { name: 'What can it run?' }))
   return screen.getByRole('dialog')
 }
 
-describe('trang giới thiệu — nối vào app', () => {
+describe('about page — wired into the app', () => {
   beforeEach(() => {
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
   })
 
-  it('mặc định ĐÓNG — không chắn đường người đã biết mình đang làm gì', () => {
+  it("defaults to CLOSED — doesn't block someone who already knows what they're doing", () => {
     render(<App />)
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('nói rõ phiên bản Kotlin mà ngữ nghĩa được đối chiếu vào', () => {
+  it('states plainly which Kotlin version semantics are checked against', () => {
     render(<App />)
-    expect(mo()).toHaveTextContent(KOTLIN_VERSION)
+    expect(openAbout()).toHaveTextContent(KOTLIN_VERSION)
   })
 
-  it('liệt kê đủ mọi mục chạy được, kèm output của từng ví dụ', () => {
+  it("lists every runnable entry, with each example's output", () => {
     render(<App />)
-    const hop = mo()
-    for (const nhom of CHAY_DUOC) {
-      for (const k of nhom.items) {
-        expect(within(hop).getAllByText(k.ten).length, `thiếu mục ${k.ten}`).toBeGreaterThan(0)
-        // Output là thứ chứng minh ví dụ chạy ra cái gì — thiếu nó thì thẻ chỉ
-        // còn là một cái tên, đúng thứ mà trang này ra đời để thay thế.
-        expect(hop.textContent, `${k.ten} không hiện output`).toContain(k.ra[0])
+    const box = openAbout()
+    for (const group of CAPABILITIES) {
+      for (const k of group.items) {
+        expect(within(box).getAllByText(k.name).length, `missing entry ${k.name}`).toBeGreaterThan(0)
+        // Output is what proves the example actually runs something — without
+        // it the card is just a name, exactly what this page exists to replace.
+        expect(box.textContent, `${k.name} doesn't show output`).toContain(k.output[0])
       }
     }
   })
 
-  it('liệt kê đủ mọi construct CHƯA hỗ trợ, kèm gợi ý thay thế', () => {
+  it('lists every NOT-supported construct, with a replacement hint', () => {
     render(<App />)
-    const hop = mo()
-    for (const [ten, goiY] of Object.entries(UNSUPPORTED)) {
-      expect(within(hop).getAllByText(ten).length, `thiếu ${ten}`).toBeGreaterThan(0)
-      expect(hop.textContent, `${ten} thiếu gợi ý`).toContain(goiY)
+    const box = openAbout()
+    for (const [name, hint] of Object.entries(UNSUPPORTED)) {
+      expect(within(box).getAllByText(name).length, `missing ${name}`).toBeGreaterThan(0)
+      expect(box.textContent, `${name} is missing a hint`).toContain(hint)
     }
   })
 
-  it('"Mở ví dụ" nạp mã CHẠY ĐƯỢC vào editor và đóng hộp', () => {
+  it('"Open example" loads RUNNABLE code into the editor and closes the box', () => {
     render(<App />)
-    const hop = mo()
-    fireEvent.click(within(hop).getAllByRole('button', { name: 'Mở ví dụ' })[0]!)
+    const box = openAbout()
+    fireEvent.click(within(box).getAllByRole('button', { name: 'Open example' })[0]!)
 
-    expect(screen.queryByRole('dialog'), 'hộp không tự đóng sau khi mở ví dụ').toBeNull()
+    expect(screen.queryByRole('dialog'), 'box does not auto-close after opening an example').toBeNull()
     const st = useLabStore.getState()
-    expect(st.source).toBe(CHAY_DUOC[0]!.items[0]!.kotlin)
-    // Không chỉ "source đã đổi": mã phải BIÊN DỊCH SẠCH và SINH RA TRACE. Một
-    // ví dụ nạp vào rồi báo đỏ ngay là tệ hơn không có nút này.
+    expect(st.source).toBe(CAPABILITIES[0]!.items[0]!.kotlin)
+    // Not just "source changed": the code must COMPILE CLEAN and PRODUCE A
+    // TRACE. An example that loads and immediately flags red is worse than
+    // not having this button at all.
     expect(st.compiled.diagnostics).toEqual([])
     expect(st.compiled.events.length).toBeGreaterThan(0)
   })
 
-  it('mở ví dụ thì bỏ đánh dấu bài đang học — header không nói nhầm', () => {
+  it("opening an example clears the active lesson mark — header doesn't lie", () => {
     render(<App />)
-    // Chọn một bài qua ĐÚNG đường người dùng đi: mở hộp, tab Lộ trình, bấm thẻ.
-    const nav = screen.getByRole('navigation', { name: 'Lộ trình bài học' })
+    // Pick a lesson through the ACTUAL user path: open the box, Lessons tab, click a card.
+    const nav = screen.getByRole('navigation', { name: 'Lesson path' })
     fireEvent.click(within(nav).getAllByRole('button')[0]!)
-    const loTrinh = screen.getByRole('dialog')
-    fireEvent.click(loTrinh.querySelectorAll<HTMLButtonElement>('.les__card')[0]!)
+    const lessonsBox = screen.getByRole('dialog')
+    fireEvent.click(lessonsBox.querySelectorAll<HTMLButtonElement>('.les__card')[0]!)
     expect(useLabStore.getState().lessonId).not.toBeNull()
 
-    const hop = mo()
-    fireEvent.click(within(hop).getAllByRole('button', { name: 'Mở ví dụ' })[0]!)
-    expect(useLabStore.getState().lessonId, 'chip bài cũ vẫn sáng dù editor đã là mã khác').toBeNull()
+    const box = openAbout()
+    fireEvent.click(within(box).getAllByRole('button', { name: 'Open example' })[0]!)
+    expect(useLabStore.getState().lessonId, 'old lesson chip stays lit even though the editor holds different code').toBeNull()
   })
 
-  it('Escape đóng hộp', () => {
+  it('Escape closes the box', () => {
     render(<App />)
-    mo()
+    openAbout()
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).toBeNull()
   })

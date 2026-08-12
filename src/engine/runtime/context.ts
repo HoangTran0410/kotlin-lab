@@ -3,9 +3,9 @@ import type { Job } from './job'
 
 export class CoroutineContext {
   /**
-   * Mọi element lưu dạng `T | null`, trong đó null nghĩa là "chưa đặt".
-   * Phân biệt này là bắt buộc: plus() phải biết bên phải có thực sự đặt
-   * dispatcher hay không, chứ không thể đoán từ giá trị mặc định.
+   * Every element is stored as `T | null`, where null means "not set". This
+   * distinction is mandatory: plus() must know whether the right-hand side
+   * actually set a dispatcher, rather than guessing from a default value.
    */
   private constructor(
     readonly job: Job | null,
@@ -19,19 +19,21 @@ export class CoroutineContext {
     return new CoroutineContext(null, null, null, null, null)
   }
 
-  /** Giá trị dùng thật khi chạy; chưa đặt thì là Default, giống Kotlin. */
+  /** The value actually used at runtime; if not set, it's Default, like Kotlin. */
   get dispatcher(): string { return this.dispatcherOrNull ?? 'Default' }
 
   /**
-   * Element Job của context có phải SupervisorJob không. `null` bên trong nghĩa
-   * là "chưa đặt Job nào" — cùng quy ước với dispatcher, và cần đúng vì
-   * `CoroutineScope(SupervisorJob() + Dispatchers.IO)` phải phân biệt được với
-   * `CoroutineScope(Job() + Dispatchers.IO)`: nếu chỉ có `false` mặc định thì
-   * `plus()` không biết bên phải có thật sự đặt Job hay không.
+   * Whether the context's Job element is a SupervisorJob. An internal `null`
+   * means "no Job set yet" — same convention as dispatcher, and it needs to
+   * be exact because `CoroutineScope(SupervisorJob() + Dispatchers.IO)` must
+   * be distinguishable from `CoroutineScope(Job() + Dispatchers.IO)`: if
+   * there were only a default `false`, `plus()` wouldn't know whether the
+   * right-hand side actually set a Job.
    *
-   * CHÚ Ý: đây là cờ của CONTEXT (thứ mà `applyCtxValue` đọc ra từ code Kotlin),
-   * KHÁC với `Job.isSupervisor` (cờ của một Job đã tồn tại trong cây). `summary()`
-   * cố ý đọc cờ của Job chứ không đọc cờ này — xem ghi chú ở đó.
+   * NOTE: this is the CONTEXT's flag (what `applyCtxValue` reads out of the
+   * Kotlin code), DIFFERENT from `Job.isSupervisor` (the flag of a Job that
+   * already exists in the tree). `summary()` deliberately reads the Job's
+   * flag, not this one — see the note there.
    */
   get isSupervisor(): boolean { return this.supervisorOrNull ?? false }
 
@@ -51,7 +53,7 @@ export class CoroutineContext {
     return new CoroutineContext(this.job, this.dispatcherOrNull, this.name, this.handler, v)
   }
 
-  /** Toán tử + của Kotlin: element bên phải ghi đè element cùng loại bên trái. */
+  /** Kotlin's + operator: the right-hand element overrides the left-hand element of the same kind. */
   plus(other: CoroutineContext): CoroutineContext {
     return new CoroutineContext(
       other.job ?? this.job,
@@ -63,12 +65,13 @@ export class CoroutineContext {
   }
 
   /**
-   * `isSupervisor` đọc từ JOB, không đọc `supervisorOrNull`. Con của một scope
-   * supervisor kế thừa context của scope (nên `supervisorOrNull` là true trên
-   * đường truyền xuống), nhưng BẢN THÂN nó không phải supervisor — chỉ ranh giới
-   * cha mới chặn được failure. Đọc nhầm cờ ở đây thì mọi con của
-   * `CoroutineScope(SupervisorJob())` đều hiện ra trên trace như một supervisor,
-   * và bài học "supervisor chặn TẠI RANH GIỚI" bị bôi ra cả cây.
+   * `isSupervisor` reads from the JOB, not from `supervisorOrNull`. A child
+   * of a supervisor scope inherits the scope's context (so `supervisorOrNull`
+   * is true as it propagates down), but the child ITSELF is not a
+   * supervisor — only the parent boundary blocks failure. Reading the wrong
+   * flag here would make every child of `CoroutineScope(SupervisorJob())`
+   * show up in the trace as a supervisor, and the lesson "supervisor blocks
+   * AT THE BOUNDARY" would smear across the whole tree.
    */
   summary(): CtxSummary {
     return {

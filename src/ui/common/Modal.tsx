@@ -3,36 +3,37 @@ import './modal.css'
 
 export interface Tab {
   id: string
-  nhan: string
-  noi: ReactNode
+  label: string
+  content: ReactNode
 }
 
 /**
- * Hộp phủ toàn màn hình, dùng CHUNG cho lộ trình bài học và trang giới thiệu.
+ * Full-screen overlay, SHARED by the lesson path and the about page.
  *
- * Vì sao chung một hộp: hai danh sách ấy trả lời hai nửa của cùng một câu hỏi
- * — "học gì" và "gõ được gì" — nên chúng phải trông như anh em. Trước đây lộ
- * trình là một dải chip trong header còn ví dụ là thẻ trong hộp; dải chip vừa
- * không đồng bộ với hộp kia, vừa GIẤU MẤT bài: `max-width: 60vw` cộng
- * `overflow-x: auto` nên với 13 bài thì chỉ 8 cái lọt vào tầm nhìn và 5 cái
- * còn lại nằm ngoài mép, không một dấu hiệu nào cho biết chúng tồn tại.
+ * Why one shared box: those two lists answer two halves of the same question
+ * — "what to learn" and "what can be typed" — so they should look like
+ * siblings. Previously the lesson path was a chip strip in the header while
+ * examples were cards in a box; the chip strip was both out of sync with the
+ * other box AND HID lessons: `max-width: 60vw` plus `overflow-x: auto` meant
+ * that with 13 lessons only 8 fit into view and the remaining 5 sat past the
+ * edge with no sign they existed.
  */
-export function Modal({ tabs, tabDangMo, setTab, onClose }: {
+export function Modal({ tabs, activeTab, setTab, onClose }: {
   tabs: Tab[]
-  tabDangMo: string
+  activeTab: string
   setTab: (id: string) => void
   onClose: () => void
 }) {
-  const hop = useRef<HTMLDivElement>(null)
+  const box = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
-    hop.current?.focus()
+    box.current?.focus()
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const dangMo = tabs.find(t => t.id === tabDangMo) ?? tabs[0]
+  const current = tabs.find(t => t.id === activeTab) ?? tabs[0]
 
   return (
     <div className="mdl" role="presentation" onClick={onClose}>
@@ -40,9 +41,9 @@ export function Modal({ tabs, tabDangMo, setTab, onClose }: {
         className="mdl__box"
         role="dialog"
         aria-modal="true"
-        aria-label={dangMo?.nhan ?? ''}
+        aria-label={current?.label ?? ''}
         tabIndex={-1}
-        ref={hop}
+        ref={box}
         onClick={e => e.stopPropagation()}
       >
         <header className="mdl__head">
@@ -52,17 +53,17 @@ export function Modal({ tabs, tabDangMo, setTab, onClose }: {
                 key={t.id}
                 type="button"
                 role="tab"
-                aria-selected={t.id === dangMo?.id}
-                className={t.id === dangMo?.id ? 'mdl__tab mdl__tab--on' : 'mdl__tab'}
+                aria-selected={t.id === current?.id}
+                className={t.id === current?.id ? 'mdl__tab mdl__tab--on' : 'mdl__tab'}
                 onClick={() => setTab(t.id)}
               >
-                {t.nhan}
+                {t.label}
               </button>
             ))}
           </div>
-          <button type="button" className="mdl__close" onClick={onClose} aria-label="Đóng">×</button>
+          <button type="button" className="mdl__close" onClick={onClose} aria-label="Close">×</button>
         </header>
-        <div className="mdl__body">{dangMo?.noi}</div>
+        <div className="mdl__body">{current?.content}</div>
       </div>
     </div>
   )

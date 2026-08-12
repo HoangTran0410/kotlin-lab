@@ -2,70 +2,76 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { LESSONS } from '../../src/lessons'
-import { docMarkdown } from '../../src/ui/mentalmodel/markdown'
+import { parseMarkdown } from '../../src/ui/mentalmodel/markdown'
 import { UNSUPPORTED } from '../../src/engine/validator/diagnostics'
 
 /**
- * Phần chữ của bài học cũng là một thứ có thể sai, và sai ở đây thì tệ hơn sai
- * trong code: không có gì đỏ lên cả, người học chỉ đơn giản là học nhầm.
+ * The lesson prose is also something that can be wrong, and being wrong here is
+ * worse than being wrong in code: nothing goes red, the learner just quietly
+ * learns the wrong thing.
  *
- * Những gì kiểm được bằng máy thì kiểm ở đây — mọi bài đều có, đủ bốn phần,
- * và không phần nào giới thiệu một construct mà engine sẽ báo đỏ ngay khi gõ.
+ * Whatever can be checked by machine is checked here — every lesson has one,
+ * has all four sections, and none of them introduces a construct the engine
+ * would flag red the moment it's typed.
  */
-const duongDan = (id: string) => join('src/lessons', id, 'mental-model.md')
-const doc = (id: string) => readFileSync(duongDan(id), 'utf8')
+const pathFor = (id: string) => join('src/lessons', id, 'mental-model.md')
+const readDoc = (id: string) => readFileSync(pathFor(id), 'utf8')
 
-const PHAN_BAT_BUOC = ['Mô hình tư duy', 'Vì sao Kotlin làm thế', 'Chỗ hay sai', 'Nhìn gì trên đồ thị']
+const REQUIRED_SECTIONS = ['Mental model', 'Why Kotlin works this way', 'Where people get it wrong', 'What to look for on the graph']
 
-describe('mô hình tư duy — mỗi bài một bản', () => {
-  it('không bài nào thiếu', () => {
+describe('mental model — one per lesson', () => {
+  it('none is missing', () => {
     for (const l of LESSONS) {
-      expect(existsSync(duongDan(l.id)), `${l.id} chưa có mental-model.md`).toBe(true)
+      expect(existsSync(pathFor(l.id)), `${l.id} has no mental-model.md`).toBe(true)
     }
   })
 
-  it('mỗi bản có đủ bốn phần, đúng thứ tự', () => {
-    // Thứ tự là một phần của thiết kế: hiểu mô hình -> hiểu vì sao -> biết chỗ
-    // sai -> biết nhìn vào đâu. Đảo lên thì phần "chỗ hay sai" đọc trước khi
-    // người ta kịp có mô hình nào để mà sai.
+  it('each one has all four sections, in the right order', () => {
+    // Order is part of the design: understand the model -> understand why ->
+    // know where it goes wrong -> know what to look for. Reordering it means
+    // "where it goes wrong" gets read before the reader even has a model to get
+    // wrong.
     for (const l of LESSONS) {
-      const tieuDe = docMarkdown(doc(l.id))
+      const headings = parseMarkdown(readDoc(l.id))
         .filter(k => k.k === 'h')
-        .map(k => (k.k === 'h' ? k.noi.map(d => d.v).join('') : ''))
-      expect(tieuDe, `${l.id} thiếu hoặc sai thứ tự các phần`).toEqual(PHAN_BAT_BUOC)
+        .map(k => (k.k === 'h' ? k.content.map(d => d.v).join('') : ''))
+      expect(headings, `${l.id} is missing sections or has them out of order`).toEqual(REQUIRED_SECTIONS)
     }
   })
 
-  it('mỗi phần có nội dung thật, không phải tiêu đề rỗng', () => {
+  it('each section has real content, not just an empty heading', () => {
     for (const l of LESSONS) {
-      const khoi = docMarkdown(doc(l.id))
-      for (let i = 0; i < khoi.length; i++) {
-        if (khoi[i]!.k !== 'h') continue
-        const ke = khoi[i + 1]
-        expect(ke, `${l.id}: một phần không có gì bên dưới`).toBeDefined()
-        expect(ke!.k, `${l.id}: hai tiêu đề dính liền nhau`).not.toBe('h')
+      const blocks = parseMarkdown(readDoc(l.id))
+      for (let i = 0; i < blocks.length; i++) {
+        if (blocks[i]!.k !== 'h') continue
+        const next = blocks[i + 1]
+        expect(next, `${l.id}: a section has nothing underneath it`).toBeDefined()
+        expect(next!.k, `${l.id}: two headings are stuck together`).not.toBe('h')
       }
-      expect(doc(l.id).length, `${l.id} quá ngắn để là một mô hình tư duy`).toBeGreaterThan(600)
+      expect(readDoc(l.id).length, `${l.id} is too short to be a mental model`).toBeGreaterThan(600)
     }
   })
 
-  it('khối mã chép được không chứa construct mà engine sẽ báo đỏ', () => {
-    // Chỉ soi KHỐI ``` — thứ người học bôi đen rồi dán vào editor.
+  it('copyable code blocks contain no construct the engine would flag red', () => {
+    // Only inspect ``` BLOCKS — the thing a learner selects and pastes into the
+    // editor.
     //
-    // Bản đầu của ca này soi cả `mã trong dòng`, và nó đỏ ngay: bài `suspend`
-    // viết "đừng dùng `Thread.sleep()`" trong phần *Chỗ hay sai*, mà `Thread`
-    // nằm trong UNSUPPORTED. Câu văn ấy đúng và cần thiết — luật sai, không
-    // phải nội dung. Nhắc tên một API của Kotlin thật để nói "đừng dùng" hoặc
-    // "cái này chưa có ở đây" là việc bình thường của phần chữ.
+    // The first version of this case also inspected `inline code`, and it went
+    // red immediately: the `suspend` lesson writes "don't use `Thread.sleep()`"
+    // in its *Where people get it wrong* section, and `Thread` is in
+    // UNSUPPORTED. That sentence is correct and necessary — the rule was wrong,
+    // not the content. Naming a real Kotlin API inline to say "don't use this"
+    // or "this isn't supported here yet" is normal for lesson prose.
     //
-    // Nói thẳng phạm vi: hôm nay đúng MỘT bài có khối ``` (bài `parallel`).
-    // Ca này tồn tại để khối thứ hai — và những khối sau nữa — không lọt qua,
-    // chứ không phải vì nó đang canh nhiều thứ.
+    // Stating the scope plainly: today exactly ONE lesson has a ``` block (the
+    // `parallel` lesson). This case exists so that a second block — and any
+    // after it — doesn't slip through, not because it's currently guarding
+    // against much.
     for (const l of LESSONS) {
-      const ma = docMarkdown(doc(l.id)).flatMap(k => (k.k === 'code' ? [k.text] : []))
-      for (const doan of ma) {
-        for (const cam of Object.keys(UNSUPPORTED)) {
-          expect(doan.includes(cam), `${l.id}: mã mẫu dùng ${cam}, engine sẽ báo đỏ`).toBe(false)
+      const code = parseMarkdown(readDoc(l.id)).flatMap(k => (k.k === 'code' ? [k.text] : []))
+      for (const snippet of code) {
+        for (const forbidden of Object.keys(UNSUPPORTED)) {
+          expect(snippet.includes(forbidden), `${l.id}: sample code uses ${forbidden}, the engine would flag it red`).toBe(false)
         }
       }
     }

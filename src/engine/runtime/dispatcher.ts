@@ -1,6 +1,6 @@
 import type { JobId, ThreadId } from '../trace/events'
 
-/** Số thread ảo mỗi dispatcher. Nhỏ hơn thực tế để hình vẽ đọc được. */
+/** Number of virtual threads per dispatcher. Smaller than real life so the diagram stays readable. */
 export const DISPATCHER_POOL_SIZE: Record<string, number> = {
   Main: 1,
   Default: 4,
@@ -16,7 +16,7 @@ export interface VirtualThread {
 
 export class DispatcherPool {
   private readonly threads = new Map<ThreadId, VirtualThread>()
-  /** Thứ tự dispatcher được tạo, để allThreads ổn định. */
+  /** Order in which dispatchers were created, so allThreads stays stable. */
   private readonly order: string[] = []
 
   private ensure(dispatcher: string): VirtualThread[] {
@@ -39,7 +39,7 @@ export class DispatcherPool {
     return this.order.flatMap(d => this.threadsOf(d))
   }
 
-  /** Trả thread rảnh đầu tiên, hoặc null nếu pool đã đầy. */
+  /** Returns the first free thread, or null if the pool is full. */
   acquire(dispatcher: string, jobId: JobId): ThreadId | null {
     const free = this.ensure(dispatcher).find(t => t.jobId === null)
     if (!free) return null

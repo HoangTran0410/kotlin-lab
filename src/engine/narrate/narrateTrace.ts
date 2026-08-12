@@ -2,14 +2,14 @@ import type { Event } from '../trace/events'
 import { applyEvent, emptyWorld } from '../trace/world'
 import { narrate } from './narrate'
 
-/** Tông màu của một dòng diễn giải. Tầng hiển thị dùng để tô, không mang ngữ nghĩa engine. */
+/** Tone of a narration line. The display layer uses it for coloring; it carries no engine meaning. */
 export type NarrationTone = 'normal' | 'fail' | 'cancel' | 'output' | 'start'
 
 export interface NarrationLine {
-  /** Chỉ số trong mảng `events`. UI dùng để nhảy tới đúng step. */
+  /** Index into the `events` array. The UI uses this to jump to the right step. */
   index: number
   seq: number
-  /** Mili giây ảo. */
+  /** Virtual milliseconds. */
   t: number
   text: string
   tone: NarrationTone
@@ -35,14 +35,16 @@ function toneOf(e: Event): NarrationTone {
 }
 
 /**
- * Diễn giải cả trace trong MỘT lượt duyệt.
+ * Narrates the whole trace in ONE pass.
  *
- * Không gọi `foldTrace` cho từng event: fold dựng lại từ đầu mỗi lần, nên làm
- * vậy là O(N²) — ở M2 đã đo được 3,9 giây trên trace 16 nghìn event. Ở đây thế
- * giới được cuộn dần bằng `applyEvent`, đúng cái hàm mà `foldTrace` dùng, nên
- * không có bản fold thứ hai để trôi lệch.
+ * Does not call `foldTrace` per event: fold rebuilds from scratch every
+ * time, so doing that would be O(N²) — measured at M2: 3.9 seconds on a
+ * 16,000-event trace. Here the world is rolled forward incrementally with
+ * `applyEvent`, the exact function `foldTrace` uses, so there's no second
+ * fold implementation to drift out of sync.
  *
- * `narrate` được gọi TRƯỚC `applyEvent` — câu nói về thế giới ngay trước event.
+ * `narrate` is called BEFORE `applyEvent` — the sentence talks about the
+ * world right before the event.
  */
 export function narrateTrace(events: readonly Event[]): NarrationLine[] {
   const out: NarrationLine[] = []

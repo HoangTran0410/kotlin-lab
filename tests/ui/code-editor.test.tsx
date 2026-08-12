@@ -6,32 +6,32 @@ import { CodeEditor } from '../../src/ui/editor/CodeEditor'
 import { App } from '../../src/ui/App'
 import { useLabStore } from '../../src/state/store'
 
-// CodeMirror 6 tự bắt sự kiện DOM thật (beforeinput + MutationObserver) để
-// suy ra thay đổi; jsdom không mô phỏng được luồng đó một cách đáng tin cậy.
-// Cách chuẩn để "gõ" trong test là lấy thẳng EditorView qua DOM (API công khai
-// EditorView.findFromDOM) rồi dispatch transaction — đúng con đường mà bàn
-// phím thật cũng đi qua sau bước bắt input.
+// CodeMirror 6 captures real DOM events itself (beforeinput + MutationObserver)
+// to infer changes; jsdom can't reliably simulate that flow. The standard way
+// to "type" in a test is to grab the EditorView straight from the DOM (the
+// public EditorView.findFromDOM API) and dispatch a transaction — the same
+// path a real keyboard also takes after the input-capture step.
 function viewOf(container: HTMLElement): EditorView {
   const host = container.querySelector('[data-testid="code-editor"]') as HTMLElement
   const view = EditorView.findFromDOM(host)
-  if (!view) throw new Error('không tìm thấy EditorView trong DOM')
+  if (!view) throw new Error('could not find EditorView in the DOM')
   return view
 }
 
-describe('CodeEditor — CodeMirror 6 với cú pháp Kotlin', () => {
-  it('mount ra một .cm-editor', () => {
+describe('CodeEditor — CodeMirror 6 with Kotlin syntax', () => {
+  it('mounts a .cm-editor', () => {
     render(<CodeEditor value="" onChange={() => {}} />)
     expect(document.querySelector('.cm-editor')).toBeInTheDocument()
   })
 
-  it('hiện đúng nội dung value ban đầu', () => {
+  it('shows the correct initial value content', () => {
     const src = 'fun main() = runBlocking {\n  println("hi")\n}'
     render(<CodeEditor value={src} onChange={() => {}} />)
     expect(document.querySelector('.cm-content')).toHaveTextContent('fun main() = runBlocking {')
     expect(document.querySelector('.cm-content')?.textContent).toContain('println("hi")')
   })
 
-  it('gõ vào gọi onChange với text mới', () => {
+  it('typing calls onChange with the new text', () => {
     const onChange = vi.fn()
     const { container } = render(<CodeEditor value="fun main() {}" onChange={onChange} />)
     const view = viewOf(container)
@@ -39,14 +39,14 @@ describe('CodeEditor — CodeMirror 6 với cú pháp Kotlin', () => {
     expect(onChange).toHaveBeenCalledWith('funX main() {}')
   })
 
-  it('đổi prop value từ ngoài thì doc đổi theo', () => {
+  it('changing the value prop from outside changes the doc to match', () => {
     const { container, rerender } = render(<CodeEditor value="a" onChange={() => {}} />)
     rerender(<CodeEditor value="fun main() = runBlocking { }" onChange={() => {}} />)
     const view = viewOf(container)
     expect(view.state.doc.toString()).toBe('fun main() = runBlocking { }')
   })
 
-  it('đổi prop value thành ĐÚNG giá trị đang có thì KHÔNG dispatch (không vòng lặp)', () => {
+  it('changing the value prop to the value it ALREADY has does NOT dispatch (no infinite loop)', () => {
     const onChange = vi.fn()
     const same = 'fun main() = runBlocking { }'
     const { rerender } = render(<CodeEditor value={same} onChange={onChange} />)
@@ -54,14 +54,15 @@ describe('CodeEditor — CodeMirror 6 với cú pháp Kotlin', () => {
     expect(onChange).toHaveBeenCalledTimes(0)
   })
 
-  it('gõ liên tục chỉ biên dịch MỘT lần sau khi ngừng — debounce', () => {
+  it('typing continuously only compiles ONCE after it stops — debounce', () => {
     vi.useFakeTimers()
     try {
       const setSource = vi.spyOn(useLabStore.getState(), 'setSource')
       const { container } = render(<App />)
-      // Cùng cơ chế "gõ" như 5 test CodeEditor ở trên: lấy EditorView thật qua
-      // DOM rồi dispatch transaction, thay vì mô phỏng sự kiện input thô mà
-      // jsdom không xử lý đáng tin cậy cho contenteditable của CodeMirror 6.
+      // Same "typing" mechanism as the 5 CodeEditor tests above: grab the
+      // real EditorView through the DOM and dispatch a transaction, instead
+      // of simulating a raw input event that jsdom doesn't handle reliably
+      // for CodeMirror 6's contenteditable.
       const view = viewOf(container)
 
       for (const ch of ['a', 'b', 'c', 'd', 'e']) {
@@ -69,10 +70,10 @@ describe('CodeEditor — CodeMirror 6 với cú pháp Kotlin', () => {
       }
 
       act(() => { vi.advanceTimersByTime(100) })
-      expect(setSource, 'chưa đủ 250ms thì chưa được biên dịch').not.toHaveBeenCalled()
+      expect(setSource, 'not yet 250ms, so it should not have compiled').not.toHaveBeenCalled()
 
       act(() => { vi.advanceTimersByTime(200) })
-      expect(setSource, '5 lần gõ phải gộp thành ĐÚNG 1 lần biên dịch').toHaveBeenCalledTimes(1)
+      expect(setSource, '5 keystrokes must collapse into EXACTLY 1 compile').toHaveBeenCalledTimes(1)
     } finally {
       vi.useRealTimers()
     }

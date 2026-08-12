@@ -4,7 +4,7 @@ export interface FailureCause {
   exType: string
   message: string
   isCancellation: boolean
-  /** Dòng 1-based của câu `throw` gây ra, nếu KotlinThrow gốc mang theo. */
+  /** 1-based line of the `throw` statement that caused this, if the original KotlinThrow carried one. */
   line?: number
 }
 
@@ -19,70 +19,79 @@ const ALLOWED: Record<JobState, readonly JobState[]> = {
 
 export class Job {
   /**
-   * Riêng tư, chỉ đổi được qua transitionTo. Nếu để public thì mọi module
-   * hạ nguồn đều có thể gán thẳng `job.state = 'Cancelled'`, bỏ qua đúng
-   * bảng ALLOWED mà class này sinh ra để canh.
+   * Private; can only change via transitionTo. If it were public, every
+   * downstream module could assign `job.state = 'Cancelled'` directly,
+   * bypassing the very ALLOWED table this class exists to enforce.
    */
   private _state: JobState = 'New'
 
-  /** Vì-sao job kết thúc bất thường, cho trace. Đặt ở CẢ hai đường: bị cancel và fail. */
+  /** Why the job ended abnormally, for the trace. Set on BOTH paths: cancelled and failed. */
   cause: FailureCause | null = null
 
   /**
-   * Chỉ đặt khi job THẬT SỰ FAIL — chính nó ném, hoặc failure của con leo lên
-   * qua nó. KHÔNG đặt khi job bị cancel từ ngoài (user gọi cancel(), hay bị kéo
-   * theo vì anh em fail).
+   * Only set when the job ACTUALLY FAILS — it throws itself, or a child's
+   * failure propagates up through it. NOT set when the job is cancelled from
+   * outside (user calls cancel(), or it gets dragged down because a sibling
+   * failed).
    *
-   * Đây là thứ phân biệt hai exception mà thân coroutine nhận được khi unwind,
-   * và nó chính là bài học của milestone này:
-   *   - job FAIL   -> thân nhận lại ĐÚNG exception gốc, nên
-   *                   `coroutineScope { launch { throw RuntimeException } }`
-   *                   ném RuntimeException ra ngoài như Kotlin thật.
-   *   - job bị CANCEL -> thân nhận CancellationException, nên một coroutine vô
-   *                   can bị kéo theo KHÔNG bắt nhầm exception của thằng khác.
-   * Gộp chung vào `cause` thì hai ca này không thể phân biệt: `cause` của anh em
-   * bị kéo theo cũng là RuntimeException("boom") của kẻ gây ra.
+   * This is what distinguishes the two exceptions a coroutine body receives
+   * when unwinding, and it is exactly the lesson of this milestone:
+   *   - job FAILS        -> the body gets back the EXACT original exception,
+   *                          so `coroutineScope { launch { throw RuntimeException } }`
+   *                          throws RuntimeException out, just like real Kotlin.
+   *   - job is CANCELLED -> the body gets a CancellationException, so an
+   *                          innocent bystander coroutine dragged down with
+   *                          it does NOT catch someone else's exception by
+   *                          mistake.
+   * If these were merged into a single `cause`, the two cases would be
+   * indistinguishable: the `cause` of a dragged-down sibling would also be
+   * the culprit's RuntimeException("boom").
    */
   failure: FailureCause | null = null
 
   /**
-   * Giá trị thân coroutine trả về. Chỉ có nghĩa với async/Deferred: `await()`
-   * đọc trường này. Với launch/scope thì nó vẫn được ghi nhưng không ai đọc —
-   * `join()` chỉ chờ, không lấy kết quả.
+   * The value the coroutine body returns. Only meaningful for async/Deferred:
+   * `await()` reads this field. For launch/scope it's still written but
+   * nobody reads it — `join()` only waits, it doesn't retrieve a result.
    */
   result: unknown = undefined
 
   /**
-   * Dòng mà coroutine này ĐANG TREO tại đó (`delay`, `await`, `join`).
+   * The line where this coroutine is CURRENTLY SUSPENDED (`delay`, `await`, `join`).
    *
-   * Dùng để gắn dòng cho các event huỷ/kết thúc của CHÍNH job này. Gắn dòng
-   * của câu `throw` đã gây ra chuỗi huỷ thì mọi nạn nhân đều trỏ về cùng một
-   * chỗ, và con trỏ trong editor đứng chết suốt cả đợt lan truyền — đo được 18
-   * mốc liên tiếp không nhúc nhích trên lesson normalfail. Chỗ nạn nhân đang
-   * đứng khi bị huỷ mới là thứ người học cần thấy: "coroutine này đang nằm ở
-   * delay(500) thì bị giết".
+   * Used to tag the line for this job's OWN cancellation/completion events.
+   * Tagging the line of the `throw` that triggered the cancellation chain
+   * instead would make every victim point to the same spot, and the cursor
+   * in the editor would sit frozen through the whole propagation — measured
+   * 18 consecutive steps without moving on the normalfail lesson. What the
+   * learner needs to see is where the victim was standing when it got
+   * killed: "this coroutine was sitting at delay(500) when it got killed".
    */
   suspendedAtLine: number | undefined = undefined
 
-  /** Mảng, không phải Set — thứ tự phải ổn định để trace deterministic. */
+  /** Array, not a Set — the order must be stable for the trace to be deterministic. */
   private readonly _children: Job[] = []
 
   /**
-   * Job của một scope builder chạy TẠI CHỖ: coroutineScope / supervisorScope /
-   * withContext. Đối ứng của `isScopedCoroutine` trong kotlinx.
+   * The Job of a scope builder that runs IN PLACE: coroutineScope /
+   * supervisorScope / withContext. The counterpart of `isScopedCoroutine` in
+   * kotlinx.
    *
-   * Ý nghĩa DUY NHẤT của cờ này: khi job kết thúc bất thường, exception được
-   * TRẢ VỀ continuation của người gọi (tức ném ra ngay tại chỗ gọi, bắt được
-   * bằng try/catch của Kotlin) chứ KHÔNG huỷ job cha. kotlinx làm đúng thế
-   * trong JobSupport.cancelParent: `if (isScopedCoroutine) return true`.
+   * The ONLY meaning of this flag: when the job ends abnormally, the
+   * exception is RETURNED to the caller's continuation (i.e. thrown right at
+   * the call site, catchable by Kotlin's try/catch) instead of cancelling the
+   * parent job. kotlinx does exactly this in JobSupport.cancelParent:
+   * `if (isScopedCoroutine) return true`.
    *
-   * Thiếu cờ này thì failure của con leo thẳng qua scope lên tới runBlocking:
-   * trace ghi coroutine gốc là Cancelled trong khi chương trình vẫn chạy tiếp
-   * và in ra, còn thứ tự unwind thì đảo — catch của tổ tiên chạy TRƯỚC finally
-   * của con cháu, ngược hẳn Kotlin.
+   * Without this flag, a child's failure climbs straight through the scope up
+   * to runBlocking: the trace records the root coroutine as Cancelled while
+   * the program keeps running and printing, and the unwind order is
+   * reversed — an ancestor's catch runs BEFORE a descendant's finally, the
+   * exact opposite of Kotlin.
    *
-   * KHÔNG bật cho runBlocking: BlockingCoroutine của kotlinx không phải
-   * ScopeCoroutine, nó chặn luồng gọi chứ không trả exception vào continuation.
+   * NOT enabled for runBlocking: kotlinx's BlockingCoroutine is not a
+   * ScopeCoroutine — it blocks the calling thread rather than returning the
+   * exception into a continuation.
    */
   readonly isScopeCoroutine: boolean
 
@@ -98,7 +107,7 @@ export class Job {
 
   get state(): JobState { return this._state }
 
-  /** readonly: thêm con bắt buộc qua addChild để liên kết luôn khớp hai chiều. */
+  /** readonly: children must be added via addChild so the link always stays bidirectionally consistent. */
   get children(): readonly Job[] { return this._children }
 
   get isActive(): boolean { return this._state === 'Active' }
@@ -106,15 +115,16 @@ export class Job {
   get isCancelled(): boolean { return this._state === 'Cancelled' }
 
   /**
-   * Liên kết cha-con phải khớp hai chiều. Nếu lệch, job con sẽ nằm ngoài
-   * `children` của cha và bị BỎ SÓT khi lan cancel — sai lặng lẽ, không có
-   * tín hiệu lỗi nào. Thà chết sớm ở đây còn hơn sai âm thầm ở Task 13.
+   * The parent-child link must be bidirectionally consistent. If it drifts,
+   * the child job ends up outside the parent's `children` and gets SKIPPED
+   * when cancellation propagates — a silent bug with no error signal. Better
+   * to fail fast here than fail silently in Task 13.
    */
   addChild(child: Job): void {
     if (child.parent !== this) {
       throw new Error(
-        `Job ${this.id}: addChild(${child.id}) nhưng child.parent không trỏ về job này. ` +
-        'Liên kết cha-con phải khớp hai chiều.',
+        `Job ${this.id}: addChild(${child.id}) but child.parent does not point back to this job. ` +
+        'The parent-child link must be bidirectionally consistent.',
       )
     }
     this._children.push(child)
@@ -122,12 +132,12 @@ export class Job {
 
   transitionTo(next: JobState): void {
     if (!ALLOWED[this._state].includes(next)) {
-      throw new Error(`Job ${this.id}: chuyển trạng thái không hợp lệ ${this._state} -> ${next}`)
+      throw new Error(`Job ${this.id}: invalid state transition ${this._state} -> ${next}`)
     }
     this._state = next
   }
 
-  /** Duyệt sâu, thứ tự ổn định. */
+  /** Depth-first traversal, stable order. */
   descendants(): Job[] {
     const out: Job[] = []
     const walk = (j: Job) => { for (const c of j.children) { out.push(c); walk(c) } }

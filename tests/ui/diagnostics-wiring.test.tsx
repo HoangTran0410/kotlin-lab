@@ -6,52 +6,55 @@ import { App } from '../../src/ui/App'
 import { useLabStore } from '../../src/state/store'
 
 /**
- * "Nối dây" ngoài 7 test của brief (tests/ui/diagnostics.test.tsx), theo đúng
- * bài học ghi lại ở Task 8/9 (progress.md): test dựng DiagnosticsPanel/
- * diagnosticMarks TRỰC TIẾP không thể bắt lỗi kiểu "App quên đọc
- * compiled.diagnostics", "App quên truyền extraExtensions vào CodeEditor",
- * hay "App quên dispatch setDiagnosticLines" — hành vi đó CHỈ tồn tại khi
- * App, CodeEditor và DiagnosticsPanel được ghép lại thật. File brief không
- * liệt kê Files: Modify App.tsx cho task này, nhưng không nối dây thì
- * "markers in the editor" mà task mô tả không có thật trong app chạy được.
+ * "Wiring" beyond the brief's 7 tests (tests/ui/diagnostics.test.tsx), per the
+ * lesson recorded in Task 8/9 (progress.md): tests that render
+ * DiagnosticsPanel/diagnosticMarks DIRECTLY can't catch bugs like "App forgot
+ * to read compiled.diagnostics", "App forgot to pass extraExtensions to
+ * CodeEditor", or "App forgot to dispatch setDiagnosticLines" — that behavior
+ * ONLY exists once App, CodeEditor and DiagnosticsPanel are actually wired
+ * together. The brief's file list doesn't mention Modify App.tsx for this
+ * task, but without wiring it up, the "markers in the editor" the task
+ * describes don't actually exist in the running app.
  */
-describe('nối dây App — diagnostics chảy từ store vào cả panel lẫn editor', () => {
-  it('lỗi validator thật hiện trong DiagnosticsPanel VÀ tô dấu trong CodeEditor sống', () => {
+describe('App wiring — diagnostics flow from the store into both the panel and the editor', () => {
+  it('a real validator error shows in DiagnosticsPanel AND marks the live CodeEditor', () => {
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource('fun main() = runBlocking { val c = Channel<Int>() }')
     const diag = useLabStore.getState().compiled.diagnostics[0]!
-    expect(diag.hint, 'fixture phải có hint để test có ý nghĩa').toBeDefined()
+    expect(diag.hint, 'fixture must have a hint for this test to mean anything').toBeDefined()
 
     const { container } = render(<App />)
 
 
-    // Lỗi phải đọc được NGAY, với bảng gỡ lỗi vẫn ĐÓNG (mặc định). Đây là
-    // chính chỗ từng hỏng: người học chỉ thấy dòng bị gạch đỏ trong editor,
-    // còn câu giải thích thì nằm sau một nút mà họ không biết là phải bấm.
-    expect(screen.queryByRole('button', { name: 'Đóng bảng gỡ lỗi' }),
-      'bảng gỡ lỗi phải đang ĐÓNG thì test này mới có nghĩa').toBeNull()
+    // The error must be readable IMMEDIATELY, with the debug panel still
+    // CLOSED (the default). This is exactly what used to be broken: learners
+    // only saw a red-underlined line in the editor, with the explanation
+    // hidden behind a button they didn't know they had to click.
+    expect(screen.queryByRole('button', { name: 'Close debug panel' }),
+      'the debug panel must be CLOSED for this test to mean anything').toBeNull()
     expect(screen.getByText(diag.message)).toBeInTheDocument()
     expect(screen.getByText(diag.hint!)).toBeInTheDocument()
 
-    // Và nó nằm trong CỘT MÃ, cạnh code — không phải ở cột bên kia màn hình.
-    const cotMa = container.querySelector('.editor-col')!
-    expect(cotMa.textContent, 'lỗi không nằm trong cột mã').toContain(diag.message)
+    // And it sits in the CODE COLUMN, next to the code — not in the column on
+    // the other side of the screen.
+    const codeCol = container.querySelector('.editor-col')!
+    expect(codeCol.textContent, 'the error is not inside the code column').toContain(diag.message)
 
-    // Editor: gutter chấm đỏ + gạch chân THẬT SỰ được vẽ vào DOM của
-    // EditorView sống — đây là phần mà test thuần diagnosticMarks.test.ts
-    // (dựng EditorState trần) không chạm tới được.
+    // Editor: the red-dot gutter + underline are ACTUALLY drawn into the live
+    // EditorView's DOM — this is the part that the pure diagnosticMarks.test.ts
+    // (building a bare EditorState) can't reach.
     expect(container.querySelector('.cm-diagnostic-line')).not.toBeNull()
     expect(container.querySelector('.cm-diagnostic-dot')).not.toBeNull()
   })
 
-  it('code sạch thì KHÔNG có ô lỗi nào chiếm chỗ dưới editor', () => {
+  it('clean code means NO error box takes up space below the editor', () => {
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource('fun main() = runBlocking { println("hi") }')
     render(<App />)
-    expect(screen.queryByRole('region', { name: /lỗi cần sửa/ })).toBeNull()
+    expect(screen.queryByRole('region', { name: /error\(s\) to fix/ })).toBeNull()
   })
 
-  it('không có lỗi thì CodeEditor sống không còn dấu nào', () => {
+  it('no errors means the live CodeEditor has no marks left', () => {
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource('fun main() = runBlocking { println("hi") }')
     const { container } = render(<App />)
@@ -60,22 +63,23 @@ describe('nối dây App — diagnostics chảy từ store vào cả panel lẫn
     expect(container.querySelector('.cm-diagnostic-dot')).toBeNull()
   })
 
-  it('bấm vào diagnostic dispatch một transaction cuộn vào EditorView sống, không ném', () => {
+  it('clicking a diagnostic dispatches a scroll transaction into the live EditorView, does not throw', () => {
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource('fun main() = runBlocking { val c = Channel<Int>() }')
     const { container } = render(<App />)
 
     const host = container.querySelector('[data-testid="code-editor"]') as HTMLElement
     const view = EditorView.findFromDOM(host)
-    if (!view) throw new Error('không tìm thấy EditorView trong DOM')
+    if (!view) throw new Error('could not find EditorView in the DOM')
     const dispatchSpy = vi.spyOn(view, 'dispatch')
 
-    // Scoped bằng class riêng của DiagnosticsPanel, KHÔNG screen.getByRole('button')
-    // trần: giả định "App chỉ có đúng một nút" đã vỡ ở Task 17 khi
-    // PlaybackControls thêm 7 nút thật (Lùi/Phát-Tạm dừng/Tiến + 4 tốc độ) vào
-    // mọi render của App. Test này chỉ quan tâm nút CỦA DIAGNOSTICS PANEL.
+    // Scoped by DiagnosticsPanel's own class, NOT a bare
+    // screen.getByRole('button'): the assumption "App has exactly one
+    // button" broke in Task 17 when PlaybackControls added 7 real buttons
+    // (Back/Play-Pause/Forward + 4 speeds) to every render of App. This test
+    // only cares about the DIAGNOSTICS PANEL's button.
     const button = container.querySelector<HTMLButtonElement>('.diagnostic-item__button')
-    if (!button) throw new Error('không tìm thấy nút diagnostic trong DOM')
+    if (!button) throw new Error('could not find the diagnostic button in the DOM')
     expect(() => act(() => { button.click() })).not.toThrow()
     expect(dispatchSpy).toHaveBeenCalled()
   })

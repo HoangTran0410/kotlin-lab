@@ -1,12 +1,12 @@
 {
   "id": "globalscope",
   "order": 13,
-  "title": "GlobalScope — coroutine không có cha",
-  "summary": "Không cha thì không ai chờ, không ai huỷ. Nhìn đồ thị: nó đứng riêng một cây.",
+  "title": "GlobalScope — a coroutine with no parent",
+  "summary": "No parent means nobody waits, nobody cancels. Look at the graph: it stands alone as its own tree.",
   "concepts": [
     "GlobalScope",
     "structured concurrency",
-    "job mồ côi",
-    "vòng đời"
+    "orphan job",
+    "lifecycle"
   ]
 }

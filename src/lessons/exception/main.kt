@@ -1,23 +1,23 @@
 import kotlinx.coroutines.*
 
 fun main() = runBlocking {
-    val batDuoc = launch {
+    val caught = launch {
         try {
             error("boom")
         } catch (e: IllegalStateException) {
-            println("1. bắt được exception: " + e.message)
+            println("1. caught exception: " + e.message)
         }
-        println("2. job này KHÔNG fail — exception đã được xử lý")
+        println("2. this job does NOT fail — the exception was handled")
     }
-    batDuoc.join()
-    println("3. isCancelled = " + batDuoc.isCancelled)
+    caught.join()
+    println("3. isCancelled = " + caught.isCancelled)
 
     try {
         coroutineScope {
-            launch { throw RuntimeException("không ai bắt") }
+            launch { throw RuntimeException("nobody catches this") }
         }
     } catch (e: RuntimeException) {
-        println("4. exception thoát khỏi coroutine => Job FAIL: " + e.message)
+        println("4. exception escapes the coroutine => Job FAILS: " + e.message)
     }
-    println("5. hết bài")
+    println("5. lesson done")
 }

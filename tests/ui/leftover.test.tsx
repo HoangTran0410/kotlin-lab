@@ -4,80 +4,85 @@ import { render, screen } from '@testing-library/react'
 import { App } from '../../src/ui/App'
 import { useLabStore } from '../../src/state/store'
 import { lessonSource } from '../../src/lessons/registry'
-import { coroutineDangDo } from '../../src/engine/trace/leftover'
+import { unfinishedCoroutines } from '../../src/engine/trace/leftover'
 import { runSource } from '../../src/engine/run'
 
 /**
- * Ca thật mà người dùng gặp: chương trình không có `runBlocking`, nên `main`
- * trả về ngay và mọi coroutine vừa phóng ra bị bỏ lại ở `delay`. Output rỗng,
- * đồ thị đầy node đứng im, KHÔNG một chữ nào nói vì sao.
+ * A real case users run into: the program has no `runBlocking`, so `main`
+ * returns immediately and every coroutine that was just launched is left
+ * behind at `delay`. Empty output, a graph full of nodes standing still, NOT
+ * A WORD about why.
  *
- * Kotlin thật cũng cho ra output rỗng cho đúng chương trình này (đã đối chiếu
- * playground 2.1.20) — nên engine không sai. Cái sai là im lặng.
+ * Real Kotlin also produces empty output for this exact program (cross-checked
+ * against the 2.1.20 playground) — so the engine isn't wrong. What's wrong is
+ * the silence.
  */
-const KHONG_RUNBLOCKING = `import kotlinx.coroutines.*
+const NO_RUN_BLOCKING = `import kotlinx.coroutines.*
 
 fun main() {
-    val pham = CoroutineScope(SupervisorJob())
-    pham.launch {
+    val scope = CoroutineScope(SupervisorJob())
+    scope.launch {
         launch { delay(500); throw RuntimeException("Child 1 failed") }
         launch { delay(1000); println("Child 2 finished") }
     }
 }
 `
 
-const nap = (src: string): void => {
+const load = (src: string): void => {
   act(() => { useLabStore.getState().loadSource(src) })
 }
 
-describe('coroutine bị bỏ lại giữa chừng', () => {
+describe('coroutines left unfinished', () => {
   beforeEach(() => {
-    // `loadSource('')` chứ không phải `setState({ source: '' })`: store là biến
-    // module dùng chung cho cả file, và setState KHÔNG biên dịch lại — nên
-    // `compiled` của ca trước còn nguyên, và ca cuối cùng nhận trace của
-    // globalscope. Đã đo: nó đỏ đúng vì lý do đó.
+    // `loadSource('')`, not `setState({ source: '' })`: the store is a module
+    // variable shared across the whole file, and setState does NOT
+    // recompile — so the previous case's `compiled` would still be around,
+    // and the last case would get globalscope's trace instead. Measured: it
+    // fails red for exactly that reason.
     act(() => { useLabStore.getState().loadSource('') })
   })
 
-  it('nhận đúng những job chưa kết thúc, không kể job đã xong', () => {
-    const r = runSource(KHONG_RUNBLOCKING)
+  it('picks up exactly the unfinished jobs, not jobs that already completed', () => {
+    const r = runSource(NO_RUN_BLOCKING)
     expect(r.diagnostics).toEqual([])
-    expect(r.output, 'chương trình này không in được gì — giống hệt JVM thật').toEqual([])
-    const { jobs } = coroutineDangDo(r.events)
-    // Bốn cái dang dở: job gốc của scope, launch cha, và hai launch con. Root
-    // runBlocking thì đã Completed nên KHÔNG được có mặt.
+    expect(r.output, 'this program cannot print anything — just like the real JVM').toEqual([])
+    const { jobs } = unfinishedCoroutines(r.events)
+    // Four unfinished ones: the scope's root job, the parent launch, and its
+    // two child launches. The root runBlocking has Completed, so it must NOT
+    // be present.
     expect(jobs).toHaveLength(4)
     expect(jobs.every(j => j.state !== 'Completed' && j.state !== 'Cancelled')).toBe(true)
-    expect(jobs.some(j => j.builder === 'runBlocking'), 'job đã xong lại bị kể là dang dở').toBe(false)
+    expect(jobs.some(j => j.builder === 'runBlocking'), 'a completed job got counted as unfinished').toBe(false)
   })
 
-  it('hiện ghi chú, kèm gợi ý runBlocking khi file không có runBlocking nào', () => {
+  it('shows the notice, with a runBlocking hint, when the file has no runBlocking at all', () => {
     render(<App />)
-    nap(KHONG_RUNBLOCKING)
+    load(NO_RUN_BLOCKING)
     const note = screen.getByTestId('leftover-notice')
-    expect(note).toHaveTextContent('4 coroutine bị bỏ lại giữa chừng')
-    expect(note).toHaveTextContent(/Không có .*runBlocking.* nào trong file/)
+    expect(note).toHaveTextContent('4 coroutine(s) left unfinished')
+    expect(note).toHaveTextContent(/no .*runBlocking.* in the file/i)
   })
 
-  it('KHÔNG hiện khi mọi coroutine đều chạy xong', () => {
-    // Nếu ghi chú hiện cả lúc bình thường thì nó thành nhiễu và người ta học
-    // cách bỏ qua nó — đúng lúc cần đọc thì không đọc nữa.
+  it('does NOT show when every coroutine ran to completion', () => {
+    // If the notice showed even in the normal case, it would become noise and
+    // people would learn to ignore it — right when it's needed, it wouldn't
+    // get read anymore.
     render(<App />)
-    nap(lessonSource('suspend')!)
+    load(lessonSource('suspend')!)
     expect(screen.queryByTestId('leftover-notice')).toBeNull()
   })
 
-  it('vẫn hiện khi CÓ runBlocking, nhưng không nhắc runBlocking nữa', () => {
-    // GlobalScope: có runBlocking, chương trình vẫn bỏ lại một coroutine. Gợi
-    // ý "thêm runBlocking" ở đây sẽ là lời khuyên sai.
+  it('still shows when runBlocking IS present, but no longer mentions runBlocking', () => {
+    // GlobalScope: runBlocking is present, and the program still leaves one
+    // coroutine behind. A "add runBlocking" hint here would be bad advice.
     render(<App />)
-    nap(lessonSource('globalscope')!)
+    load(lessonSource('globalscope')!)
     const note = screen.getByTestId('leftover-notice')
-    expect(note).toHaveTextContent('1 coroutine bị bỏ lại giữa chừng')
-    expect(note.textContent).not.toMatch(/Không có .*runBlocking.* nào trong file/)
+    expect(note).toHaveTextContent('1 coroutine(s) left unfinished')
+    expect(note.textContent).not.toMatch(/no .*runBlocking.* in the file/i)
   })
 
-  it('không hiện gì khi chưa có code nào', () => {
+  it('shows nothing when there is no code yet', () => {
     render(<App />)
     expect(screen.queryByTestId('leftover-notice')).toBeNull()
   })

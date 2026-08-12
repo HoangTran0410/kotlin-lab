@@ -6,30 +6,30 @@ import { LESSON_LIST, lessonSource } from '../../src/lessons/registry'
 import { runSourceSafe } from '../../src/engine/run'
 
 /**
- * "Nối dây": test dựng LessonNav/LessonList TRỰC TIẾP (lesson-nav.test.tsx)
- * không bắt được lỗi kiểu "App quên mount nav vào slot của Shell" hay "App
- * truyền nhầm loadLesson của một store khác". Chỉ ở đây, với <App/> ghép thật,
- * bấm DOM thật mới lộ loại lỗi đó.
+ * "Wiring": tests that render LessonNav/LessonList DIRECTLY (lesson-nav.test.tsx)
+ * can't catch bugs like "App forgot to mount nav into Shell's slot" or "App
+ * passed the wrong store's loadLesson". Only here, with a real assembled
+ * <App/>, real DOM clicks reveal that class of bug.
  *
- * QUAN TRỌNG: App có RẤT NHIỀU <button> — mọi query dưới đây bị SCOPE vào nav
- * hoặc vào hộp (role="dialog"), không bao giờ `getByRole('button')` trần.
+ * IMPORTANT: App has A LOT of <button>s — every query below is SCOPED to the
+ * nav or to the box (role="dialog"), never a bare `getByRole('button')`.
  */
-const moLoTrinh = (): HTMLElement => {
-  const nav = screen.getByRole('navigation', { name: 'Lộ trình bài học' })
+const openLessons = (): HTMLElement => {
+  const nav = screen.getByRole('navigation', { name: 'Lesson path' })
   fireEvent.click(within(nav).getAllByRole('button')[0]!)
   return screen.getByRole('dialog')
 }
 
-describe('nối dây App -> lộ trình bài học', () => {
-  it('bấm một bài nạp đúng source thật, đúng lessonId, kẹp stepIndex về 0, và đóng hộp', () => {
+describe('App wiring -> lesson path', () => {
+  it('clicking a lesson loads real source, the right lessonId, clamps stepIndex to 0, and closes the box', () => {
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource(lessonSource('jobtree')!)
     useLabStore.getState().setStep(2)
     render(<App />)
 
-    const hop = moLoTrinh()
-    const cards = [...hop.querySelectorAll<HTMLButtonElement>('.les__card')]
-    expect(cards, 'hộp phải có đúng một thẻ cho mỗi bài').toHaveLength(LESSON_LIST.length)
+    const box = openLessons()
+    const cards = [...box.querySelectorAll<HTMLButtonElement>('.les__card')]
+    expect(cards, 'box must have exactly one card per lesson').toHaveLength(LESSON_LIST.length)
 
     const target = cards[LESSON_LIST.findIndex(l => l.id === 'supervisor')]!
     fireEvent.click(target)
@@ -37,43 +37,43 @@ describe('nối dây App -> lộ trình bài học', () => {
     expect(useLabStore.getState().lessonId).toBe('supervisor')
     expect(useLabStore.getState().source).toBe(lessonSource('supervisor'))
     expect(useLabStore.getState().stepIndex).toBe(0)
-    expect(screen.queryByRole('dialog'), 'hộp không tự đóng sau khi chọn bài').toBeNull()
+    expect(screen.queryByRole('dialog'), 'box does not auto-close after picking a lesson').toBeNull()
   })
 
-  it('header hiện tên bài vừa chọn — không phải chỉ một chấm màu', () => {
+  it('the header shows the name of the lesson just picked — not just a colored dot', () => {
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     render(<App />)
-    const hop = moLoTrinh()
+    const box = openLessons()
     const idx = LESSON_LIST.findIndex(l => l.id === 'parallel')
-    fireEvent.click([...hop.querySelectorAll<HTMLButtonElement>('.les__card')][idx]!)
+    fireEvent.click([...box.querySelectorAll<HTMLButtonElement>('.les__card')][idx]!)
 
-    const nav = screen.getByRole('navigation', { name: 'Lộ trình bài học' })
+    const nav = screen.getByRole('navigation', { name: 'Lesson path' })
     expect(nav).toHaveTextContent(LESSON_LIST[idx]!.title)
   })
 
-  it('hai tab nằm trong CÙNG một hộp, chuyển qua lại không phải đóng mở', () => {
+  it('both tabs live in the SAME box, switching does not mean closing and reopening', () => {
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     render(<App />)
-    const hop = moLoTrinh()
-    expect(within(hop).getAllByRole('tab')).toHaveLength(2)
+    const box = openLessons()
+    expect(within(box).getAllByRole('tab')).toHaveLength(2)
 
-    fireEvent.click(within(hop).getByRole('tab', { name: 'Chạy được gì?' }))
-    // Vẫn đúng một hộp, và nội dung đã đổi sang tab kia.
+    fireEvent.click(within(box).getByRole('tab', { name: 'What can it run?' }))
+    // Still exactly one box, and its content has switched to the other tab.
     expect(screen.getAllByRole('dialog')).toHaveLength(1)
-    expect(screen.getByRole('dialog')).toHaveTextContent('Chưa chạy được')
+    expect(screen.getByRole('dialog')).toHaveTextContent('Not supported yet')
   })
 
-  it('bấm "Bắt đầu từ trang trắng" nạp source thật vào store, compile sạch', () => {
+  it('clicking "Start from blank" loads real source into the store, compiles clean', () => {
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource(lessonSource('supervisor')!)
     render(<App />)
 
     const before = useLabStore.getState().source
-    const nav = screen.getByRole('navigation', { name: 'Lộ trình bài học' })
-    fireEvent.click(within(nav).getByRole('button', { name: 'Bắt đầu từ trang trắng' }))
+    const nav = screen.getByRole('navigation', { name: 'Lesson path' })
+    fireEvent.click(within(nav).getByRole('button', { name: 'Start from blank' }))
 
     const src = useLabStore.getState().source
-    expect(src, 'source phải thật sự đổi, không phải no-op').not.toBe(before)
+    expect(src, 'source must actually change, not a no-op').not.toBe(before)
     expect(runSourceSafe(src).diagnostics).toEqual([])
   })
 })

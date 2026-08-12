@@ -1,18 +1,18 @@
 /**
- * Thiết kế §2.4 và §12: người học rất dễ tưởng thứ tự deterministic này là thứ
- * tự DUY NHẤT khả dĩ. Ghi chú phải THƯỜNG TRỰC — không prop để tắt, không nút
- * đóng, không tự ẩn. Nếu ai đó muốn giấu nó đi thì phải sửa file này và giải
- * thích lý do trong commit.
+ * Design §2.4 and §12: learners very easily assume this deterministic order
+ * is the ONLY possible order. The notice must be PERMANENT — no prop to turn
+ * it off, no close button, no auto-hide. If someone wants to hide it, they
+ * have to edit this file and explain why in the commit.
  *
- * Nó còn gánh thêm phần tồn đọng M1 nhóm A: thứ tự vài event lệch Kotlin thật
- * (catch của scope chạy trước finally của anh em bị huỷ).
+ * It also carries the leftover M1 group-A item: a few events' order diverges
+ * from real Kotlin (a scope's catch runs before a cancelled sibling's finally).
  */
 export function SimulationNotice() {
   return (
     <div className="sim-notice" role="note">
-      <strong>Mô phỏng deterministic.</strong> Công cụ này luôn sinh ra một thứ tự chạy duy nhất
-      cho cùng một đoạn code. Kotlin thật chạy đa luồng và có thể xen kẽ khác — nhất là thứ tự
-      giữa các coroutine cùng sẵn sàng tại một thời điểm.
+      <strong>Deterministic simulation.</strong> This tool always produces a single, fixed run
+      order for the same piece of code. Real Kotlin runs multi-threaded and can interleave
+      differently — especially the order between coroutines that become ready at the same time.
     </div>
   )
 }

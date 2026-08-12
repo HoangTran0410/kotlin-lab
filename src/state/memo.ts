@@ -1,10 +1,11 @@
 /**
- * Memo một-ô, so sánh tham chiếu theo từng đối số.
+ * Single-cell memo, comparing each argument by reference.
  *
- * Không phải để làm foldTrace nhanh hơn — đã đo, gập cả trace 16k event tốn
- * 0.49ms, tức 3% một khung hình 60fps. Lý do thật là ỔN ĐỊNH THAM CHIẾU:
- * foldTrace trả object MỚI mỗi lần gọi, nên gọi thẳng trong selector sẽ khiến
- * mọi component re-render ở mọi lần store đổi, kể cả khi stepIndex không đổi.
+ * Not to make foldTrace faster — measured: folding a whole 16k-event trace
+ * costs 0.49ms, i.e. 3% of one 60fps frame. The real reason is REFERENCE
+ * STABILITY: foldTrace returns a NEW object on every call, so calling it
+ * directly inside a selector would make every component re-render on every
+ * store change, even when stepIndex hasn't changed.
  */
 export function memoizeTwo<A, B, R>(fn: (a: A, b: B) => R): (a: A, b: B) => R {
   let lastA: A | undefined

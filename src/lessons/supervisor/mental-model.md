@@ -1,28 +1,31 @@
-## Mô hình tư duy
+## Mental model
 
-Supervisor là một **cầu dao** đặt trên đường failure đi lên. Con fail, tín hiệu leo
-lên tới ranh giới supervisor, và dừng ở đó: cha không coi mình là hỏng, nên không
-huỷ những con còn lại.
+A supervisor is a **circuit breaker** sitting on the path failure travels up.
+A child fails, the signal climbs up to the supervisor boundary, and stops there:
+the parent doesn't consider itself broken, so it doesn't cancel its remaining
+children.
 
-Đúng một chiều bị chặn. Cancel đi xuống thì vẫn đi qua bình thường: huỷ
-supervisorScope vẫn huỷ sạch con của nó.
+Exactly one direction is blocked. Cancellation going down still passes through
+normally: cancelling a `supervisorScope` still cleanly cancels all of its
+children.
 
-## Vì sao Kotlin làm thế
+## Why Kotlin works this way
 
-Có những nhóm việc mà các thành viên **độc lập** với nhau: ba widget trên một màn
-hình, năm request tải ảnh. Một cái hỏng không có lý do gì kéo bốn cái kia xuống.
-Đó là lúc bạn muốn cô lập failure mà vẫn giữ được lợi ích của cây job (huỷ một
-phát là sạch).
+There are groups of work whose members are **independent** of each other: three
+widgets on one screen, five image-loading requests. One breaking has no reason to
+drag the other four down with it. That's when you want to isolate the failure
+while still keeping the benefit of the job tree (one cancel cleans up everything).
 
-## Chỗ hay sai
+## Where people get it wrong
 
-- Dùng `SupervisorJob()` như một cái khiên vạn năng. Nó chỉ chặn failure của **con
-  trực tiếp** — xem bài *Cái bẫy lồng nhau*.
-- Truyền `SupervisorJob()` làm đối số cho `launch`: `launch(SupervisorJob())`. Cách
-  này tạo một job **rời khỏi** cây thay vì đặt ranh giới supervisor. Ranh giới nằm ở
-  `supervisorScope { }` hoặc ở `CoroutineScope(SupervisorJob())`.
+- Using `SupervisorJob()` as a universal shield. It only blocks the failure of its
+  **direct child** — see the lesson *The nested trap*.
+- Passing `SupervisorJob()` as an argument to `launch`: `launch(SupervisorJob())`.
+  This creates a job that **leaves** the tree instead of placing a supervisor
+  boundary. The boundary belongs at `supervisorScope { }` or at
+  `CoroutineScope(SupervisorJob())`.
 
-## Nhìn gì trên đồ thị
+## What to look for on the graph
 
-Cạnh failure đi lên và **dừng lại** ở node supervisor — không có cạnh cancel nào
-toả ra từ đó. So thẳng với hình của bài trước.
+A failure edge goes up and **stops** at the supervisor node — no cancel edge
+radiates out from it. Compare it directly with the previous lesson's shape.

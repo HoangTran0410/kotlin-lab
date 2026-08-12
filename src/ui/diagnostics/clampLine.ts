@@ -1,15 +1,17 @@
 /**
- * Kẹp một số dòng 1-based vào [1, totalLines].
+ * Clamps a 1-based line number into [1, totalLines].
  *
- * `Diagnostic.line` không đáng tin: tồn đọng B2 sinh ra `line: 1` sai cho lỗi
- * bên trong string template "${...}", và một trace cũ (chưa biên dịch lại)
- * có thể trỏ quá cuối file sau khi user vừa xoá vài dòng. Dùng ĐÚNG một hàm
- * này ở cả hai nơi cần kẹp — DiagnosticsPanel (hiện số + nhảy dòng) và
- * diagnosticMarks (gutter + gạch chân trong CodeEditor) — để không có đường
- * nào quên kẹp.
+ * `Diagnostic.line` isn't trustworthy: leftover item B2 produces a wrong
+ * `line: 1` for errors inside a string template "${...}", and a stale trace
+ * (not yet recompiled) can point past the end of the file right after the
+ * user deletes a few lines. Use EXACTLY this one function at both places that
+ * need clamping — DiagnosticsPanel (shows the number + jumps to it) and
+ * diagnosticMarks (gutter + underline in CodeEditor) — so there's no path
+ * left that forgets to clamp.
  *
- * `totalLines` luôn phải >= 1 (kể cả tài liệu rỗng vẫn có đúng 1 dòng logic,
- * giống `Text.lines` của CodeMirror và `source.split('\n').length`).
+ * `totalLines` must always be >= 1 (even an empty document has exactly 1
+ * logical line, matching CodeMirror's `Text.lines` and
+ * `source.split('\n').length`).
  */
 export function clampDiagnosticLine(line: number, totalLines: number): number {
   return Math.max(1, Math.min(line, totalLines))

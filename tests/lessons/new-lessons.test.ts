@@ -4,108 +4,111 @@ import { runSource } from '../../src/engine/run'
 import type { Event } from '../../src/engine/trace/events'
 
 /**
- * Mỗi bài mới được neo bằng ĐÚNG cái nó dạy, không chỉ bằng output.
+ * Each new lesson is anchored by the EXACT thing it teaches, not just by output.
  *
- * Output đã được `jvm-parity.test.ts` so từng dòng với JVM thật, nên chép lại
- * ở đây là thừa. Cái output KHÔNG chứng minh được là *vì sao*: bốn bài này đều
- * có thể in ra đúng chừng ấy dòng vì một lý do sai (job không có cha lại hoá ra
- * có, cancelAndJoin hoá ra không chờ, async chạy tuần tự mà vẫn ra cùng tổng).
- * Những ca dưới đây nhắm vào chỗ đó.
+ * Output is already compared line by line against real JVM output by
+ * `jvm-parity.test.ts`, so repeating that here would be redundant. What output
+ * CANNOT prove is *why*: all four of these lessons could print exactly that many
+ * lines for the wrong reason (a job that's supposed to have no parent turns out
+ * to have one, cancelAndJoin turns out not to wait, async runs sequentially and
+ * still produces the same total). The cases below target exactly that.
  */
-const chay = (id: string) => runSource(loadLessonSource(id))
-const inRa = (e: Event, s: string): boolean => e.k === 'PRINTLN' && e.text.startsWith(s)
-const viTri = (evts: Event[], s: string): number => evts.findIndex(e => inRa(e, s))
+const run = (id: string) => runSource(loadLessonSource(id))
+const printed = (e: Event, s: string): boolean => e.k === 'PRINTLN' && e.text.startsWith(s)
+const indexOfPrint = (evts: Event[], s: string): number => evts.findIndex(e => printed(e, s))
 
-describe('cleanup — huỷ và dọn dẹp', () => {
-  it('finally chạy SAU khi lệnh huỷ tới, không phải trước', () => {
-    const e = chay('cleanup').events
-    const huy = e.findIndex(x => x.k === 'CANCEL_REQUESTED')
-    expect(huy).toBeGreaterThanOrEqual(0)
-    expect(viTri(e, '3. finally')).toBeGreaterThan(huy)
+describe('cleanup — cancellation and cleanup', () => {
+  it('finally runs AFTER the cancellation arrives, not before', () => {
+    const e = run('cleanup').events
+    const cancel = e.findIndex(x => x.k === 'CANCEL_REQUESTED')
+    expect(cancel).toBeGreaterThanOrEqual(0)
+    expect(indexOfPrint(e, '3. finally')).toBeGreaterThan(cancel)
   })
 
-  it('cancelAndJoin() CHỜ finally xong mới trả về', () => {
-    // Đây là toàn bộ khác biệt giữa `cancel()` và `cancelAndJoin()`. Nếu ai đó
-    // nối cancelAndJoin thẳng vào cancel (đúng lỗi từng có trong interpreter),
-    // dòng 4 sẽ nhảy lên trước dòng 3 và ca này đỏ.
-    const e = chay('cleanup').events
-    expect(viTri(e, '4. cancelAndJoin')).toBeGreaterThan(viTri(e, '3. finally'))
+  it('cancelAndJoin() WAITS for finally to finish before returning', () => {
+    // This is the entire difference between `cancel()` and `cancelAndJoin()`. If
+    // someone wires cancelAndJoin straight into cancel (a bug the interpreter
+    // actually had once), line 4 would jump ahead of line 3 and this case goes red.
+    const e = run('cleanup').events
+    expect(indexOfPrint(e, '4. cancelAndJoin')).toBeGreaterThan(indexOfPrint(e, '3. finally'))
   })
 
-  it('job kết thúc ở Cancelled, không phải Completed', () => {
-    const e = chay('cleanup').events
-    const con = e.find(x => x.k === 'COROUTINE_CREATED' && x.varName === 'job')!
-    const id = (con as { id: string }).id
-    const cuoi = e.filter(x => x.k === 'JOB_STATE' && x.id === id).at(-1)
-    expect(cuoi).toMatchObject({ to: 'Cancelled' })
+  it('the job ends at Cancelled, not Completed', () => {
+    const e = run('cleanup').events
+    const job = e.find(x => x.k === 'COROUTINE_CREATED' && x.varName === 'job')!
+    const id = (job as { id: string }).id
+    const last = e.filter(x => x.k === 'JOB_STATE' && x.id === id).at(-1)
+    expect(last).toMatchObject({ to: 'Cancelled' })
   })
 })
 
-describe('swallow — catch rộng nuốt mất tín hiệu huỷ', () => {
-  it('phát EXCEPTION_CAUGHT đúng kiểu CancellationException', () => {
-    const bat = chay('swallow').events.filter(e => e.k === 'EXCEPTION_CAUGHT')
-    expect(bat).toHaveLength(1)
-    expect(bat[0]).toMatchObject({ exType: 'CancellationException' })
+describe('swallow — a broad catch swallows the cancellation signal', () => {
+  it('emits EXCEPTION_CAUGHT of exactly type CancellationException', () => {
+    const caught = run('swallow').events.filter(e => e.k === 'EXCEPTION_CAUGHT')
+    expect(caught).toHaveLength(1)
+    expect(caught[0]).toMatchObject({ exType: 'CancellationException' })
   })
 
-  it('thân chạy TIẾP sau khi nuốt — và Job thì vẫn Cancelled', () => {
-    // Hai vế phải cùng đúng mới ra được bài học. Chỉ kiểm vế đầu thì một engine
-    // bỏ qua cancel hoàn toàn cũng xanh; chỉ kiểm vế sau thì một engine giết
-    // thẳng coroutine tại chỗ huỷ cũng xanh.
-    const r = chay('swallow')
-    const con = r.events.find(x => x.k === 'COROUTINE_CREATED' && x.varName === 'job')!
-    const id = (con as { id: string }).id
-    expect(viTri(r.events, '3. thân vẫn chạy tiếp')).toBeGreaterThan(0)
-    const cuoi = r.events.filter(x => x.k === 'JOB_STATE' && x.id === id).at(-1)
-    expect(cuoi).toMatchObject({ to: 'Cancelled' })
+  it('the body keeps running after swallowing it — and the Job is still Cancelled', () => {
+    // Both halves have to hold for this to be the actual lesson. Checking only
+    // the first half would let an engine that ignores cancellation entirely pass
+    // too; checking only the second half would let an engine that kills the
+    // coroutine outright at the cancel point pass too.
+    const r = run('swallow')
+    const job = r.events.find(x => x.k === 'COROUTINE_CREATED' && x.varName === 'job')!
+    const id = (job as { id: string }).id
+    expect(indexOfPrint(r.events, '3. the body keeps running')).toBeGreaterThan(0)
+    const last = r.events.filter(x => x.k === 'JOB_STATE' && x.id === id).at(-1)
+    expect(last).toMatchObject({ to: 'Cancelled' })
     expect(r.output.at(-1)).toBe('4. job.isCancelled = true')
   })
 })
 
-describe('parallel — tuần tự hay song song, đồng hồ mới nói thật', () => {
-  it('hai lời gọi tuần tự tốn 200+200, hai async chỉ tốn 200', () => {
-    // Output của hai nửa giống hệt nhau (đều ra 5) — CHỈ có đồng hồ ảo phân
-    // biệt được. Nếu async bị cài thành chạy-ngay-tại-chỗ thì nửa sau cũng
-    // thành 400 và ca này đỏ.
-    const e = chay('parallel').events
-    const t = (s: string): number => e[viTri(e, s)]!.t
-    expect(t('2. tuần tự xong') - t('1. tuần tự')).toBe(400)
-    expect(t('4. song song xong') - t('3. song song')).toBe(200)
+describe('parallel — sequential or parallel, only the clock tells the truth', () => {
+  it('two sequential calls cost 200+200, two async calls cost only 200', () => {
+    // Both halves print the identical output (both total 5) — ONLY the virtual
+    // clock can tell them apart. If async got wired up to run inline instead,
+    // the second half would also become 400 and this case would go red.
+    const e = run('parallel').events
+    const t = (s: string): number => e[indexOfPrint(e, s)]!.t
+    expect(t('2. sequential done') - t('1. sequential')).toBe(400)
+    expect(t('4. parallel done') - t('3. parallel')).toBe(200)
   })
 
-  it('hai async là hai job con thật, tạo ra TRƯỚC khi await cái nào', () => {
-    const e = chay('parallel').events
-    const async2 = e.filter(x => x.k === 'COROUTINE_CREATED' && x.builder === 'async')
-    expect(async2).toHaveLength(2)
-    expect(async2.map(x => (x as { varName?: string }).varName)).toEqual(['anh', 'ten'])
-    const await1 = e.findIndex(x => x.k === 'COROUTINE_SUSPENDED' && x.reason === 'await')
-    expect(await1).toBeGreaterThan(e.indexOf(async2[1]!))
+  it('the two async calls are two real child jobs, both CREATED before either is awaited', () => {
+    const e = run('parallel').events
+    const asyncJobs = e.filter(x => x.k === 'COROUTINE_CREATED' && x.builder === 'async')
+    expect(asyncJobs).toHaveLength(2)
+    expect(asyncJobs.map(x => (x as { varName?: string }).varName)).toEqual(['image', 'name'])
+    const firstAwait = e.findIndex(x => x.k === 'COROUTINE_SUSPENDED' && x.reason === 'await')
+    expect(firstAwait).toBeGreaterThan(e.indexOf(asyncJobs[1]!))
   })
 })
 
-describe('globalscope — coroutine không có cha', () => {
-  it('job của GlobalScope có parentId null, job kia treo dưới root', () => {
-    const e = chay('globalscope').events
-    const tao = e.filter(x => x.k === 'COROUTINE_CREATED')
-    const root = tao[0] as { id: string }
-    const con = tao.filter(x => (x as { builder: string }).builder === 'launch')
-    expect(con).toHaveLength(2)
-    expect((con[0] as { parentId: string | null }).parentId).toBe(root.id)
-    expect((con[1] as { parentId: string | null }).parentId).toBeNull()
+describe('globalscope — a coroutine with no parent', () => {
+  it('the GlobalScope job has parentId null, the other job hangs under root', () => {
+    const e = run('globalscope').events
+    const created = e.filter(x => x.k === 'COROUTINE_CREATED')
+    const root = created[0] as { id: string }
+    const children = created.filter(x => (x as { builder: string }).builder === 'launch')
+    expect(children).toHaveLength(2)
+    expect((children[0] as { parentId: string | null }).parentId).toBe(root.id)
+    expect((children[1] as { parentId: string | null }).parentId).toBeNull()
   })
 
-  it('không ai chờ nó: chương trình kết thúc trong khi nó còn đang delay', () => {
-    // Khẳng định theo chiều dương — "output không có dòng đó" cũng xanh nếu
-    // coroutine kia chưa từng được tạo. Ở đây job PHẢI tồn tại, PHẢI đã chạy,
-    // và PHẢI dừng ở một điểm suspend không có resume nào theo sau.
-    const r = chay('globalscope')
-    const moCoi = r.events.find(x => x.k === 'COROUTINE_CREATED' && x.parentId === null
+  it('nobody waits for it: the program ends while it is still delaying', () => {
+    // Assert the positive direction — "the output doesn't contain that line"
+    // would also pass if that coroutine had never been created at all. Here the
+    // job MUST exist, MUST have run, and MUST stop at a suspend point with no
+    // resume following it.
+    const r = run('globalscope')
+    const orphan = r.events.find(x => x.k === 'COROUTINE_CREATED' && x.parentId === null
       && x.builder === 'launch')!
-    const id = (moCoi as { id: string }).id
+    const id = (orphan as { id: string }).id
     expect(r.events.some(x => x.k === 'COROUTINE_STARTED' && x.id === id)).toBe(true)
-    const cuoi = r.events.filter(
+    const last = r.events.filter(
       x => (x.k === 'COROUTINE_SUSPENDED' || x.k === 'COROUTINE_RESUMED') && x.id === id).at(-1)
-    expect(cuoi?.k).toBe('COROUTINE_SUSPENDED')
-    expect(r.output).not.toContain('dòng này không bao giờ in — chương trình đã kết thúc từ lâu')
+    expect(last?.k).toBe('COROUTINE_SUSPENDED')
+    expect(r.output).not.toContain('this line never prints — the program ended long ago')
   })
 })

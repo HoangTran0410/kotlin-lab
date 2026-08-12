@@ -1,30 +1,32 @@
-## Mô hình tư duy
+## Mental model
 
-Cùng một cơ chế, khác nhau đúng một chỗ: **có ai đọc kết quả không**.
+Same mechanism, different in exactly one place: **does anyone read the result**.
 
-- `launch` → `Job`. `join()` chỉ **chờ**. Không có giá trị nào để lấy, nên cũng
-  không có chỗ nào để exception hiện ra cho bạn.
-- `async` → `Deferred`. `await()` vừa chờ vừa **đọc**. Và vì có chỗ đọc, exception
-  được ném lại **tại đúng dòng gọi `await()`**.
+- `launch` → `Job`. `join()` only **waits**. There is no value to grab, so there's
+  also no place for an exception to surface to you.
+- `async` → `Deferred`. `await()` both waits and **reads**. And because there's a
+  place to read from, the exception gets re-thrown **at the exact line that calls
+  `await()`**.
 
-Nên câu hỏi để chọn không phải "cái nào hiện đại hơn" mà là: *tôi có cần giá trị
-trả về không?*
+So the question to decide with isn't "which one is more modern" but: *do I need
+the return value?*
 
-## Vì sao Kotlin làm thế
+## Why Kotlin works this way
 
-`Deferred` là một lời hứa về một giá trị. Một lời hứa thất bại thì thất bại đó phải
-tới tay người đang chờ — như `Promise.reject`. `Job` không hứa gì cả, nên lỗi của nó
-chỉ có một đường duy nhất để đi: lên cha.
+A `Deferred` is a promise of a value. A promise that fails has to deliver that
+failure to whoever is waiting for it — like `Promise.reject`. A `Job` doesn't
+promise anything, so its error has exactly one path to travel: up to the parent.
 
-## Chỗ hay sai
+## Where people get it wrong
 
-- `async { }` rồi **không** `await()`. Lỗi bên trong sẽ im lặng cho tới khi có ai
-  đọc — hoặc mãi mãi.
-- Tưởng `await()` là chỗ *duy nhất* lỗi được xử lý. Không: `async` vẫn là con trong
-  cây, nên failure vẫn leo lên cha song song với việc chờ được `await()`. Chỗ này là
-  lý do bài dùng `supervisorScope`.
+- `async { }` and then **not** calling `await()`. The error inside stays silent
+  until someone reads it — or forever.
+- Assuming `await()` is the *only* place the error gets handled. It isn't:
+  `async` is still a child in the tree, so the failure still climbs to the parent
+  in parallel with waiting to be `await()`ed. This is exactly why the lesson uses
+  `supervisorScope`.
 
-## Nhìn gì trên đồ thị
+## What to look for on the graph
 
-Node `async` giữ trạng thái hỏng của nó suốt một quãng — bạn tua qua từng bước và
-thấy nó đã hỏng từ lâu trước khi có ai đọc.
+The `async` node holds its failed state for a whole stretch — scrub through the
+steps and you'll see it had already failed long before anyone read it.

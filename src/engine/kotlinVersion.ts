@@ -1,16 +1,18 @@
 /**
- * Phiên bản Kotlin mà ngữ nghĩa của engine này được ĐỐI CHIẾU vào.
+ * The Kotlin version this engine's semantics are CROSS-CHECKED against.
  *
- * Không phải "engine hỗ trợ Kotlin 2.1.20" — nó không biên dịch Kotlin, nó mô
- * phỏng một tập con. Đây là số hiệu của trình biên dịch thật mà mọi câu hỏi
- * "Kotlin làm gì ở đây?" được đem đi hỏi: fixture `expected-jvm-output.txt`
- * của từng lesson lấy từ đúng bản này, và mọi ghi chú "đã đối chiếu Kotlin
- * thật" rải trong src/engine cũng vậy.
+ * Not "the engine supports Kotlin 2.1.20" — it doesn't compile Kotlin, it
+ * simulates a subset of it. This is the real compiler version number that
+ * every "what does Kotlin actually do here?" question gets taken to: each
+ * lesson's `expected-jvm-output.txt` fixture is pulled from exactly this
+ * build, and so is every "cross-checked against real Kotlin" note scattered
+ * through src/engine.
  *
- * Một hằng số duy nhất cho cả ba nơi cần nó: script lấy fixture (dựng URL API),
- * trang giới thiệu (hiện cho người học), và test đối chiếu JVM.
+ * One single constant for all three places that need it: the fixture-fetch
+ * script (builds the API URL), the about page (shown to learners), and the
+ * JVM cross-check test.
  */
 export const KOTLIN_VERSION = '2.1.20'
 
-/** API của Kotlin Playground — oracle dùng để lấy output JVM thật. */
+/** Kotlin Playground API — the oracle used to fetch real JVM output. */
 export const PLAYGROUND_API = `https://api.kotlinlang.org/api/${KOTLIN_VERSION}/compiler/run`

@@ -8,7 +8,7 @@ import { currentLineField, setCurrentLine } from './currentLine'
 export function CodeEditor({ value, onChange, currentLine = null, extraExtensions = [] }: {
   value: string
   onChange: (src: string) => void
-  /** Dòng 1-based đang chạy trong trace (Task 9), hoặc null nếu chưa có. */
+  /** 1-based line currently running in the trace (Task 9), or null if there's none yet. */
   currentLine?: number | null
   extraExtensions?: Extension[]
 }) {
@@ -29,8 +29,9 @@ export function CodeEditor({ value, onChange, currentLine = null, extraExtension
           ...kotlinExtensions,
           currentLineField,
           ...extraExtensions,
-          // Gọi qua ref: nếu đưa `onChange` vào deps thì mỗi lần cha render lại
-          // sẽ dựng lại cả EditorView, làm mất con trỏ và undo history.
+          // Called through a ref: putting `onChange` in the deps would rebuild
+          // the whole EditorView on every parent re-render, losing the cursor
+          // and undo history.
           EditorView.updateListener.of(u => {
             if (u.docChanged) onChangeRef.current(u.state.doc.toString())
           }),
@@ -39,20 +40,23 @@ export function CodeEditor({ value, onChange, currentLine = null, extraExtension
     })
     view.current = v
     return () => { v.destroy(); view.current = null }
-    // Chỉ dựng EditorView một lần lúc mount (deps rỗng có chủ ý). onChange gọi
-    // qua onChangeRef nên không cần trong deps; xem chú thích cạnh onChangeRef ở trên.
+    // Builds the EditorView exactly once at mount (empty deps is intentional).
+    // onChange is called through onChangeRef so it doesn't need to be in deps;
+    // see the note next to onChangeRef above.
   }, [])
 
-  // Đồng bộ một chiều từ ngoài vào (loadLesson). So sánh trước khi dispatch,
-  // nếu không sẽ thành vòng lặp vô hạn với updateListener ở trên.
+  // One-way sync from the outside in (loadLesson). Compare before
+  // dispatching, otherwise this becomes an infinite loop with the
+  // updateListener above.
   useEffect(() => {
     const v = view.current
     if (!v || v.state.doc.toString() === value) return
     v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: value } })
   }, [value])
 
-  // Chỉ dispatch một StateEffect — không đụng selection/focus, nên không di
-  // chuyển con trỏ hay cướp focus của người đang gõ (hazard nêu ở task 9).
+  // Only dispatches a single StateEffect — doesn't touch selection/focus, so
+  // it never moves the cursor or steals focus from someone mid-typing (the
+  // hazard called out in task 9).
   useEffect(() => {
     const v = view.current
     if (!v) return

@@ -10,26 +10,27 @@ const elk = new ELK()
 const OPTS = {
   'elk.algorithm': 'layered',
   'elk.direction': 'DOWN',
-  // Thoáng hơn hẳn bố cục đầu (48/32). Đồ thị này để NGỒI ĐỌC, không phải để
-  // nhét vừa màn hình: node dính nhau thì mắt không tách được cây job, và
-  // cạnh failure/cancel không còn chỗ nào để vòng mà không cắt qua node.
+  // Much more spacious than the initial layout (48/32). This graph is meant
+  // to be READ SITTING DOWN, not squeezed to fit a screen: nodes touching each
+  // other means the eye can't separate the job tree, and failure/cancel edges
+  // have nowhere left to loop through without cutting across a node.
   'elk.layered.spacing.nodeNodeBetweenLayers': '72',
   'elk.spacing.nodeNode': '48',
   'elk.spacing.edgeNode': '28',
   'elk.spacing.edgeEdge': '20',
-  // Bố cục con NẰM TRONG cha (compound thật sự), không đặt cạnh nhau.
+  // Children laid out INSIDE the parent (true compound), not placed side by side.
   'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
   'elk.padding': `[top=${CONTAINER_PADDING.top},left=${CONTAINER_PADDING.left},` +
                  `bottom=${CONTAINER_PADDING.bottom},right=${CONTAINER_PADDING.right}]`,
 }
 
 /**
- * Chạy ĐÚNG MỘT LẦN cho mỗi lần compile, không phải một lần mỗi step. Kéo
- * scrubber không bao giờ chạm tới hàm này (xem Task 15).
+ * Runs EXACTLY ONCE per compile, not once per step. Dragging the scrubber
+ * never touches this function (see Task 15).
  *
- * Cạnh 'child' KHÔNG đưa vào ELK dưới dạng edge — quan hệ cha-con đã nằm ở
- * cây `children`. Đưa vào nữa thì ELK vẽ thêm một mũi tên từ hộp cha tới node
- * nằm bên trong chính nó.
+ * 'child' edges are NOT fed into ELK as edges — the parent-child relationship
+ * already lives in the `children` tree. Feeding them in too would make ELK
+ * draw an extra arrow from the parent box to a node that's already inside it.
  */
 export async function layoutGraph(spec: GraphSpec): Promise<LayoutResult> {
   if (spec.nodes.length === 0) return new Map()

@@ -3,44 +3,48 @@ import { jobLabel } from './label'
 import { foldTrace, type JobView } from './world'
 
 /**
- * Coroutine còn dang dở lúc chương trình kết thúc.
+ * Coroutines still unfinished when the program ends.
  *
- * Vì sao cần: chương trình dừng khi coroutine GỐC dừng, y như JVM thoát ngay
- * sau khi `main` trả về và giết mọi thread daemon. Nên `fun main() { ... }`
- * (dạng block, không `runBlocking`) chạy xong trong 0ms và bỏ lại mọi thứ nó
- * vừa phóng ra — không in gì, không ném gì, không lỗi gì.
+ * Why this is needed: the program stops when the ROOT coroutine stops, just
+ * like the JVM exits right after `main` returns and kills every daemon
+ * thread. So `fun main() { ... }` (the block form, no `runBlocking`) finishes
+ * in 0ms and leaves behind everything it just launched — nothing printed,
+ * nothing thrown, no error at all.
  *
- * Kotlin thật cũng hành xử đúng như thế (đã đối chiếu: chương trình dạng đó
- * cho ra output RỖNG trên playground). Nhưng "đúng và im lặng" ở đây là hỏng:
- * người học thấy một màn hình trắng và không có gì nói cho họ biết vì sao. Đây
- * chính là chỗ một công cụ dạy học phải nói nhiều hơn trình biên dịch.
+ * Real Kotlin behaves exactly the same way (checked: a program shaped like
+ * this produces EMPTY output on the playground). But "correct and silent" is
+ * broken here: the learner sees a blank screen with nothing telling them why.
+ * This is exactly the spot where a teaching tool has to say more than the
+ * compiler does.
  *
- * CỐ Ý không phải một Diagnostic: code không sai cú pháp, và trên Kotlin thật
- * nó biên dịch sạch. Đây là một SỰ KIỆN của lần chạy, nên nó thuộc về trace.
+ * DELIBERATELY not a Diagnostic: the code has no syntax error, and it
+ * compiles clean on real Kotlin. This is a RUNTIME event, so it belongs on
+ * the trace.
  */
-export interface ConDangDo {
-  /** Job chưa đạt trạng thái kết thúc lúc trace hết. */
+export interface UnfinishedCoroutines {
+  /** Jobs that had not reached a terminal state when the trace ran out. */
   jobs: JobView[]
-  /** Nhãn để hiện, theo đúng thứ tự của `jobs`. */
-  nhan: string[]
+  /** Labels to display, in the same order as `jobs`. */
+  labels: string[]
 }
 
-const CHUA_XONG = new Set(['New', 'Active', 'Completing', 'Cancelling'])
+const NOT_DONE = new Set(['New', 'Active', 'Completing', 'Cancelling'])
 
-export function coroutineDangDo(events: readonly Event[]): ConDangDo {
+export function unfinishedCoroutines(events: readonly Event[]): UnfinishedCoroutines {
   const w = foldTrace(events, events.length)
-  const jobs = [...w.jobs.values()].filter(j => CHUA_XONG.has(j.state))
-  return { jobs, nhan: jobs.map(jobLabel) }
+  const jobs = [...w.jobs.values()].filter(j => NOT_DONE.has(j.state))
+  return { jobs, labels: jobs.map(jobLabel) }
 }
 
 /**
- * Chương trình có phải dạng `fun main() { ... }` KHÔNG có runBlocking không —
- * nguyên nhân số một của "chạy xong mà chẳng có gì xảy ra".
+ * Whether the program is shaped like `fun main() { ... }` WITHOUT
+ * runBlocking — the number-one cause of "it ran and nothing happened".
  *
- * Đọc trên NGUỒN chứ không trên AST: hàm này được gọi từ UI với chuỗi source
- * đang có sẵn, và nó chỉ dùng để chọn câu gợi ý, không để quyết định hành vi
- * nào của engine. Nhận nhầm thì cùng lắm là gợi ý không đúng chỗ.
+ * Reads the SOURCE, not the AST: this function is called from the UI with
+ * the source string it already has on hand, and it's only used to pick which
+ * hint to show, never to decide any engine behavior. Getting it wrong costs,
+ * at worst, a hint in the wrong place.
  */
-export function thieuRunBlocking(src: string): boolean {
+export function missingRunBlocking(src: string): boolean {
   return !/\brunBlocking\b/.test(src)
 }

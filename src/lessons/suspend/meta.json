@@ -1,8 +1,8 @@
 {
   "id": "suspend",
   "order": 1,
-  "title": "suspend — dừng mà không chặn thread",
-  "summary": "Coroutine SUSPENDED nhưng Job vẫn ACTIVE. Hai trạng thái khác nhau.",
+  "title": "suspend — stopping without blocking the thread",
+  "summary": "The coroutine is SUSPENDED but the Job is still ACTIVE. Two different states.",
   "concepts": [
     "suspend",
     "delay",

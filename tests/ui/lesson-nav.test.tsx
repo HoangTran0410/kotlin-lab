@@ -2,103 +2,106 @@ import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { LessonNav } from '../../src/ui/lessons/LessonNav'
 import { LessonList } from '../../src/ui/lessons/LessonList'
-import { LESSON_IDS_DOI_CHIEU_JVM, LESSON_LIST, lessonSource } from '../../src/lessons/registry'
+import { LESSON_IDS_WITH_JVM_FIXTURE, LESSON_LIST, lessonSource } from '../../src/lessons/registry'
 import { runSourceSafe } from '../../src/engine/run'
 
 const navProps = {
-  currentLessonId: null, onMoLoTrinh: () => {}, onMoGioiThieu: () => {}, setSource: () => {},
+  currentLessonId: null, onOpenLessons: () => {}, onOpenAbout: () => {}, setSource: () => {},
 }
 
-describe('LessonNav — ba lối vào trong header', () => {
-  it('chưa mở bài nào thì mời chọn, và nói rõ có bao nhiêu bài', () => {
+describe('LessonNav — three entry points in the header', () => {
+  it('no lesson open yet: invites you to pick one, and says how many there are', () => {
     render(<LessonNav {...navProps} />)
-    const mo = screen.getByRole('button', { name: new RegExp(`Chọn bài.*${LESSON_LIST.length} bài`) })
-    expect(mo).toBeInTheDocument()
+    const button = screen.getByRole('button', { name: new RegExp(`Pick a lesson.*${LESSON_LIST.length} lessons`) })
+    expect(button).toBeInTheDocument()
   })
 
-  it('đang mở một bài thì hiện SỐ và TIÊU ĐỀ của đúng bài đó', () => {
-    // Dải chip cũ chỉ nói được "bài nào đang mở" bằng màu nền của một chip nhỏ
-    // — mà chip đó có thể đang nằm ngoài vùng cuộn.
-    const bai = LESSON_LIST[4]!
-    render(<LessonNav {...navProps} currentLessonId={bai.id} />)
-    const mo = screen.getByRole('button', { name: new RegExp(bai.title) })
-    expect(mo).toHaveTextContent(String(bai.order))
+  it('with a lesson open, shows the NUMBER and TITLE of that exact lesson', () => {
+    // The old chip strip could only say "which lesson is open" through the
+    // background color of a tiny chip — one that might be sitting outside the
+    // scroll area.
+    const lesson = LESSON_LIST[4]!
+    render(<LessonNav {...navProps} currentLessonId={lesson.id} />)
+    const button = screen.getByRole('button', { name: new RegExp(lesson.title) })
+    expect(button).toHaveTextContent(String(lesson.order))
   })
 
-  it('hai nút mở hai tab khác nhau của cùng một hộp', () => {
-    const onMoLoTrinh = vi.fn()
-    const onMoGioiThieu = vi.fn()
-    render(<LessonNav {...navProps} onMoLoTrinh={onMoLoTrinh} onMoGioiThieu={onMoGioiThieu} />)
-    fireEvent.click(screen.getByRole('button', { name: /Chọn bài/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Chạy được gì?' }))
-    expect(onMoLoTrinh).toHaveBeenCalledTimes(1)
-    expect(onMoGioiThieu).toHaveBeenCalledTimes(1)
+  it('the two buttons open two different tabs of the same box', () => {
+    const onOpenLessons = vi.fn()
+    const onOpenAbout = vi.fn()
+    render(<LessonNav {...navProps} onOpenLessons={onOpenLessons} onOpenAbout={onOpenAbout} />)
+    fireEvent.click(screen.getByRole('button', { name: /Pick a lesson/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'What can it run?' }))
+    expect(onOpenLessons).toHaveBeenCalledTimes(1)
+    expect(onOpenAbout).toHaveBeenCalledTimes(1)
   })
 
-  it('"Bắt đầu từ trang trắng" đặt source compile sạch', () => {
+  it('"Start from blank" sets a source that compiles clean', () => {
     const setSource = vi.fn()
     render(<LessonNav {...navProps} setSource={setSource} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Bắt đầu từ trang trắng' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Start from blank' }))
     expect(setSource).toHaveBeenCalledTimes(1)
     const src = setSource.mock.calls[0]![0] as string
     expect(runSourceSafe(src).diagnostics).toEqual([])
   })
 })
 
-describe('LessonList — cả lộ trình, không giấu bài nào', () => {
-  it('hiện ĐỦ mọi bài, không cắt bớt', () => {
-    // Chính là lỗi của bản trước: dải chip `max-width: 60vw; overflow-x: auto`
-    // nên chỉ khoảng 8/13 bài lọt vào tầm nhìn, phần còn lại không dấu vết.
-    const { container } = render(<LessonList currentLessonId={null} onChon={() => {}} />)
+describe('LessonList — the whole path, no lesson hidden', () => {
+  it('shows EVERY lesson, none cut off', () => {
+    // This is exactly the previous version's bug: the chip strip's
+    // `max-width: 60vw; overflow-x: auto` meant only about 8/13 lessons fit
+    // into view, the rest left no trace.
+    const { container } = render(<LessonList currentLessonId={null} onPick={() => {}} />)
     expect(container.querySelectorAll('.les__card')).toHaveLength(LESSON_LIST.length)
   })
 
-  it('mỗi thẻ mang đủ số, tiêu đề, tóm tắt và khái niệm — không giấu vào tooltip', () => {
-    const { container } = render(<LessonList currentLessonId={null} onChon={() => {}} />)
+  it('every card carries number, title, summary and concepts — none hidden in a tooltip', () => {
+    const { container } = render(<LessonList currentLessonId={null} onPick={() => {}} />)
     const cards = [...container.querySelectorAll<HTMLElement>('.les__card')]
     for (const [i, card] of cards.entries()) {
       const l = LESSON_LIST[i]!
       expect(card).toHaveTextContent(String(l.order))
       expect(card).toHaveTextContent(l.title)
-      expect(card, `${l.id} mất tóm tắt`).toHaveTextContent(l.summary)
+      expect(card, `${l.id} is missing its summary`).toHaveTextContent(l.summary)
       for (const c of l.concepts) {
-        expect(within(card).getByText(c), `${l.id} thiếu khái niệm ${c}`).toBeInTheDocument()
+        expect(within(card).getByText(c), `${l.id} is missing concept ${c}`).toBeInTheDocument()
       }
     }
   })
 
-  it('đánh dấu bài đang mở, đúng MỘT bài', () => {
+  it('marks the open lesson, exactly ONE lesson', () => {
     const id = LESSON_LIST[2]!.id
-    const { container } = render(<LessonList currentLessonId={id} onChon={() => {}} />)
+    const { container } = render(<LessonList currentLessonId={id} onPick={() => {}} />)
     const on = container.querySelectorAll('.les__card--on')
     expect(on).toHaveLength(1)
     expect(on[0]!.getAttribute('aria-current')).toBe('true')
     expect(on[0]!).toHaveTextContent(LESSON_LIST[2]!.title)
   })
 
-  it('bấm một thẻ gọi onChon với đúng id', () => {
-    const onChon = vi.fn()
-    const { container } = render(<LessonList currentLessonId={null} onChon={onChon} />)
+  it('clicking a card calls onPick with the right id', () => {
+    const onPick = vi.fn()
+    const { container } = render(<LessonList currentLessonId={null} onPick={onPick} />)
     const cards = container.querySelectorAll<HTMLButtonElement>('.les__card')
     const idx = LESSON_LIST.findIndex(l => l.id === 'supervisor')
     fireEvent.click(cards[idx]!)
-    expect(onChon).toHaveBeenCalledWith('supervisor')
+    expect(onPick).toHaveBeenCalledWith('supervisor')
   })
 
-  it('dấu JVM chỉ nằm trên bài THẬT SỰ có fixture', () => {
-    // Dấu này nói về độ tin cậy của bài. Gắn bừa cho cả 13 bài thì nó thành
-    // trang trí, và người học tin nhầm vào 4 bài chưa được so.
-    const { container } = render(<LessonList currentLessonId={null} onChon={() => {}} />)
+  it('the JVM mark only appears on lessons that ACTUALLY have a fixture', () => {
+    // This mark speaks to that lesson's reliability. Slap it on all 13
+    // lessons and it becomes decoration, and learners misplace trust in the 4
+    // lessons that haven't been checked.
+    const { container } = render(<LessonList currentLessonId={null} onPick={() => {}} />)
     const cards = [...container.querySelectorAll<HTMLElement>('.les__card')]
-    const coDau = cards.filter(c => c.querySelector('.les__jvm') !== null).length
-    expect(coDau).toBe(LESSON_LIST.filter(l => LESSON_IDS_DOI_CHIEU_JVM.has(l.id)).length)
-    expect(coDau, 'không bài nào có dấu — fixture không được nhận ra').toBeGreaterThan(0)
-    expect(coDau, 'mọi bài đều có dấu — dấu thành vô nghĩa').toBeLessThan(LESSON_LIST.length)
+    const marked = cards.filter(c => c.querySelector('.les__jvm') !== null).length
+    expect(marked).toBe(LESSON_LIST.filter(l => LESSON_IDS_WITH_JVM_FIXTURE.has(l.id)).length)
+    expect(marked, 'no lesson has the mark — the fixture went unrecognized').toBeGreaterThan(0)
+    expect(marked, 'every lesson has the mark — the mark becomes meaningless').toBeLessThan(LESSON_LIST.length)
   })
 
-  it('mọi bài trong danh sách đều nạp được source thật', () => {
+  it('every lesson in the list loads real source', () => {
     for (const l of LESSON_LIST) {
-      expect(lessonSource(l.id), `${l.id} không có source`).not.toBeNull()
+      expect(lessonSource(l.id), `${l.id} has no source`).not.toBeNull()
     }
   })
 })

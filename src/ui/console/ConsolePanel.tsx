@@ -3,11 +3,12 @@ import { selectConsoleLines } from '../../state/selectors'
 import './console.css'
 
 /**
- * Console theo THỜI GIAN ẢO, không phải wall-clock. `selectConsoleLines` là
- * đường xuất DUY NHẤT — component không tự lọc `PRINTLN` khỏi `events`, chỉ
- * hiển thị những gì selector (dẫn xuất thuần từ trace, khớp `foldTrace`) trả
- * về. Vì vậy tua ngược `stepIndex` (prop, không phải state riêng của
- * component) tự động làm dòng biến mất — không có state gì để rơi ra đồng bộ.
+ * Console on VIRTUAL TIME, not wall-clock. `selectConsoleLines` is the ONE
+ * output path — the component doesn't filter `PRINTLN` out of `events`
+ * itself, it only displays what the selector (a pure derivation from the
+ * trace, matching `foldTrace`) returns. So scrubbing `stepIndex` backwards
+ * (a prop, not the component's own state) makes lines disappear
+ * automatically — there's no state to fall out of sync.
  */
 export function ConsolePanel({ events, stepIndex }: {
   events: readonly Event[]
@@ -16,7 +17,7 @@ export function ConsolePanel({ events, stepIndex }: {
   const lines = selectConsoleLines(events, stepIndex)
 
   if (lines.length === 0) {
-    return <p className="console-empty">Chưa có output.</p>
+    return <p className="console-empty">No output yet.</p>
   }
 
   return (

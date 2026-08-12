@@ -12,24 +12,24 @@ function lint(code: string, asPath: string): string {
   }
 }
 
-describe('ranh giới kiến trúc — ép bằng lint thật, không đọc config', () => {
-  it('src/ui không được import node:fs', () => {
+describe('architecture boundary — enforced by real lint output, not by reading config', () => {
+  it('src/ui must not import node:fs', () => {
     expect(lint("import { readFileSync } from 'node:fs'\nexport const x = readFileSync\n",
-      'src/ui/bad.ts')).toContain('không có Node API')
+      'src/ui/bad.ts')).toContain('no Node API')
   })
 
-  it('src/state không được import lessons/index', () => {
+  it('src/state must not import lessons/index', () => {
     expect(lint("import { LESSONS } from '../lessons/index'\nexport const x = LESSONS\n",
       'src/state/bad.ts')).toContain('browser-safe')
   })
 
-  it('src/engine vẫn không được import react — ranh giới M1 chưa bị nới', () => {
+  it('src/engine still must not import react — the M1 boundary has not been relaxed', () => {
     expect(lint("import { useState } from 'react'\nexport const x = useState\n",
-      'src/engine/bad.ts')).toContain('thuần TypeScript')
+      'src/engine/bad.ts')).toContain('pure TypeScript')
   })
 
-  it('src/ui ĐƯỢC PHÉP import react — rule không bắt nhầm', () => {
+  it('src/ui IS ALLOWED to import react — the rule does not misfire', () => {
     expect(lint("import { useState } from 'react'\nexport const x = useState\n",
-      'src/ui/ok.tsx')).not.toContain('thuần TypeScript')
+      'src/ui/ok.tsx')).not.toContain('pure TypeScript')
   })
 })

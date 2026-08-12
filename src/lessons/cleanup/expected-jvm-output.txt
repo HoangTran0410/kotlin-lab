@@ -1,4 +1,4 @@
-1. mở tài nguyên
-2. gọi cancelAndJoin()
-3. finally VẪN chạy khi bị huỷ — đây là chỗ dọn dẹp
-4. cancelAndJoin() chờ dọn dẹp xong mới đi tiếp
+1. open resource
+2. call cancelAndJoin()
+3. finally STILL runs when cancelled — this is where cleanup happens
+4. cancelAndJoin() waits for cleanup to finish before continuing

@@ -8,13 +8,13 @@ const st = () => useLabStore.getState()
 
 beforeEach(() => { useLabStore.setState({ source: '', stepIndex: 0, lessonId: null }); st().setSource(SRC) })
 
-describe('store — trace là nguồn sự thật duy nhất', () => {
-  it('setStep kẹp vào [0, số event]', () => {
+describe('store — the trace is the one source of truth', () => {
+  it('setStep clamps into [0, event count]', () => {
     st().setStep(-5); expect(st().stepIndex).toBe(0)
     st().setStep(99999); expect(st().stepIndex).toBe(st().compiled.events.length)
   })
 
-  it('TUA NGƯỢC cho world y hệt tiến thẳng — bất biến trung tâm của M2', () => {
+  it('SCRUBBING BACKWARDS gives the same world as going forward — the central invariant of M2', () => {
     const n = st().compiled.events.length
     const forward: string[] = []
     for (let i = 0; i <= n; i++) { st().setStep(i); forward.push(JSON.stringify(snapshot())) }
@@ -23,7 +23,7 @@ describe('store — trace là nguồn sự thật duy nhất', () => {
     expect(backward).toEqual(forward)
   })
 
-  it('nhảy thẳng tới step N = tua từng bước tới N', () => {
+  it('jumping straight to step N = stepping one by one to N', () => {
     const n = st().compiled.events.length
     for (let i = 0; i <= n; i++) st().setStep(i)
     const stepped = JSON.stringify(snapshot())
@@ -31,7 +31,7 @@ describe('store — trace là nguồn sự thật duy nhất', () => {
     expect(JSON.stringify(snapshot())).toBe(stepped)
   })
 
-  it('source dở dang không làm vỡ store', () => {
+  it('unfinished source does not break the store', () => {
     st().setSource('fun main() = runBlocking {')
     expect(st().compiled.diagnostics.length).toBeGreaterThan(0)
     expect(st().compiled.events).toEqual([])
@@ -39,7 +39,7 @@ describe('store — trace là nguồn sự thật duy nhất', () => {
     expect(() => selectWorld(st())).not.toThrow()
   })
 
-  it('loadLesson đặt source và đưa con trỏ về 0', () => {
+  it('loadLesson sets the source and resets the cursor to 0', () => {
     st().setStep(3)
     st().loadLesson('supervisor')
     expect(st().stepIndex).toBe(0)
@@ -47,50 +47,52 @@ describe('store — trace là nguồn sự thật duy nhất', () => {
     expect(st().compiled.diagnostics).toEqual([])
   })
 
-  it('id lesson lạ là no-op, không ném', () => {
+  it('an unknown lesson id is a no-op, does not throw', () => {
     const before = st().source
-    st().loadLesson('khong-co')
+    st().loadLesson('does-not-exist')
     expect(st().source).toBe(before)
   })
 
-  it('đổi sang source NGẮN HƠN khi đang ở cuối thì stepIndex phải bị kẹp lại', () => {
-    // Không test nào khác diễn cảnh này: mọi beforeEach reset stepIndex về 0
-    // ngay trước lần setSource duy nhất. Và foldTrace tự kẹp upTo bên trong nên
-    // chương trình KHÔNG ném lỗi — nó chỉ lặng lẽ hiện trạng thái cuối của
-    // trace mới. Đó đúng là kiểu lỗi hiện ra thành "màn hình trắng" về sau.
+  it('switching to SHORTER source while at the end must clamp stepIndex back down', () => {
+    // No other test exercises this scenario: every beforeEach resets stepIndex
+    // to 0 right before the one setSource call. And foldTrace clamps upTo
+    // internally, so the program does NOT throw — it just quietly shows the
+    // final state of the new trace. That's exactly the kind of bug that shows
+    // up later as a "blank screen".
     st().setSource(lessonSource('supervisor')!)
-    const dài = st().compiled.events.length
-    st().setStep(dài)
-    expect(st().stepIndex).toBe(dài)
+    const long = st().compiled.events.length
+    st().setStep(long)
+    expect(st().stepIndex).toBe(long)
 
-    st().setSource('fun main() = runBlocking { println("ngắn") }')
-    const ngắn = st().compiled.events.length
+    st().setSource('fun main() = runBlocking { println("short") }')
+    const short = st().compiled.events.length
 
-    // Ghim rằng fixture THẬT SỰ ngắn hơn — nếu không thì chính test này vô
-    // nghĩa, đúng mẫu đã mắc bốn lần trong dự án.
-    expect(ngắn, 'fixture phải ngắn hơn thì test mới có ý nghĩa').toBeLessThan(dài)
-    expect(st().stepIndex).toBeLessThanOrEqual(ngắn)
+    // Pin down that the fixture is ACTUALLY shorter — otherwise this test
+    // itself is meaningless, a mistake that's happened four times already in
+    // this project.
+    expect(short, 'the fixture must be shorter for this test to mean anything').toBeLessThan(long)
+    expect(st().stepIndex).toBeLessThanOrEqual(short)
   })
 })
 
-describe('selector — ổn định tham chiếu', () => {
-  it('cùng stepIndex trả CÙNG MỘT tham chiếu, không gập lại', () => {
+describe('selector — reference stability', () => {
+  it('the same stepIndex returns the SAME reference, no refold', () => {
     st().setStep(4)
     const a = selectWorld(st())
     const before = foldStats.calls
     const b = selectWorld(st())
-    expect(Object.is(a, b)).toBe(true)      // toEqual KHÔNG thấy được lỗi này
+    expect(Object.is(a, b)).toBe(true)      // toEqual would NOT catch this bug
     expect(foldStats.calls).toBe(before)
   })
 
-  it('đổi stepIndex thì gập lại đúng MỘT lần', () => {
+  it('changing stepIndex refolds exactly ONCE', () => {
     st().setStep(2); selectWorld(st())
     const before = foldStats.calls
     st().setStep(3); selectWorld(st()); selectWorld(st()); selectWorld(st())
     expect(foldStats.calls).toBe(before + 1)
   })
 
-  it('selectCurrentLine đọc từ world, không tự tính lại', () => {
+  it('selectCurrentLine reads from world, does not recompute on its own', () => {
     st().setStep(st().compiled.events.length)
     expect(selectCurrentLine(st())).toBe(selectWorld(st()).srcLine)
   })

@@ -1,5 +1,6 @@
-/* Lưới ba cột: editor cố định 380px · graph co giãn · panel phụ cố định 320px.
-   Timeline chiếm hết chiều ngang ở đáy shell, ngoài lưới ba cột. */
+/* Three-column grid: editor fixed at 380px · graph flexible · side panel fixed
+   at 320px. Timeline spans the full width at the bottom of the shell, outside
+   the three-column grid. */
 
 .shell {
   display: flex;
@@ -24,9 +25,10 @@
   font-weight: 600;
 }
 
-/* §2.4/§12: mô phỏng deterministic, KHÔNG phải thứ tự duy nhất khả dĩ của
-   Kotlin thật. Viền trái vàng mượn màu runBlocking để tách khỏi các panel
-   thường — nền tối hơn panel để nổi bật ngay dưới header. */
+/* §2.4/§12: a deterministic simulation, NOT the only order real Kotlin could
+   produce. The yellow left border borrows the runBlocking color to set it
+   apart from regular panels — background darker than a panel so it stands
+   out right under the header. */
 .sim-notice {
   background: #1c2128;
   border-left: 4px solid var(--k-runBlocking);
@@ -39,13 +41,14 @@
   color: var(--fg);
 }
 
-/* Cột co giãn theo bề rộng cửa sổ thay vì ba con số cứng (380/1fr/320).
-   Bố cục cũ cho cột diễn giải đúng 320px trên mọi màn hình — chật trên màn
-   rộng và tràn trên màn hẹp. `minmax` giữ mức đọc được tối thiểu, phần dôi ra
-   chia cho đồ thị. */
-/* Bề rộng hai cột bên do người dùng kéo (usePanelWidths), cột giữa ăn phần
-   còn lại. Trước đây ba con số cứng trong CSS: cột code luôn chật đúng một
-   mức bất kể màn hình rộng bao nhiêu. */
+/* Columns scale with window width instead of three hardcoded numbers
+   (380/1fr/320). The old layout gave the narration column exactly 320px on
+   every screen — cramped on wide screens, overflowing on narrow ones.
+   `minmax` keeps a minimum readable size, the extra space goes to the graph. */
+/* The two side columns' widths are user-draggable (usePanelWidths), the
+   middle column eats whatever's left. Previously three hardcoded numbers in
+   CSS: the code column was always cramped to exactly one size no matter how
+   wide the screen was. */
 .shell__main {
   display: grid;
   grid-template-columns: var(--w-left) auto minmax(0, 1fr) auto var(--w-right);
@@ -53,7 +56,7 @@
   min-height: 0;
 }
 
-/* Bảng gỡ lỗi đóng: không còn thanh kéo phải và cột phải. */
+/* Debug panel closed: no more right splitter or right column. */
 .shell__main[data-debug='closed'] {
   grid-template-columns: var(--w-left) auto minmax(0, 1fr);
 }
@@ -108,15 +111,16 @@
   border-right: 1px solid var(--border);
 }
 
-/* Cột phải xếp CHỒNG hai panel: diễn giải (co giãn) trên, console dưới. */
+/* The right column STACKS two panels: narration (flexible) on top, console
+   below. */
 .shell__right {
   border-right: none;
   display: flex;
   flex-direction: column;
 }
 
-/* Console chiếm tối đa 40% chiều cao — phần còn lại thuộc về diễn giải, vì đó
-   mới là thứ trả lời "đang xảy ra gì". */
+/* Console takes at most 40% of the height — the rest belongs to narration,
+   since that's what actually answers "what's happening". */
 .shell__right > .panel:last-child {
   max-height: 40%;
   border-top: 1px solid var(--border);
@@ -156,7 +160,8 @@
 }
 
 
-/* Cột mã: editor co giãn, ô lỗi bám đáy và chỉ có mặt khi có lỗi. */
+/* Code column: editor flexes, the error box sticks to the bottom and only
+   appears when there are errors. */
 .editor-col {
   display: flex;
   flex-direction: column;
@@ -166,7 +171,8 @@
 
 .editor-col > .panel:last-child:not(.panel--grow) {
   flex: none;
-  /* Nhiều lỗi thì cuộn trong ô, không đẩy editor biến mất khỏi màn hình. */
+  /* With many errors, scroll inside the box instead of pushing the editor off
+     the screen. */
   max-height: 45%;
   border-top: 1px solid var(--state-cancelled);
 }

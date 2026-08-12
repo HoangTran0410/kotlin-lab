@@ -1,6 +1,6 @@
 import type { Event } from '../../engine/trace/events'
 
-/** Các loại event đủ "đáng chú ý" để vẽ vạch trên timeline. */
+/** Event kinds "notable" enough to draw a mark on the timeline. */
 export type NotableKind =
   | 'COROUTINE_CREATED'
   | 'EXCEPTION_THROWN'
@@ -11,21 +11,22 @@ export type NotableKind =
 export interface Marker {
   kind: NotableKind
   /**
-   * "Diễn viên" của event, dùng làm một phần khoá gộp trùng (k, id, t).
-   * Event mang `id` (COROUTINE_CREATED/EXCEPTION_THROWN/PRINTLN) dùng thẳng
-   * id đó; event chỉ mang `from`/`to` (FAILURE_PROPAGATED/CANCEL_REQUESTED)
-   * dùng cặp `"from->to"` làm định danh — không có trường `id` đơn lẻ nào để
-   * dùng cho hai loại này.
+   * The event's "actor", used as part of the dedup key (k, id, t). Events
+   * carrying `id` (COROUTINE_CREATED/EXCEPTION_THROWN/PRINTLN) use that id
+   * directly; events that only carry `from`/`to`
+   * (FAILURE_PROPAGATED/CANCEL_REQUESTED) use the pair `"from->to"` as their
+   * identity — there's no single `id` field to use for these two kinds.
    */
   actorId: string
-  /** Thời gian ảo (world.t) tại lần xuất hiện ĐẦU TIÊN bị gộp vào marker này. */
+  /** Virtual time (world.t) at the FIRST occurrence merged into this marker. */
   t: number
   /**
-   * Vị trí 0-100 dọc theo timeline. Timeline chạy [0, events.length] (Task
-   * 16 bước 2: điểm cuối là events.length, KHÔNG phải lúc root Completed) —
-   * event ở chỉ số mảng 0-based `i` chỉ THẬT SỰ xuất hiện trong world khi
-   * stepIndex >= i+1 (foldTrace áp event [0, upTo)), nên vị trí tự nhiên của
-   * nó trên thanh là (i+1)/events.length*100: kéo đúng tới đó là vạch "sáng".
+   * Position 0-100 along the timeline. The timeline runs [0, events.length]
+   * (Task 16 step 2: the endpoint is events.length, NOT the moment root
+   * Completes) — the event at 0-based array index `i` only REALLY appears in
+   * the world when stepIndex >= i+1 (foldTrace applies events [0, upTo)), so
+   * its natural position on the bar is (i+1)/events.length*100: dragging
+   * exactly there is when the mark "lights up".
    */
   pct: number
 }
@@ -36,9 +37,10 @@ interface NotableInfo {
 }
 
 /**
- * event không đáng chú ý (bao gồm THREAD_STATE/JOB_STATE — 91/159 event
- * trong ba lesson, sẽ làm thanh đặc kín vạch) trả null. Switch trên `e.k`
- * để TypeScript tự thu hẹp `e` theo từng nhánh — không cần ép kiểu.
+ * A non-notable event (including THREAD_STATE/JOB_STATE — 91/159 events
+ * across the three lessons, which would pack the bar solid with marks)
+ * returns null. Switches on `e.k` so TypeScript narrows `e` on its own in
+ * each branch — no type casting needed.
  */
 function notableInfo(e: Event): NotableInfo | null {
   switch (e.k) {
@@ -55,11 +57,13 @@ function notableInfo(e: Event): NotableInfo | null {
 }
 
 /**
- * Gộp trùng theo (k, id, t). Tồn đọng M1: EXCEPTION_THROWN phát HAI LẦN khi
- * throw xuyên qua root đã unwrap. Vẽ hai vạch chồng nhau trông như lỗi render.
+ * Deduplicates by (k, id, t). Backlog item M1: EXCEPTION_THROWN fires TWICE
+ * when a throw unwinds through an unwrapped root. Drawing two overlapping
+ * marks would look like a render bug.
  *
- * Gộp chỉ ảnh hưởng phần VẼ. `stepIndex` vẫn đếm theo từng event, nên kéo qua
- * vẫn dừng ở cả hai — trace là nguồn sự thật, marker chỉ là chỉ dẫn nhìn.
+ * Deduplication only affects the DRAWING. `stepIndex` still counts every
+ * individual event, so scrubbing through still stops at both — the trace is
+ * the source of truth, the marker is just a visual cue.
  */
 export function buildMarkers(events: readonly Event[]): Marker[] {
   const seen = new Set<string>()

@@ -6,7 +6,7 @@ const collectPrints = (s: Scheduler) =>
   s.emitter.events.filter(e => e.k === 'PRINTLN').map(e => (e as { text: string }).text)
 
 describe('Scheduler', () => {
-  it('chạy một coroutine không suspend', () => {
+  it('runs a single coroutine with no suspend', () => {
     const s = new Scheduler()
     const root = s.spawnRoot(function* (): VoidCoroutineBody { s.println('hi') })
     s.runToCompletion()
@@ -14,20 +14,20 @@ describe('Scheduler', () => {
     expect(root.state).toBe('Completed')
   })
 
-  it('delay đẩy thời gian ảo, không ngủ thật', () => {
+  it('delay advances the virtual clock, does not really sleep', () => {
     const s = new Scheduler()
     s.spawnRoot(function* (): VoidCoroutineBody {
       yield { s: 'delay', ms: 1000 }
-      s.println('sau delay')
+      s.println('after delay')
     })
     const start = Date.now()
     s.runToCompletion()
-    expect(collectPrints(s)).toEqual(['sau delay'])
+    expect(collectPrints(s)).toEqual(['after delay'])
     expect(s.clock.now).toBe(1000)
-    expect(Date.now() - start).toBeLessThan(200) // không ngủ thật
+    expect(Date.now() - start).toBeLessThan(200) // does not really sleep
   })
 
-  it('hai coroutine xen kẽ theo thời gian delay', () => {
+  it('two coroutines interleave according to their delay timing', () => {
     const s = new Scheduler()
     s.spawnRoot(function* (): VoidCoroutineBody {
       s.spawnChild(function* (): VoidCoroutineBody {
@@ -42,7 +42,7 @@ describe('Scheduler', () => {
     expect(collectPrints(s)).toEqual(['A', 'B'])
   })
 
-  it('phát COROUTINE_SUSPENDED rồi COROUTINE_RESUMED', () => {
+  it('emits COROUTINE_SUSPENDED then COROUTINE_RESUMED', () => {
     const s = new Scheduler()
     s.spawnRoot(function* (): VoidCoroutineBody { yield { s: 'delay', ms: 10 } })
     s.runToCompletion()
@@ -51,7 +51,7 @@ describe('Scheduler', () => {
     expect(kinds).toContain('COROUTINE_RESUMED')
   })
 
-  it('exception trong thân coroutine thành failure của Job', () => {
+  it('an exception in the coroutine body becomes the Job failure', () => {
     const s = new Scheduler()
     const root = s.spawnRoot(function* (): VoidCoroutineBody {
       throw Object.assign(new Error('boom'), { kotlinType: 'RuntimeException' })
@@ -61,7 +61,7 @@ describe('Scheduler', () => {
     expect(root.cause?.exType).toBe('RuntimeException')
   })
 
-  it('chạy lại cùng chương trình cho trace y hệt — deterministic', () => {
+  it('running the same program again produces an identical trace — deterministic', () => {
     const build = () => {
       const s = new Scheduler()
       s.spawnRoot(function* (): VoidCoroutineBody {
@@ -75,28 +75,28 @@ describe('Scheduler', () => {
     expect(build()).toBe(build())
   })
 
-  it('runToCompletion dừng, không lặp vô hạn khi hết việc', () => {
+  it('runToCompletion stops, no infinite loop when there is nothing left to do', () => {
     const s = new Scheduler()
     s.spawnRoot(function* (): VoidCoroutineBody { yield { s: 'yield' } })
     s.runToCompletion()
     expect(s.emitter.events.length).toBeGreaterThan(0)
   })
 
-  it('join thật sự chờ job kia xong rồi mới chạy tiếp', () => {
+  it('join actually waits for the other job to finish before continuing', () => {
     const s = new Scheduler()
     s.spawnRoot(function* (): VoidCoroutineBody {
       const child = s.spawnChild(function* (): VoidCoroutineBody {
         yield { s: 'delay', ms: 100 }
-        s.println('child xong')
+        s.println('child done')
       })
       yield { s: 'join', jobId: child.id }
-      s.println('sau join')
+      s.println('after join')
     })
     s.runToCompletion()
-    expect(collectPrints(s)).toEqual(['child xong', 'sau join'])
+    expect(collectPrints(s)).toEqual(['child done', 'after join'])
   })
 
-  it('join KHÔNG chặn đồng hồ ảo tiến lên — chống hồi quy deadlock', () => {
+  it('join does NOT block the virtual clock from advancing — deadlock regression guard', () => {
     const s = new Scheduler()
     s.spawnRoot(function* (): VoidCoroutineBody {
       const child = s.spawnChild(function* (): VoidCoroutineBody { yield { s: 'delay', ms: 500 } })
@@ -106,26 +106,27 @@ describe('Scheduler', () => {
     expect(s.clock.now).toBe(500)
   })
 
-  it('yield đưa coroutine TRỞ LẠI hàng đợi, không bỏ rơi nó', () => {
-    // Nếu xoá hẳn nhánh 'yield' trong suspend(), task bị bỏ rơi: 'sau' không
-    // bao giờ in và job kẹt ở Active mãi. Không test nào khác bắt được điều
-    // đó, vì chúng chỉ khẳng định các tác dụng phụ xảy ra TRƯỚC điểm yield.
+  it('yield puts the coroutine BACK on the queue, does not abandon it', () => {
+    // If the 'yield' branch in suspend() were removed outright, the task
+    // would be abandoned: 'after' would never print and the job would be
+    // stuck at Active forever. No other test catches this, because they
+    // only assert on side effects that happen BEFORE the yield point.
     const s = new Scheduler()
     const root = s.spawnRoot(function* (): VoidCoroutineBody {
-      s.println('trước')
+      s.println('before')
       yield { s: 'yield' }
-      s.println('sau')
+      s.println('after')
     })
     s.runToCompletion()
-    expect(collectPrints(s)).toEqual(['trước', 'sau'])
+    expect(collectPrints(s)).toEqual(['before', 'after'])
     expect(root.state).toBe('Completed')
   })
 
-  it('ready là FIFO — nhiều coroutine sẵn sàng CÙNG LÚC chạy theo thứ tự tạo', () => {
-    // Mọi test khác dùng delay khác nhau, nên thứ tự do ĐỒNG HỒ quyết định và
-    // tính FIFO của ready không bao giờ bị chạm tới. Ở đây không có delay nào,
-    // nên thứ tự in ra lộ thẳng thứ tự lấy khỏi hàng đợi: shift -> A,B,C;
-    // pop -> C,B,A.
+  it('ready is FIFO — several coroutines ready AT THE SAME TIME run in creation order', () => {
+    // Every other test uses different delays, so order is decided by the
+    // CLOCK and the FIFO-ness of ready is never actually exercised. Here
+    // there is no delay at all, so the print order directly exposes the
+    // dequeue order: shift -> A,B,C; pop -> C,B,A.
     const s = new Scheduler()
     s.spawnRoot(function* (): VoidCoroutineBody {
       s.spawnChild(function* (): VoidCoroutineBody { s.println('A') })
@@ -137,12 +138,13 @@ describe('Scheduler', () => {
     expect(collectPrints(s)).toEqual(['A', 'B', 'C'])
   })
 
-  // GHI CHÚ TRUNG THỰC: test này KHÔNG phân biệt được shift() với pop().
-  // Đã kiểm chứng: với pop(), thứ tự tạo bị đảo rồi thứ tự resume bị đảo lần
-  // nữa, hai lần triệt tiêu nhau và kết quả vẫn A,B,C. Nó chốt hành vi
-  // đầu-cuối (đồng hồ + scheduler khớp nhau), không chốt kỷ luật hàng đợi.
-  // Test không-delay ở trên mới là cái canh FIFO.
-  it('cùng mốc delay thì vẫn resume theo thứ tự tạo', () => {
+  // HONEST NOTE: this test does NOT distinguish shift() from pop(). Verified:
+  // with pop(), creation order is reversed and then resume order is reversed
+  // again, the two reversals cancel out and the result is still A,B,C. It
+  // pins down end-to-end behaviour (clock and scheduler agreeing with each
+  // other), not queue discipline. The no-delay test above is the one that
+  // actually guards FIFO.
+  it('same delay deadline still resumes in creation order', () => {
     const s = new Scheduler()
     s.spawnRoot(function* (): VoidCoroutineBody {
       s.spawnChild(function* (): VoidCoroutineBody { yield { s: 'delay', ms: 100 }; s.println('A') })
@@ -154,15 +156,15 @@ describe('Scheduler', () => {
     expect(collectPrints(s)).toEqual(['A', 'B', 'C'])
   })
 
-  it('joinChildren chờ mọi child, kể cả child chậm nhất', () => {
+  it('joinChildren waits for every child, including the slowest one', () => {
     const s = new Scheduler()
     s.spawnRoot(rootJob => (function* (): VoidCoroutineBody {
       s.spawnChild(function* (): VoidCoroutineBody { yield { s: 'delay', ms: 100 }; s.println('A') })
       s.spawnChild(function* (): VoidCoroutineBody { yield { s: 'delay', ms: 300 }; s.println('B') })
       yield { s: 'joinChildren', jobId: rootJob.id }
-      s.println('scope xong')
+      s.println('scope done')
     })())
     s.runToCompletion()
-    expect(collectPrints(s)).toEqual(['A', 'B', 'scope xong'])
+    expect(collectPrints(s)).toEqual(['A', 'B', 'scope done'])
   })
 })

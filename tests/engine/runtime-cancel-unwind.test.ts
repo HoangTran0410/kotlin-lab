@@ -3,69 +3,71 @@ import { runSource } from '../../src/engine/run'
 
 const out = (src: string) => runSource(src).output
 
-describe('cancel làm unwind thân coroutine', () => {
-  // GHI CHÚ QUAN TRỌNG: `launch` KHÔNG chạy đồng bộ, đúng như Kotlin thật.
-  // `launch { }` rồi `j.cancel()` ngay là huỷ TRƯỚC khi coroutine kịp bắt
-  // đầu — Kotlin thật cũng không in gì cả, vì không có gì để unwind.
-  // Muốn kiểm unwind thì phải `yield()` cho nó chạy tới điểm suspend đã.
+describe('cancel triggers coroutine body unwind', () => {
+  // IMPORTANT NOTE: `launch` does NOT run synchronously, exactly like real
+  // Kotlin. `launch { }` followed immediately by `j.cancel()` cancels it
+  // BEFORE the coroutine gets a chance to start — real Kotlin doesn't print
+  // anything either, because there's nothing to unwind.
+  // To test unwinding, you have to `yield()` first so it runs to a suspend point.
 
-  it('cancel TRƯỚC khi coroutine kịp chạy thì không có finally nào — giống Kotlin thật', () => {
+  it('cancel BEFORE the coroutine gets to run means no finally runs — matches real Kotlin', () => {
     expect(out(
       'fun main() = runBlocking {\n' +
-      '  val j = launch { try { delay(1000) } finally { println("khong-chay") } }\n' +
+      '  val j = launch { try { delay(1000) } finally { println("not-run") } }\n' +
       '  j.cancel()\n' +
       '}')).toEqual([])
   })
 
-  it('finally chạy khi cancel lúc coroutine ĐANG suspend', () => {
+  it('finally runs when cancel happens while the coroutine IS suspended', () => {
     expect(out(
       'fun main() = runBlocking {\n' +
-      '  val j = launch { try { delay(1000); println("xong") } finally { println("dọn dẹp") } }\n' +
+      '  val j = launch { try { delay(1000); println("done") } finally { println("cleanup") } }\n' +
       '  yield()\n' +
       '  j.cancel()\n' +
-      '}')).toEqual(['dọn dẹp'])
+      '}')).toEqual(['cleanup'])
   })
 
-  it('phần thân sau điểm suspend KHÔNG chạy khi bị cancel', () => {
+  it('code after the suspend point does NOT run when cancelled', () => {
     expect(out(
       'fun main() = runBlocking {\n' +
-      '  val j = launch { delay(1000); println("khong-duoc-in") }\n' +
+      '  val j = launch { delay(1000); println("not-printed") }\n' +
       '  yield()\n' +
       '  j.cancel()\n' +
       '}')).toEqual([])
   })
 
-  it('finally lồng nhau chạy từ trong ra ngoài', () => {
+  it('nested finally blocks run from inside out', () => {
     expect(out(
       'fun main() = runBlocking {\n' +
       '  val j = launch {\n' +
       '    try {\n' +
-      '      try { delay(1000) } finally { println("trong") }\n' +
-      '    } finally { println("ngoài") }\n' +
+      '      try { delay(1000) } finally { println("inner") }\n' +
+      '    } finally { println("outer") }\n' +
       '  }\n' +
       '  yield()\n' +
       '  j.cancel()\n' +
-      '}')).toEqual(['trong', 'ngoài'])
+      '}')).toEqual(['inner', 'outer'])
   })
 
-  it('cancel cha làm finally của con chạy', () => {
+  it("cancelling the parent runs the child's finally", () => {
     expect(out(
       'fun main() = runBlocking {\n' +
       '  val p = launch {\n' +
-      '    launch { try { delay(1000) } finally { println("con dọn dẹp") } }\n' +
+      '    launch { try { delay(1000) } finally { println("child cleanup") } }\n' +
       '    delay(1000)\n' +
       '  }\n' +
       '  delay(1)\n' +
       '  p.cancel()\n' +
-      '}')).toEqual(['con dọn dẹp'])
+      '}')).toEqual(['child cleanup'])
   })
 
-  it('join() chờ job bị huỷ UNWIND XONG mới trả về', () => {
-    // Ngược hẳn với test bất-đồng-bộ ở dưới: ở đó không ai chờ, ở đây có join().
-    // Bug: cancelJob lật thẳng Active->Cancelling->Cancelled trong MỘT lời gọi,
-    // nên không job nào bao giờ NGHỈ ở Cancelling; sweepWaiters chỉ nhìn state
-    // và đánh thức người chờ ngay lập tức, TRƯỚC khi finally của job bị huỷ kịp
-    // chạy. Kotlin cho ["cleanup", "done"], engine cho ["done", "cleanup"].
+  it('join() waits until the cancelled job has FINISHED UNWINDING before returning', () => {
+    // The exact opposite of the async test below: there, nobody waits; here,
+    // there's a join(). Bug: cancelJob flips Active->Cancelling->Cancelled
+    // straight through in ONE call, so no job ever RESTS at Cancelling;
+    // sweepWaiters only looks at state and wakes the waiter immediately,
+    // BEFORE the cancelled job's finally has had a chance to run. Kotlin
+    // gives ["cleanup", "done"], the engine gave ["done", "cleanup"].
     expect(out(
       'fun main() = runBlocking {\n' +
       '  val j = launch { try { delay(1000) } finally { println("cleanup") } }\n' +
@@ -76,9 +78,10 @@ describe('cancel làm unwind thân coroutine', () => {
       '}')).toEqual(['cleanup', 'done'])
   })
 
-  it('cancelAndJoin() huỷ RỒI CHỜ — không phải bí danh của cancel()', () => {
-    // cancelAndJoin từng được nối thẳng vào nhánh cancel và im lặng KHÔNG join,
-    // nên nó cho ra đúng thứ tự sai mà người học dùng nó để tránh.
+  it('cancelAndJoin() cancels THEN WAITS — it is not an alias for cancel()', () => {
+    // cancelAndJoin used to be wired straight into the cancel branch and
+    // silently skipped the join, so it produced exactly the wrong order that
+    // learners use it to avoid.
     expect(out(
       'fun main() = runBlocking {\n' +
       '  val j = launch { try { delay(1000) } finally { println("cleanup") } }\n' +
@@ -88,12 +91,14 @@ describe('cancel làm unwind thân coroutine', () => {
       '}')).toEqual(['cleanup', 'done'])
   })
 
-  it('catch quanh coroutineScope chạy SAU finally của anh em bị huỷ', () => {
-    // Kotlin: coroutineScope không ném lại cho tới khi MỌI con đã unwind xong,
-    // nên ["cleanup A", "caught boom"]. Engine cho ngược lại: failure của con
-    // leo lên đánh dấu chính job runBlocking là Cancelled, và unwindCancelled
-    // duyệt taskOrder — tức thứ tự TẠO, nông trước — nên tổ tiên được ném vào
-    // (chạy catch) trước khi con cháu kịp chạy finally.
+  it("catch around coroutineScope runs AFTER the cancelled sibling's finally", () => {
+    // Kotlin: coroutineScope doesn't re-throw until EVERY child has finished
+    // unwinding, so ["cleanup A", "caught boom"]. The engine used to give
+    // the opposite: a child's failure propagating up marked the runBlocking
+    // job itself as Cancelled, and unwindCancelled walks taskOrder — i.e.
+    // creation order, shallowest first — so the ancestor got thrown into
+    // (running its catch) before the descendants had a chance to run their
+    // finally.
     expect(out(
       'fun main() = runBlocking {\n' +
       '    try {\n' +
@@ -105,10 +110,11 @@ describe('cancel làm unwind thân coroutine', () => {
       '}')).toEqual(['cleanup A', 'caught boom'])
   })
 
-  it('THÂN coroutineScope ném: cũng phải chờ con unwind xong mới ném ra ngoài', () => {
-    // Đường thứ hai của cùng một luật. Ở trên exception đến TỪ con nên đi qua
-    // reportFailure; ở đây chính thân scope ném nên đi qua failInline. Nếu chỉ
-    // sửa đường trên thì đường này vẫn cho ["caught boom", "cleanup A"].
+  it('the coroutineScope BODY itself throwing must also wait for children to finish unwinding before throwing out', () => {
+    // The second path of the same rule. Above, the exception comes FROM a
+    // child, so it goes through reportFailure; here, the scope's own body
+    // throws, so it goes through failInline. Fixing only the path above
+    // would still leave this one giving ["caught boom", "cleanup A"].
     expect(out(
       'fun main() = runBlocking {\n' +
       '  try {\n' +
@@ -121,11 +127,13 @@ describe('cancel làm unwind thân coroutine', () => {
       '}')).toEqual(['cleanup A', 'caught boom'])
   })
 
-  it('root FAIL vẫn để con chạy nốt finally trước khi chương trình dừng', () => {
-    // Bẫy của việc dừng vòng lặp khi root kết thúc (chốt "JVM thoát"): khi root
-    // FAIL, task của nó được đánh finished ngay trong step() trong khi con vừa
-    // bị huỷ còn chưa unwind. Chốt đặt sớm hơn unwindCancelled sẽ nuốt mất
-    // `finally` của con — Kotlin thì runBlocking chờ con unwind xong mới ném ra.
+  it('root FAILING still lets its child finish running finally before the program stops', () => {
+    // The trap in stopping the loop when root ends (the "JVM exits" gate):
+    // when root FAILS, its task gets marked finished right inside step()
+    // while a child that was just cancelled hasn't unwound yet. Placing the
+    // gate earlier than unwindCancelled would swallow the child's `finally`
+    // — in Kotlin, runBlocking waits for the child to finish unwinding
+    // before throwing out.
     expect(out(
       'fun main() = runBlocking {\n' +
       '  launch { try { delay(1000) } finally { println("cleanup") } }\n' +
@@ -134,17 +142,18 @@ describe('cancel làm unwind thân coroutine', () => {
       '}')).toEqual(['cleanup'])
   })
 
-  it('cancel() là BẤT ĐỒNG BỘ — lệnh sau nó chạy trước finally', () => {
-    // Đây là bẫy thật của Kotlin, đáng dạy. `cancel()` chỉ YÊU CẦU huỷ rồi
-    // trả về ngay; `println("sau cancel")` chạy tức thì, còn finally của
-    // coroutine bị huỷ chỉ chạy khi nó được resume để unwind.
-    // Muốn thứ tự ngược lại phải dùng cancelAndJoin() — chưa hỗ trợ ở M1.
+  it('cancel() is ASYNCHRONOUS — the statement after it runs before finally', () => {
+    // This is a real Kotlin trap, worth teaching. `cancel()` only REQUESTS
+    // cancellation and returns immediately; `println("after cancel")` runs
+    // right away, while the cancelled coroutine's finally only runs once
+    // it's resumed to unwind. Getting the reverse order requires
+    // cancelAndJoin() — not supported yet in M1.
     expect(out(
       'fun main() = runBlocking {\n' +
-      '  val j = launch { try { delay(1000) } finally { println("xong dọn") } }\n' +
+      '  val j = launch { try { delay(1000) } finally { println("cleanup done") } }\n' +
       '  yield()\n' +
       '  j.cancel()\n' +
-      '  println("sau cancel")\n' +
-      '}')).toEqual(['sau cancel', 'xong dọn'])
+      '  println("after cancel")\n' +
+      '}')).toEqual(['after cancel', 'cleanup done'])
   })
 })

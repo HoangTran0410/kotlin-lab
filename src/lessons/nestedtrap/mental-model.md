@@ -1,26 +1,29 @@
-## Mô hình tư duy
+## Mental model
 
-Supervisor chỉ chặn failure của **con TRỰC TIẾP**. Chỉ một tầng.
+A supervisor only blocks the failure of its **DIRECT child**. Just one level.
 
-Thêm một `launch` thường vào giữa là bạn đã dựng lại một Job thường ở tầng đó — và
-mọi thứ bên dưới nó quay về luật fail-fast. Failure của cháu không bao giờ leo tới
-được cầu dao, vì nó đã bị chặn lại và xử lý xong ở người cha thường ngay bên trên.
+Adding one regular `launch` in the middle means you've rebuilt a regular Job at
+that level — and everything below it falls back under fail-fast rules. The
+grandchild's failure never makes it up to the circuit breaker, because it already
+got blocked and handled by the regular parent right above it.
 
-## Vì sao Kotlin làm thế
+## Why Kotlin works this way
 
-Nếu supervisor chặn được failure của **toàn bộ** cây con thì nó sẽ vô hiệu hoá
-fail-fast ở mọi tầng bên dưới — kể cả những tầng mà người viết đang cố ý dựa vào
-fail-fast. Ranh giới phải cục bộ thì mới ghép được nhiều ranh giới khác nhau trong
-cùng một cây.
+If a supervisor could block the failure of the **entire** child subtree, it would
+disable fail-fast at every level below it — including levels where the author is
+deliberately relying on fail-fast. The boundary has to be local, so that many
+different boundaries can be composed within the same tree.
 
-## Chỗ hay sai
+## Where people get it wrong
 
-- Bọc `supervisorScope` ở ngoài cùng rồi yên tâm rằng "mọi thứ bên trong đã được cô
-  lập". Sai — chỉ tầng con ngay dưới nó được cô lập.
-- Muốn cô lập ở tầng sâu thì đặt ranh giới **ở đúng tầng đó**: `supervisorScope`
-  bên trong `launch` giữa, chứ không phải ở gốc.
+- Wrapping `supervisorScope` around the outermost layer and assuming "everything
+  inside is now isolated". Wrong — only the level of children directly under it
+  is isolated.
+- To isolate a deeper level, put the boundary **at that exact level**:
+  `supervisorScope` inside the middle `launch`, not at the root.
 
-## Nhìn gì trên đồ thị
+## What to look for on the graph
 
-Tìm node `launch` nằm giữa. Cạnh failure của B dừng lại **ở đó** — nó không đi tiếp
-lên supervisor. Rồi từ chính node đó, cancel toả xuống A và C.
+Find the `launch` node sitting in the middle. B's failure edge stops **right
+there** — it doesn't continue up to the supervisor. Then, from that same node,
+cancellation radiates down to A and C.

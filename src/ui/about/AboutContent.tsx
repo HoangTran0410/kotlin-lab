@@ -1,72 +1,74 @@
-import { CHAY_DUOC } from './capabilities'
+import { CAPABILITIES } from './capabilities'
 import { UNSUPPORTED } from '../../engine/validator/diagnostics'
 import { KOTLIN_VERSION } from '../../engine/kotlinVersion'
 import { DISPATCHER_POOL_SIZE } from '../../engine/runtime/dispatcher'
-import { LESSON_IDS_DOI_CHIEU_JVM, LESSON_LIST } from '../../lessons/registry'
+import { LESSON_IDS_WITH_JVM_FIXTURE, LESSON_LIST } from '../../lessons/registry'
 
 /**
- * "Công cụ này chạy được gì" — câu hỏi đầu tiên của mọi người mở app lần đầu,
- * và trước đây không có chỗ nào trả lời. Người học phải gõ thử rồi đoán từ chỗ
- * im lặng.
+ * "What can this tool run?" — the first question anyone opening the app for
+ * the first time asks, and until now there was nowhere that answered it.
+ * Learners had to type something and guess from the silence.
  *
- * Ba cột dữ liệu ở đây đều SUY RA, không chép tay:
- *   - "chạy được": từ `capabilities.ts`, mà mỗi mục đều được chạy thật trong
- *     `tests/ui/capabilities.test.ts` và so output từng dòng.
- *   - "chưa chạy được": từ chính bảng UNSUPPORTED mà validator dùng để báo lỗi.
- *     Hai danh sách không thể lệch nhau vì chúng là MỘT.
- *   - pool thread: từ DISPATCHER_POOL_SIZE của engine.
+ * The three columns of data here are all DERIVED, not hand-copied:
+ *   - "runs": from `capabilities.ts`, where every entry is actually run in
+ *     `tests/ui/capabilities.test.ts` and its output compared line by line.
+ *   - "doesn't run yet": straight from the UNSUPPORTED table that the
+ *     validator itself uses to report errors. The two lists can't drift
+ *     apart because they ARE the same table.
+ *   - thread pool: from the engine's DISPATCHER_POOL_SIZE.
  */
-export function AboutContent({ onMoViDu }: { onMoViDu: (src: string) => void }) {
-  const soBaiJvm = LESSON_LIST.filter(l => LESSON_IDS_DOI_CHIEU_JVM.has(l.id)).length
+export function AboutContent({ onOpenExample }: { onOpenExample: (src: string) => void }) {
+  const jvmLessonCount = LESSON_LIST.filter(l => LESSON_IDS_WITH_JVM_FIXTURE.has(l.id)).length
 
   return (
     <>
       <p className="about__sub">
-        Đây là một <strong>mô phỏng</strong>, không phải trình biên dịch Kotlin. Nó đọc một tập con
-        của Kotlin và diễn ra từng bước của coroutine để nhìn thấy được.
+        This is a <strong>simulation</strong>, not a Kotlin compiler. It reads a subset of Kotlin
+        and plays out each step of a coroutine so you can see it happen.
       </p>
       <section className="about__sec">
-            <h3>Neo vào Kotlin nào</h3>
+            <h3>Which Kotlin it's pinned to</h3>
             <ul className="about__facts">
               <li>
-                Ngữ nghĩa đối chiếu với <strong>Kotlin {KOTLIN_VERSION}</strong> + kotlinx.coroutines,
-                chạy trên JVM thật qua Kotlin Playground.
+                Semantics are checked against <strong>Kotlin {KOTLIN_VERSION}</strong> +
+                kotlinx.coroutines, run on a real JVM via Kotlin Playground.
               </li>
               <li>
-                <strong>{soBaiJvm}/{LESSON_LIST.length} bài</strong> có output đã so từng dòng với
-                JVM thật và được commit thành fixture. Số bài còn lại cố ý để một exception không
-                bắt lan tới handler mặc định — chỗ đó sandbox của playground giết tiến trình ở một
-                thời điểm không lặp lại được, nên ghi lại số đo ấy là đóng băng sự bất định của
-                sandbox chứ không phải ngữ nghĩa Kotlin.
+                <strong>{jvmLessonCount}/{LESSON_LIST.length} lessons</strong> have output checked
+                line-by-line against a real JVM and committed as a fixture. The remaining lessons
+                deliberately let an exception propagate uncaught to the default handler — at that
+                point the Playground sandbox kills the process at a moment that isn't reproducible,
+                so recording that measurement would just freeze the sandbox's nondeterminism, not
+                Kotlin's semantics.
               </li>
               <li>
-                Cú pháp: một tập con — đủ để viết mọi bài trong lộ trình, không đủ để chạy code
-                sản phẩm. Xem hai cột bên dưới.
+                Syntax: a subset — enough to write every lesson in the path, not enough to run
+                production code. See the two lists below.
               </li>
             </ul>
           </section>
 
           <section className="about__sec">
-            <h3>Chạy được — bấm để mở thẳng vào editor</h3>
-            {CHAY_DUOC.map(nhom => (
-              <div key={nhom.tieuDe} className="about__group">
-                <h4>{nhom.tieuDe}</h4>
+            <h3>What runs — click to open straight into the editor</h3>
+            {CAPABILITIES.map(group => (
+              <div key={group.title} className="about__group">
+                <h4>{group.title}</h4>
                 <ul className="mdl__cards">
-                  {nhom.items.map(k => (
-                    <li key={k.ten} className="mdl__card">
+                  {group.items.map(k => (
+                    <li key={k.name} className="mdl__card">
                       <div className="mdl__cardHead">
-                        <code className="about__ten">{k.ten}</code>
+                        <code className="about__ten">{k.name}</code>
                         <button
                           type="button"
                           className="about__try"
-                          onClick={() => onMoViDu(k.kotlin)}
+                          onClick={() => onOpenExample(k.kotlin)}
                         >
-                          Mở ví dụ
+                          Open example
                         </button>
                       </div>
-                      <p className="about__mo">{k.mo}</p>
-                      <pre className="about__ra" aria-label={`Output của ví dụ ${k.ten}`}>
-                        {k.ra.join('\n')}
+                      <p className="about__mo">{k.summary}</p>
+                      <pre className="about__ra" aria-label={`Output for example ${k.name}`}>
+                        {k.output.join('\n')}
                       </pre>
                     </li>
                   ))}
@@ -76,40 +78,41 @@ export function AboutContent({ onMoViDu }: { onMoViDu: (src: string) => void }) 
           </section>
 
           <section className="about__sec">
-            <h3>Chưa chạy được — gõ vào sẽ bị báo đỏ, không im lặng</h3>
+            <h3>Not supported yet — typing it flags red, it doesn't fail silently</h3>
             <ul className="about__unsup">
-              {Object.entries(UNSUPPORTED).map(([ten, goiY]) => (
-                <li key={ten}>
-                  <code>{ten}</code>
-                  <span>{goiY}</span>
+              {Object.entries(UNSUPPORTED).map(([name, hint]) => (
+                <li key={name}>
+                  <code>{name}</code>
+                  <span>{hint}</span>
                 </li>
               ))}
             </ul>
           </section>
 
           <section className="about__sec">
-            <h3>Khác Kotlin thật ở đâu</h3>
+            <h3>Where it differs from real Kotlin</h3>
             <ul className="about__facts">
               <li>
-                <strong>Thứ tự chạy là duy nhất.</strong> Cùng một đoạn code luôn cho cùng một
-                trace. Kotlin thật chạy đa luồng và có thể xen kẽ khác — nhất là giữa các coroutine
-                cùng sẵn sàng tại một thời điểm.
+                <strong>Execution order is unique.</strong> The same code always produces the same
+                trace. Real Kotlin runs multi-threaded and can interleave differently — especially
+                between coroutines that become ready at the same instant.
               </li>
               <li>
-                <strong>Đồng hồ là ảo.</strong> <code>delay(1000)</code> không tốn một giây nào; nó
-                nhảy thẳng tới mốc thời gian kế tiếp. Nhờ vậy so được 200ms với 400ms mà không phải
-                ngồi chờ.
+                <strong>The clock is virtual.</strong> <code>delay(1000)</code> doesn't cost a real
+                second; it jumps straight to the next time mark. That's how you can compare 200ms
+                against 400ms without actually waiting.
               </li>
               <li>
-                <strong>Thread là ảo và ít hơn thực tế</strong> cho vừa hình vẽ:{' '}
+                <strong>Threads are virtual, and fewer than in reality,</strong> to fit the
+                diagram:{' '}
                 {Object.entries(DISPATCHER_POOL_SIZE).map(([d, n], i) => (
                   <span key={d}>{i > 0 ? ', ' : ''}<code>{d}</code> {n}</span>
                 ))}.
               </li>
               <li>
-                <strong>Không mô phỏng tranh chấp tài nguyên.</strong> Hai coroutine cùng ghi một
-                biến ở đây sẽ không bao giờ cho ra kết quả sai như trên JVM thật — race condition
-                nằm ngoài phạm vi công cụ này.
+                <strong>Resource contention isn't simulated.</strong> Two coroutines writing the
+                same variable here will never produce a wrong result the way they could on a real
+                JVM — race conditions are out of scope for this tool.
               </li>
             </ul>
       </section>

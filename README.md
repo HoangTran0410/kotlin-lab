@@ -1,40 +1,65 @@
 # Kotlin Coroutines Lab
 
-Công cụ học kotlinx.coroutines: viết code Kotlin, xem luồng chạy dưới dạng graph.
+A tool for learning `kotlinx.coroutines`: write Kotlin, watch the coroutines run as
+a graph.
 
-**Trạng thái: M2 — UI chạy thông suốt.**
+It is a **simulator, not a compiler**. It reads a subset of Kotlin and replays
+coroutine execution step by step so you can see it. Semantics are anchored to
+**Kotlin 2.1.20** + `kotlinx.coroutines`, checked against a real JVM through the
+Kotlin Playground API.
 
-Engine (M1) biến source Kotlin (subset) thành `Event[]`; `foldTrace(events, n)` dựng
-lại trạng thái tại bất kỳ step nào, nên tua ngược được. M2 gắn UI React lên trên:
-editor CodeMirror (debounce, highlight dòng đang chạy), panel chẩn đoán với đánh dấu
-lỗi ngay trong editor, sơ đồ coroutine bằng React Flow (bố cục ELK một lần cho mỗi
-lần biên dịch, không rung khi tua), thanh thời gian kéo được hai chiều kèm nút
-phát/tạm dừng, console theo thời gian ảo, và danh sách ba bài học chọn nhanh.
+```
+npm install
+npm run dev        # open the app, edit Kotlin, scrub the trace live
+npm test           # engine + UI
+npm run typecheck
+npm run lint
+npm run build      # production build via Vite
+npm run jvm:fetch  # refresh lesson fixtures from a real JVM (manual, needs network)
+```
 
-    npm install
-    npm run dev      # mở app, chỉnh sửa code Kotlin và tua trace trực tiếp
-    npm test          # 427 test: engine (M1) + UI (M2)
-    npm run typecheck
-    npm run lint
-    npm run build     # build production bằng Vite
+## How it works
 
-## Ba bài học
+The engine turns Kotlin source into an `Event[]`. `foldTrace(events, n)` rebuilds
+the world at any step, which is what makes the timeline scrub in both directions:
+there is one source of truth (the trace) and every view is a pure function of it.
 
-`jobtree`, `normalfail`, `supervisor` — hai bài sau khác nhau **đúng một từ**
-(`coroutineScope` vs `supervisorScope`) nhưng cho kết quả khác hẳn, và UI phải làm
-khác biệt đó **nhìn thấy được** ở bước cuối của trace: `normalfail` không in dòng
-console nào và cả ba coroutine con đều bị huỷ (Cancelled); `supervisor` in đủ hai
-dòng (`A xong`, `C xong`) và graph hiện rõ hai coroutine đó Completed, kèm một cạnh
-failure có nhãn "bị supervisor chặn" — đúng ranh giới mà `supervisorScope` tạo ra.
+The interpreter is a JS generator, so `finally` blocks run across suspension points
+the way they do in Kotlin. Time is virtual — `delay(1000)` costs nothing and the
+clock jumps to the next timer — and threads are virtual pools (`Main` 1, `Default`
+4, `IO` 8) sized to stay readable on screen.
 
-Xem `tests/ui/acceptance-m2.test.ts` (khẳng định thuần, headless) và
-`tests/ui/acceptance-m2-dom-smoke.test.tsx` (khẳng định trên DOM thật dựng bởi
-`<App/>` + store thật, qua jsdom — môi trường phát triển hiện tại không có trình
-duyệt thật để chạy Playwright; phần kiểm chứng `boundingBox`/layout CSS thật do đó
-còn để ngỏ, xem ghi chú đầu file đó).
+## What you see
 
-Thiết kế: `docs/superpowers/specs/2026-08-11-kotlin-coroutines-lab-design.md`
-Kế hoạch M1: `docs/superpowers/plans/2026-08-11-m1-engine-core.md`
-Kế hoạch M2: `docs/superpowers/plans/2026-08-12-m2-ui.md`
+- **Graph** — the job tree, with containment for parenthood, failure edges going up
+  and cancel edges going down. Nodes carry the variable name you typed, the thread
+  they are on, what they last printed, and the exception that killed them.
+- **A sentence per step** under the graph, generated from the trace, so code you
+  wrote yourself is explained too — nothing is hand-written per lesson.
+- **Mental model** above the editor for each lesson: the model, why Kotlin is
+  designed that way, where people get it wrong, and what to look for on the graph.
+- **Deep debug** (off by default) — full console, per-event timeline, narration log.
 
-Mô phỏng deterministic — Kotlin thật có thể interleave khác.
+## Lessons
+
+Thirteen lessons in teaching order, from `suspend` through the supervisor rules to
+`GlobalScope`. Nine of them have their output compared line by line against real
+JVM output committed as a fixture. The other four deliberately let an uncaught
+exception reach the default handler; the Playground sandbox kills that process at a
+point that does not reproduce, so freezing that measurement would record sandbox
+flakiness rather than Kotlin semantics — those four are anchored by per-lesson
+semantic tests instead.
+
+## Honesty rules this codebase holds itself to
+
+- **No silent wrongness.** A construct the engine does not implement must be
+  reported, never quietly evaluated to `Unit`. The "What can it run?" panel lists
+  what is supported (every entry is executed by a test and its output compared) and
+  what is not (read straight from the validator's table, so the two cannot drift).
+- **Deterministic.** One program, one trace, every time. Real Kotlin is
+  multi-threaded and may interleave differently — the app says so permanently.
+- **Tests must be able to fail.** Assertions are red-checked by deliberately
+  breaking the code they guard; where a test only guards a property rather than a
+  line, the comment says so.
+
+Design: `docs/superpowers/specs/2026-08-11-kotlin-coroutines-lab-design.md`

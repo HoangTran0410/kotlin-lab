@@ -3,15 +3,16 @@ import { runSource } from '../../src/engine/run'
 import { foldTrace } from '../../src/engine/trace/world'
 import { LESSONS, loadLessonSource } from '../../src/lessons'
 
-const chan = (src: string) => runSource(src).diagnostics
+const diagnosticsOf = (src: string) => runSource(src).diagnostics
 
-describe('tên chưa khai báo — "Unresolved reference" của Kotlin thật', () => {
-  it('receiver chưa khai báo bị báo, đúng dòng và cột', () => {
-    // Ca thật: quên `val supervisorScope = CoroutineScope(SupervisorJob())`.
-    // Kotlin thật không biên dịch được. Engine thì dựng một object rác mang
-    // đúng cái tên ấy, scopeReceiver không nhận ra, nên lời gọi chạy y hệt
-    // `launch { }` trần — cả bài học về supervisor lặng lẽ dạy ngược.
-    const d = chan(`import kotlinx.coroutines.*
+describe('undeclared names — real Kotlin\'s "Unresolved reference"', () => {
+  it('an undeclared receiver is reported, at the right line and column', () => {
+    // A real case: forgetting `val supervisorScope = CoroutineScope(SupervisorJob())`.
+    // Real Kotlin fails to compile. The engine used to build a garbage object
+    // carrying that exact name, scopeReceiver didn't recognize it, so the call
+    // ran exactly like a bare `launch { }` — the whole lesson about a silent
+    // supervisor taught the opposite.
+    const d = diagnosticsOf(`import kotlinx.coroutines.*
 
 fun main() = runBlocking {
     supervisorScope.launch { delay(10) }
@@ -22,42 +23,42 @@ fun main() = runBlocking {
     expect(d[0]!.message).toContain('Unresolved reference')
   })
 
-  it('biến chưa khai báo dùng như giá trị cũng bị báo', () => {
-    expect(chan('fun main() = runBlocking {\n    println(chuaCo + 1)\n}')).toHaveLength(1)
+  it('an undeclared variable used as a value is also reported', () => {
+    expect(diagnosticsOf('fun main() = runBlocking {\n    println(missingVar + 1)\n}')).toHaveLength(1)
   })
 
-  it('KHÔNG báo nhầm: biến đã khai, tham số, biến catch/for, `it`, `this`', () => {
-    // Mỗi tên ở đây đến từ một đường khai báo khác nhau. Gộp vào một ca vì
-    // chúng cùng canh một điều: phép kiểm mới không được chặn code hợp lệ.
-    const d = chan(`import kotlinx.coroutines.*
+  it('does NOT false-positive on: a declared variable, a parameter, a catch/for variable, `it`, `this`', () => {
+    // Each name here comes from a different declaration path. Grouped into one
+    // case because they all guard the same thing: the new check must not block valid code.
+    const d = diagnosticsOf(`import kotlinx.coroutines.*
 
-suspend fun lam(scope: CoroutineScope, n: Int) {
+suspend fun doWork(scope: CoroutineScope, n: Int) {
     scope.launch { delay(n) }
 }
 
 fun main() = runBlocking {
-    val bien = 1
-    var doiDuoc = 2
-    doiDuoc = doiDuoc + bien
+    val count = 1
+    var mutable = 2
+    mutable = mutable + count
     for (i in 1..2) { println(i) }
     repeat(2) { println(it) }
     try { error("x") } catch (e: Exception) { println(e.message) }
-    lam(this, doiDuoc)
-    println(bien)
+    doWork(this, mutable)
+    println(count)
 }`)
     expect(d).toEqual([])
   })
 
-  it('hàm gọi được trước khi khai báo, và gọi được chính nó', () => {
-    expect(chan(`fun main() = runBlocking {
-    println(dem(3))
+  it('a function can be called before its declaration, and can call itself', () => {
+    expect(diagnosticsOf(`fun main() = runBlocking {
+    println(count(3))
 }
 
-fun dem(n: Int): Int = n`)).toEqual([])
+fun count(n: Int): Int = n`)).toEqual([])
   })
 
-  it('tên viết hoa KHÔNG bị hỏi tới — chúng là kiểu/hàm dựng', () => {
-    expect(chan(`import kotlinx.coroutines.*
+  it('uppercase names are NOT questioned — they are types/constructors', () => {
+    expect(diagnosticsOf(`import kotlinx.coroutines.*
 
 fun main() = runBlocking {
     launch(Dispatchers.IO) { throw RuntimeException("x") }
@@ -65,42 +66,44 @@ fun main() = runBlocking {
 }`)).toEqual([])
   })
 
-  it('vị trí GỌI không bị báo — hàm chưa biết là chuyện khác', () => {
-    // `flowOf` là hàm CÓ THẬT của kotlinx mà engine chưa cài; Flow thuộc
-    // milestone sau. Báo nó là "chưa khai báo" sẽ là một câu sai.
-    const d = chan('fun main() = runBlocking {\n    flowOf(1)\n}')
+  it('a CALL position is not reported — an unknown function is a different matter', () => {
+    // `flowOf` is a REAL kotlinx function this engine hasn't implemented yet;
+    // Flow belongs to a later milestone. Reporting it as "not declared" would be a wrong statement.
+    const d = diagnosticsOf('fun main() = runBlocking {\n    flowOf(1)\n}')
     expect(d.filter(x => x.message.includes('Unresolved reference'))).toEqual([])
   })
 
-  it('13 bài và mọi chương trình mẫu vẫn sạch', () => {
-    // Đây là thứ canh danh sách TEN_CO_SAN không bị thiếu: bỏ sót một tên dựng
-    // sẵn thì có bài đỏ ngay, thay vì lặng lẽ báo nhầm cho người học.
+  it('all 13 lessons and every sample program stay clean', () => {
+    // This is what guards the BUILTIN_VALUES list from drifting: missing a
+    // built-in name here turns a lesson red immediately, instead of silently
+    // reporting a false positive to the learner.
     for (const l of LESSONS) {
-      expect(chan(loadLessonSource(l.id)), `bài ${l.id}`).toEqual([])
+      expect(diagnosticsOf(loadLessonSource(l.id)), `lesson ${l.id}`).toEqual([])
     }
   })
 })
 
-describe('message của exception sống được tới cuối trace', () => {
-  it('job hỏng mang cả kiểu LẪN message; job bị huỷ lây thì không', () => {
-    // Trước đây message chỉ nằm trong đúng MỘT event (EXCEPTION_THROWN), nên
-    // đồ thị hiện "RuntimeException" trần và phải tua trúng event đó mới đọc
-    // được "Child 1 failed".
+describe('an exception\'s message survives to the end of the trace', () => {
+  it('a failed job carries both its type AND message; a job cancelled by contagion does not', () => {
+    // Previously the message lived in exactly ONE event (EXCEPTION_THROWN), so
+    // the graph showed a bare "RuntimeException" and had to be scrubbed to
+    // exactly that event to read "Child 1 failed".
     const r = runSource(`import kotlinx.coroutines.*
 
 fun main() = runBlocking {
     launch { delay(50); throw RuntimeException("Child 1 failed") }
-    launch { delay(100); println("không in được") }
+    launch { delay(100); println("should not print") }
 }`)
     const w = foldTrace(r.events, r.events.length)
     const jobs = [...w.jobs.values()]
-    const hong = jobs.filter(j => j.loi !== null)
-    expect(hong).toHaveLength(1)
-    expect(hong[0]!.loi).toEqual({ exType: 'RuntimeException', message: 'Child 1 failed' })
-    // Anh em bị huỷ lây: có `cause` (kiểu) nhưng KHÔNG có `loi` — nó không ném
-    // gì cả. Gán message của người khác cho nó là nói dối trên đồ thị.
-    const layNan = jobs.find(j => j.state === 'Cancelled' && j.loi === null)
-    expect(layNan, 'không job nào bị huỷ lây?').toBeDefined()
-    expect(layNan!.cause).toBe('RuntimeException')
+    const failed = jobs.filter(j => j.failure !== null)
+    expect(failed).toHaveLength(1)
+    expect(failed[0]!.failure).toEqual({ exType: 'RuntimeException', message: 'Child 1 failed' })
+    // Cancelled by contagion: it has a `cause` (a type) but NO `failure` — it
+    // didn't throw anything itself. Assigning someone else's message to it
+    // would be lying on the graph.
+    const collateral = jobs.find(j => j.state === 'Cancelled' && j.failure === null)
+    expect(collateral, 'no job was cancelled by contagion?').toBeDefined()
+    expect(collateral!.cause).toBe('RuntimeException')
   })
 })

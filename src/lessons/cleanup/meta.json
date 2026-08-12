@@ -1,8 +1,8 @@
 {
   "id": "cleanup",
   "order": 3,
-  "title": "Huỷ và dọn dẹp — finally vẫn chạy",
-  "summary": "cancel() làm delay() ném CancellationException, nên finally chạy. cancelAndJoin() chờ nó xong.",
+  "title": "Cancellation and cleanup — finally still runs",
+  "summary": "cancel() makes delay() throw CancellationException, so finally runs. cancelAndJoin() waits for it to finish.",
   "concepts": [
     "cancel",
     "cancelAndJoin",

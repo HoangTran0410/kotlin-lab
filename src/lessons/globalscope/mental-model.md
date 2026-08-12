@@ -1,33 +1,37 @@
-## Mô hình tư duy
+## Mental model
 
-`GlobalScope.launch { }` là một coroutine **không có cha**. Bỏ cha đi thì bạn mất
-cả bốn thứ cùng lúc:
+`GlobalScope.launch { }` is a coroutine **with no parent**. Drop the parent and you
+lose all four of these at once:
 
-- không ai **chờ** nó,
-- không ai **huỷ** nó,
-- failure của nó không có chỗ nào để đi,
-- và nó **không sống lâu hơn tiến trình** — chương trình kết thúc là nó biến mất
-  giữa chừng, ngay giữa một `delay`.
+- nobody **waits** for it,
+- nobody **cancels** it,
+- its failure has nowhere to go,
+- and it **doesn't outlive the process** — when the program ends, it vanishes
+  mid-flight, possibly right in the middle of a `delay`.
 
-Nó không phải "coroutine toàn cục sống mãi". Nó là coroutine **mồ côi**.
+It's not "a global coroutine that lives forever". It's an **orphan** coroutine.
 
-## Vì sao Kotlin làm thế
+## Why Kotlin works this way
 
-`GlobalScope` được đánh dấu `@DelicateCoroutinesApi` — chính tác giả thư viện coi
-nó là công cụ dễ dùng sai. Nó tồn tại cho vài trường hợp cực hiếm ở tầng hạ tầng,
-nơi vòng đời thật sự là vòng đời của cả ứng dụng.
+`GlobalScope` is marked `@DelicateCoroutinesApi` — the library authors themselves
+consider it a tool that's easy to misuse. It exists for a handful of rare
+infrastructure-level cases, where the real lifecycle is the lifecycle of the whole
+application.
 
-Thứ bạn cần gần như luôn là một scope có vòng đời rõ ràng: `viewModelScope`,
-`lifecycleScope`, hoặc `CoroutineScope(SupervisorJob())` do chính bạn dựng và chính
-bạn `cancel()`.
+What you almost always need instead is a scope with a clear lifecycle:
+`viewModelScope`, `lifecycleScope`, or a `CoroutineScope(SupervisorJob())` that you
+build yourself and `cancel()` yourself.
 
-## Chỗ hay sai
+## Where people get it wrong
 
-- Dùng `GlobalScope` để "coroutine khỏi bị huỷ khi rời màn hình". Đó chính là rò rỉ:
-  nó vẫn chạy, vẫn giữ tham chiếu tới màn hình đã chết.
-- Tưởng nó chạy xong rồi mới thoát. Không ai chờ nó cả.
+- Using `GlobalScope` so a coroutine "won't get cancelled when the screen closes".
+  That is exactly a leak: it keeps running, still holding a reference to a screen
+  that's already dead.
+- Assuming it runs to completion before the program exits. Nobody is waiting for
+  it at all.
 
-## Nhìn gì trên đồ thị
+## What to look for on the graph
 
-Nó đứng **riêng một cây**, không có cạnh nào nối lên node `runBlocking`. Và ở bước
-cuối cùng, nó vẫn đang ở trạng thái tạm dừng — không bao giờ có bước resume.
+It stands **as its own tree**, with no edge connecting up to the `runBlocking`
+node. And at the final step, it's still sitting in a suspended state — there is
+never a resume step for it.

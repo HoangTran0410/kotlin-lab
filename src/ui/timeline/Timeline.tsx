@@ -3,36 +3,39 @@ import type { Event } from '../../engine/trace/events'
 import { buildMarkers, type NotableKind } from './markers'
 import './timeline.css'
 
-/** Shift + mũi tên nhảy 10 bước (Task 16 bước 2). */
+/** Shift + arrow jumps 10 steps (Task 16 step 2). */
 const BIG_STEP = 10
 
 const MARKER_LABEL: Readonly<Record<NotableKind, string>> = {
-  COROUTINE_CREATED: 'Coroutine được tạo',
-  EXCEPTION_THROWN: 'Exception bị ném',
-  FAILURE_PROPAGATED: 'Lỗi lan lên cha',
-  CANCEL_REQUESTED: 'Yêu cầu huỷ',
-  PRINTLN: 'In ra console',
+  COROUTINE_CREATED: 'Coroutine created',
+  EXCEPTION_THROWN: 'Exception thrown',
+  FAILURE_PROPAGATED: 'Failure propagated to parent',
+  CANCEL_REQUESTED: 'Cancel requested',
+  PRINTLN: 'Printed to console',
 }
 
 /**
- * `<input type="range">` gốc: kéo hai chiều bằng con trỏ, phím mũi tên,
- * Home/End và hỗ trợ screen reader đều có sẵn — KHÔNG tự cài kéo bằng pointer
- * event, tự viết là mua lại toàn bộ đống đó kèm lỗi.
+ * Native `<input type="range">`: two-way dragging by pointer, arrow keys,
+ * Home/End and screen reader support all come for free — do NOT roll your
+ * own dragging with pointer events; reimplementing it means buying back that
+ * whole pile of behavior plus its bugs.
  *
- * Duy nhất phải tự cài: Shift+mũi tên (nhảy 10 bước) và chính ←/→/Home/End,
- * vì hành vi bàn phím mặc định của range input KHÔNG được test ở đây (jsdom
- * không mô phỏng — đã đo bằng test thăm dò trước khi viết file này) và không
- * đồng nhất giữa các trình duyệt. `preventDefault()` trên các phím tự xử lý
- * để không double-step khi trình duyệt thật cũng có hành vi mặc định riêng.
+ * The only things that need custom wiring: Shift+arrow (jump 10 steps) and
+ * plain ←/→/Home/End themselves, because the range input's default keyboard
+ * behavior is NOT exercised here (jsdom doesn't simulate it — measured with a
+ * probing test before writing this file) and isn't consistent across
+ * browsers. `preventDefault()` on the keys we handle ourselves prevents
+ * double-stepping when a real browser also applies its own default behavior.
  *
- * `max` là `events.length`, KHÔNG phải chỉ số lúc root `Completed` — tồn đọng
- * B3: `GlobalScope.launch` còn in sau khi `runBlocking` xong, cắt ở đó sẽ
- * giấu mất phần trace còn lại.
+ * `max` is `events.length`, NOT the index where root `Completed` happens —
+ * backlog item B3: `GlobalScope.launch` keeps printing after `runBlocking` is
+ * done, cutting off there would hide the rest of the trace.
  *
- * `t` (thời gian ảo hiện tại) đọc THẲNG từ `events[stepIndex - 1].t`, không
- * gọi `foldTrace` — event cuối cùng đã áp dụng ở step `stepIndex` chính là
- * `events[stepIndex - 1]` (foldTrace áp [0, upTo) và luôn set `w.t = e.t` ở
- * mỗi vòng lặp), nên tra thẳng mảng là đủ, rẻ hơn gập lại cả world.
+ * `t` (the current virtual time) is read DIRECTLY from
+ * `events[stepIndex - 1].t`, without calling `foldTrace` — the last event
+ * applied at step `stepIndex` is exactly `events[stepIndex - 1]` (foldTrace
+ * applies [0, upTo) and always sets `w.t = e.t` on every iteration), so a
+ * direct array lookup is enough, cheaper than folding the whole world.
  */
 export function Timeline({ events, stepIndex, setStep }: {
   events: readonly Event[]
@@ -74,7 +77,7 @@ export function Timeline({ events, stepIndex, setStep }: {
         <input
           type="range"
           className="timeline__range"
-          aria-label="Thanh kéo dòng thời gian"
+          aria-label="Timeline scrubber"
           min={0}
           max={max}
           value={disabled ? 0 : stepIndex}
@@ -94,7 +97,7 @@ export function Timeline({ events, stepIndex, setStep }: {
         ))}
       </div>
       <div className="timeline__status">
-        <span>bước {stepIndex} / {max}</span>
+        <span>step {stepIndex} / {max}</span>
         <span>t = {t}ms</span>
       </div>
     </div>

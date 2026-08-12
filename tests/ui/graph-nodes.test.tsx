@@ -9,22 +9,23 @@ import { builderAccent, stateBorder } from '../../src/ui/graph/nodeStyle'
 import type { FlowNode, FlowNodeData } from '../../src/ui/graph/toReactFlow'
 
 /**
- * Render "node lẻ, không mount cả React Flow" (brief Task 13 bước 4): KHÔNG
- * mount `<ReactFlow>` (canvas thật, layout, viewport) — chỉ bọc trong
- * `<ReactFlowProvider>`, vốn chỉ là context Zustand nội bộ mà `<Handle>` cần
- * để không văng lỗi "Seems like you have not used ReactFlowProvider as an
- * ancestor" (đã đo bằng probe thật trước khi viết test này). Đây là mức bọc
- * NHẸ NHẤT có thể để component tự đứng được, không phải một cách né việc mount
- * React Flow.
+ * Renders "individual nodes, without mounting the whole React Flow" (brief
+ * Task 13 step 4): does NOT mount `<ReactFlow>` (the real canvas, layout,
+ * viewport) — just wraps in `<ReactFlowProvider>`, which is only the internal
+ * Zustand context `<Handle>` needs so it doesn't throw "Seems like you have
+ * not used ReactFlowProvider as an ancestor" (measured with a real probe
+ * before writing this test). This is the LIGHTEST possible wrapping needed
+ * for the component to stand on its own, not a way to dodge mounting React
+ * Flow.
  */
 const renderInFlow = (ui: React.ReactElement) => render(<ReactFlowProvider>{ui}</ReactFlowProvider>)
 
 const BASE_DATA: FlowNodeData = {
   name: null, builder: 'launch', isSupervisor: false, phase: 'live',
-  state: 'Active', cause: null, varName: null, suspendReason: null, lastPrint: null, printCount: 0, loi: null, isCurrent: false,
+  state: 'Active', cause: null, varName: null, suspendReason: null, lastPrint: null, printCount: 0, failure: null, dispatcher: 'Main', threadId: null, isCurrent: false,
 }
 
-/** Phần còn lại của NodeProps mà React Flow tự điền lúc mount thật — ở đây điền tay vì test gọi component trực tiếp. */
+/** The rest of NodeProps that React Flow fills in automatically on a real mount — filled in by hand here since the test calls the component directly. */
 function jobNodeProps(data: FlowNodeData): NodeProps<FlowNode> {
   return {
     id: 'n', data, type: 'job', dragging: false, zIndex: 0, selectable: true,
@@ -38,17 +39,17 @@ function scopeNodeProps(data: FlowNodeData): NodeProps<FlowNode> {
 }
 
 describe('JobNode (Task 13)', () => {
-  it('hiện tên job làm nhãn', () => {
+  it('shows the job name as the label', () => {
     renderInFlow(<JobNode {...jobNodeProps({ ...BASE_DATA, name: 'worker-1' })} />)
     expect(screen.getByText('worker-1')).toBeInTheDocument()
   })
 
-  it('không có tên riêng thì dùng tên builder làm nhãn', () => {
+  it('falls back to the builder name as the label when there is no name', () => {
     renderInFlow(<JobNode {...jobNodeProps({ ...BASE_DATA, name: null, builder: 'async' })} />)
     expect(screen.getByText('async')).toBeInTheDocument()
   })
 
-  it('accent trái đổi theo builder — mỗi builder một màu token khác nhau', () => {
+  it('left accent changes by builder — each builder a different color token', () => {
     const { unmount } = renderInFlow(<JobNode {...jobNodeProps({ ...BASE_DATA, builder: 'launch' })} />)
     expect(screen.getByTestId('job-node')).toHaveStyle({ borderLeftColor: builderAccent('launch') })
     unmount()
@@ -58,30 +59,34 @@ describe('JobNode (Task 13)', () => {
     expect(builderAccent('launch')).not.toBe(builderAccent('async'))
   })
 
-  it("builder 'scope' (Task 5, M3) có token riêng — không rơi về --fg-dim, không trùng builder nào", () => {
-    // Job gốc của CoroutineScope(ctx) là một node CÓ THẬT trên đồ thị từ Task 5.
-    // Nếu quên thêm nó vào BUILDER_ACCENT thì builderAccent trả '--fg-dim' —
-    // đúng cái màu dành cho "builder lạ chưa biết", nên node quan trọng nhất của
-    // bài học Android lại hiện ra mờ như một thứ engine không nhận ra.
+  it("builder 'scope' (Task 5, M3) has its own token — doesn't fall back to --fg-dim, doesn't collide with any builder", () => {
+    // The root job of CoroutineScope(ctx) is a REAL node on the graph since
+    // Task 5. Forgetting to add it to BUILDER_ACCENT would make builderAccent
+    // return '--fg-dim' — exactly the color meant for "unknown builder", so
+    // the most important node of the Android lesson would show up faded as
+    // if the engine didn't recognize it.
     expect(builderAccent('scope')).toBe('var(--k-scope)')
     expect(builderAccent('scope')).not.toBe('var(--fg-dim)')
     for (const b of ['runBlocking', 'launch', 'async', 'coroutineScope', 'supervisorScope', 'withContext']) {
-      expect(builderAccent('scope'), `trùng màu với ${b}`).not.toBe(builderAccent(b))
+      expect(builderAccent('scope'), `collides with the color of ${b}`).not.toBe(builderAccent(b))
     }
-    // Và token phải TỒN TẠI. `var(--k-scope)` chưa khai thì trình duyệt bỏ qua
-    // thuộc tính, node mất accent mà không có lỗi nào — sai âm thầm.
-    // Đọc bằng node:fs từ cwd (cùng cách boundary.test.ts dựa vào cwd), KHÔNG
-    // bằng `import ... ?raw`: workspace 'ui' đi qua Vite với css bị tắt, nên
-    // import file .css trả về chuỗi RỖNG — test sẽ xanh/đỏ vì lý do sai.
+    // And the token must EXIST. If `var(--k-scope)` isn't declared yet, the
+    // browser ignores the property, the node loses its accent with no error
+    // at all — a silent failure.
+    // Read with node:fs from cwd (same approach boundary.test.ts relies on),
+    // NOT with `import ... ?raw`: workspace 'ui' goes through Vite with css
+    // disabled, so importing a .css file returns an EMPTY string — the test
+    // would pass/fail for the wrong reason.
     const tokensCss = readFileSync(resolve(process.cwd(), 'src/ui/theme/tokens.css'), 'utf8')
     expect(tokensCss).toMatch(/--k-scope:\s*#[0-9a-fA-F]{3,8};/)
   })
 
-  it('viền đổi theo state', () => {
-    // Kiểm borderRightColor (không phải borderColor rút gọn): borderLeftColor
-    // bị JobNode ghi đè riêng cho accent builder, nên bốn cạnh không còn đều
-    // nhau — CSSOM trả rỗng cho shorthand 'border-color' khi các cạnh khác màu.
-    // borderRightColor là cạnh KHÔNG bị ghi đè, phản ánh đúng màu theo state.
+  it('border changes by state', () => {
+    // Check borderRightColor (not the shorthand borderColor): borderLeftColor
+    // is overridden separately by JobNode for the builder accent, so the four
+    // sides are no longer uniform — CSSOM returns empty for the 'border-color'
+    // shorthand when the sides have different colors. borderRightColor is the
+    // side that ISN'T overridden, so it reflects the correct state color.
     const { unmount } = renderInFlow(<JobNode {...jobNodeProps({ ...BASE_DATA, state: 'Active' })} />)
     expect(screen.getByTestId('job-node')).toHaveStyle({ borderRightColor: stateBorder('Active') })
     unmount()
@@ -91,19 +96,19 @@ describe('JobNode (Task 13)', () => {
     expect(stateBorder('Active')).not.toBe(stateBorder('Cancelled'))
   })
 
-  it('đang treo thì hiện huy hiệu suspend đúng lý do', () => {
+  it('shows a suspend badge with the right reason while suspended', () => {
     renderInFlow(<JobNode {...jobNodeProps({ ...BASE_DATA, suspendReason: 'delay' })} />)
     expect(screen.getByText('delay')).toBeInTheDocument()
   })
 
-  it('không treo thì không có huy hiệu suspend', () => {
+  it('shows no suspend badge while not suspended', () => {
     renderInFlow(<JobNode {...jobNodeProps({ ...BASE_DATA, suspendReason: null })} />)
     expect(screen.queryByText('delay')).not.toBeInTheDocument()
     expect(screen.queryByText('join')).not.toBeInTheDocument()
     expect(screen.queryByText('await')).not.toBeInTheDocument()
   })
 
-  it('unborn: không lộ nhãn dù data.name đã có sẵn, viền đứt + mờ', () => {
+  it('unborn: label stays hidden even though data.name is already set, dashed + faded border', () => {
     renderInFlow(
       <JobNode {...jobNodeProps({ ...BASE_DATA, name: 'worker-1', phase: 'unborn', state: null })} />,
     )
@@ -113,7 +118,7 @@ describe('JobNode (Task 13)', () => {
     expect(el).toHaveAttribute('data-phase', 'unborn')
   })
 
-  it('cause chỉ hiện khi state là Cancelling/Cancelled', () => {
+  it('cause only shows when state is Cancelling/Cancelled', () => {
     const { unmount } = renderInFlow(
       <JobNode {...jobNodeProps({ ...BASE_DATA, state: 'Active', cause: 'IllegalStateException' })} />,
     )
@@ -126,21 +131,21 @@ describe('JobNode (Task 13)', () => {
     expect(screen.getByText('IllegalStateException')).toBeInTheDocument()
   })
 
-  it('cause null thì không hiện gì kể cả khi Cancelled', () => {
+  it('cause null shows nothing even when Cancelled', () => {
     renderInFlow(<JobNode {...jobNodeProps({ ...BASE_DATA, state: 'Cancelled', cause: null })} />)
-    // Không có gì để khẳng định "có mặt" — khẳng định phủ định: node vẫn dựng
-    // được, không ném, và không có phần tử k-job-node__cause nào xuất hiện.
+    // Nothing to assert as "present" — assert the negative instead: the node
+    // still renders, doesn't throw, and no k-job-node__cause element appears.
     expect(document.querySelector('.k-job-node__cause')).toBeNull()
   })
 })
 
 describe('ScopeNode (Task 13)', () => {
-  it('hiện tiêu đề theo tên hoặc builder', () => {
+  it('shows the title from name or builder', () => {
     renderInFlow(<ScopeNode {...scopeNodeProps({ ...BASE_DATA, builder: 'coroutineScope', name: null })} />)
     expect(screen.getByText('coroutineScope')).toBeInTheDocument()
   })
 
-  it('supervisor dùng nét đôi, không-supervisor dùng nét đơn — phân biệt bằng hình dạng', () => {
+  it('supervisor uses a double border, non-supervisor uses a single border — distinguished by shape', () => {
     const { unmount } = renderInFlow(
       <ScopeNode {...scopeNodeProps({ ...BASE_DATA, isSupervisor: true, builder: 'supervisorScope' })} />,
     )
@@ -151,7 +156,7 @@ describe('ScopeNode (Task 13)', () => {
     expect(screen.getByTestId('scope-node').className).not.toContain('k-scope-node--supervisor')
   })
 
-  it('unborn: không lộ tiêu đề', () => {
+  it('unborn: title stays hidden', () => {
     renderInFlow(
       <ScopeNode {...scopeNodeProps({ ...BASE_DATA, name: 'scope-1', phase: 'unborn', state: null })} />,
     )

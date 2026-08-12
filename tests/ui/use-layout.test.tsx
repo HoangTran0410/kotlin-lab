@@ -8,10 +8,11 @@ import * as elkLayoutModule from '../../src/ui/graph/elkLayout'
 import { useLayout } from '../../src/ui/graph/useLayout'
 
 /**
- * `layoutGraph` được spy trên MODULE, không mock hẳn ELK — hook import nó
- * bằng named import từ chính module này, nên ghi đè `elkLayoutModule.layoutGraph`
- * (Vitest transform ESM thành binding có thể spy) là điểm chặn đúng chỗ mà
- * effect trong useLayout.ts thật sự gọi tới.
+ * `layoutGraph` is spied on at the MODULE level, not fully mocking ELK — the
+ * hook imports it as a named import from this exact module, so overriding
+ * `elkLayoutModule.layoutGraph` (Vitest transforms ESM into a spyable
+ * binding) intercepts at exactly the point the effect in useLayout.ts
+ * actually calls into.
  */
 function spyLayoutGraph() {
   return vi.spyOn(elkLayoutModule, 'layoutGraph')
@@ -28,7 +29,7 @@ const specWithNodes = (n: number): GraphSpec => ({
 })
 
 let nextRevision = 1
-/** Mỗi lần gọi mô phỏng đúng một lần `compile()` — revision khác nhau mỗi lần. */
+/** Each call simulates exactly one `compile()` — a different revision every time. */
 function compiledFixture(spec: GraphSpec = specWithNodes(1)): Compiled {
   return { events: [], diagnostics: [], spec, revision: nextRevision++ }
 }
@@ -37,7 +38,7 @@ function box(x: number): LayoutResult {
   return new Map([['n0', { x, y: 0, width: 1, height: 1 }]])
 }
 
-/** Promise điều khiển được từ ngoài — dựng cảnh "hai kết quả về ngược thứ tự". */
+/** A promise controllable from outside — sets up the "two results come back out of order" scenario. */
 function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
   let resolve!: (v: T) => void
   const promise = new Promise<T>(r => { resolve = r })
@@ -48,8 +49,8 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('useLayout (Task 15) — ELK chạy một lần mỗi compile, chống kết quả cũ', () => {
-  it('kéo qua 20 "step" (props không đổi) chỉ gọi layoutGraph đúng 1 lần', async () => {
+describe('useLayout (Task 15) — ELK runs once per compile, resists stale results', () => {
+  it('scrubbing through 20 "steps" (props unchanged) calls layoutGraph exactly once', async () => {
     const spy = spyLayoutGraph().mockResolvedValue(box(0))
     const compiled = compiledFixture()
 
@@ -59,15 +60,16 @@ describe('useLayout (Task 15) — ELK chạy một lần mỗi compile, chống 
     )
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(1))
 
-    // Mô phỏng kéo timeline: cha re-render 20 lần (stepIndex đổi trong store)
-    // nhưng KHÔNG tạo `compiled` mới — đúng như useLabStore.setStep không đụng
-    // tới trường `compiled`, nên effect (deps = compiled.revision) không chạy lại.
+    // Simulates dragging the timeline: the parent re-renders 20 times
+    // (stepIndex changes in the store) but does NOT create a new `compiled`
+    // — matching how useLabStore.setStep never touches the `compiled` field,
+    // so the effect (deps = compiled.revision) doesn't rerun.
     for (let i = 0; i < 20; i++) rerender({ compiled })
 
     expect(spy).toHaveBeenCalledTimes(1)
   })
 
-  it('đổi source (revision mới) gọi thêm đúng 1 lần', async () => {
+  it('changing the source (new revision) calls it exactly one more time', async () => {
     const spy = spyLayoutGraph().mockResolvedValue(box(0))
     const first = compiledFixture()
 
@@ -84,7 +86,7 @@ describe('useLayout (Task 15) — ELK chạy một lần mỗi compile, chống 
     expect(spy).toHaveBeenCalledTimes(2)
   })
 
-  it('kết quả CŨ về SAU kết quả MỚI thì bị vứt (hai promise resolve ngược thứ tự)', async () => {
+  it('a STALE result arriving AFTER a FRESH one gets discarded (two promises resolving out of order)', async () => {
     const stale = deferred<LayoutResult>()
     const fresh = deferred<LayoutResult>()
     const spy = spyLayoutGraph()
@@ -103,16 +105,16 @@ describe('useLayout (Task 15) — ELK chạy một lần mỗi compile, chống 
     const freshResult = box(9)
     const staleResult = box(1)
 
-    // Kết quả MỚI về trước...
+    // The FRESH result arrives first...
     await act(async () => { fresh.resolve(freshResult) })
     expect(result.current).toBe(freshResult)
 
-    // ...rồi kết quả CŨ về sau — phải bị vứt, không được ghi đè kết quả mới.
+    // ...then the STALE result arrives after — must be discarded, must not overwrite the fresh result.
     await act(async () => { stale.resolve(staleResult) })
     expect(result.current).toBe(freshResult)
   })
 
-  it('unmount giữa chừng: kết quả về sau không setState, không có cảnh báo React', async () => {
+  it("unmounting midway: a result arriving afterward doesn't setState, no React warning", async () => {
     const pending = deferred<LayoutResult>()
     spyLayoutGraph().mockReturnValue(pending.promise)
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -121,16 +123,16 @@ describe('useLayout (Task 15) — ELK chạy một lần mỗi compile, chống 
     const { unmount } = renderHook(() => useLayout(compiled))
     unmount()
 
-    // Resolve sau khi unmount. Nếu hook thiếu guard, setState trên component
-    // đã unmount sẽ khiến React log cảnh báo "not wrapped in act(...)" ra
-    // console.error vì việc resolve này xảy ra ngoài phạm vi act() của lần
-    // render ban đầu.
+    // Resolves after unmount. If the hook is missing a guard, setState on an
+    // already-unmounted component makes React log a "not wrapped in
+    // act(...)" warning to console.error, because this resolution happens
+    // outside the act() scope of the initial render.
     await act(async () => { pending.resolve(box(5)) })
 
     expect(errorSpy).not.toHaveBeenCalled()
   })
 
-  it('spec rỗng không gọi ELK, trả map rỗng', () => {
+  it("empty spec doesn't call ELK, returns an empty map", () => {
     const spy = spyLayoutGraph()
     const compiled = compiledFixture(EMPTY_SPEC)
 

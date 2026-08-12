@@ -3,8 +3,8 @@ import type { JobId } from '../trace/events'
 import type { FailureCause, Job } from './job'
 
 /**
- * Cancel đi XUỐNG: cancel một Job kéo theo toàn bộ descendant.
- * Idempotent — gọi trên Job đã kết thúc là no-op.
+ * Cancel propagates DOWN: cancelling a Job drags along every descendant.
+ * Idempotent — calling it on an already-completed Job is a no-op.
  */
 export function cancelJob(
   job: Job,
@@ -14,10 +14,11 @@ export function cancelJob(
 ): void {
   if (job.isCompleted) return
 
-  // Con trước, theo thứ tự khai báo — quyết định tính deterministic của trace.
-  // Ghi lại chính hành động cancel này TRƯỚC khi lan xuống. Nếu bỏ, hành động
-  // khởi đầu (user gọi job.cancel(), hay parent fail kéo theo) không hề xuất
-  // hiện trong trace và UI không có gì để vẽ ở bước đầu tiên.
+  // Children first, in declaration order — this is what makes the trace
+  // deterministic. Record this very cancel action BEFORE propagating down.
+  // If omitted, the triggering action (user calling job.cancel(), or a
+  // parent failure dragging it down) never shows up in the trace, and the
+  // UI has nothing to draw at the first step.
   emitter.emit({ k: 'CANCEL_REQUESTED', from, to: job.id, cause: cause.exType },
     job.suspendedAtLine ?? cause.line)
 
@@ -39,15 +40,15 @@ export function cancelJob(
 }
 
 /**
- * Failure đi LÊN. Ba luật, đúng theo kotlinx.coroutines:
+ * Failure propagates UP. Three rules, matching kotlinx.coroutines exactly:
  *
- * 1. CancellationException là kết thúc bình thường — KHÔNG làm parent fail.
- * 2. Parent thường: fail theo, rồi cancel mọi sibling còn lại.
- * 3. Parent là supervisor: chặn tại boundary — parent không fail,
- *    sibling không bị đụng tới. (Exception chưa xử lý vẫn đi tiếp tới
- *    handler — việc đó do scheduler làm, không phải ở đây.)
+ * 1. CancellationException is normal completion — it does NOT fail the parent.
+ * 2. Ordinary parent: fails too, then cancels every remaining sibling.
+ * 3. Parent is a supervisor: blocks at the boundary — the parent doesn't
+ *    fail, siblings are untouched. (An unhandled exception still goes on to
+ *    the handler — that's the scheduler's job, not this one.)
  */
-/** Đưa một job về trạng thái kết thúc bất thường, phát đủ hai chặng JOB_STATE. */
+/** Bring a job to an abnormal end state, emitting both JOB_STATE legs. */
 function terminateAsFailed(job: Job, cause: FailureCause, emitter: TraceEmitter): void {
   if (job.isCompleted) return
   const prev = job.state
@@ -57,8 +58,9 @@ function terminateAsFailed(job: Job, cause: FailureCause, emitter: TraceEmitter)
       job.suspendedAtLine ?? cause.line)
   }
   job.cause = cause
-  // Đây là đường FAIL, không phải đường cancel: thân coroutine phải nhận lại
-  // đúng exception gốc khi unwind. cancelJob cố ý KHÔNG đặt trường này.
+  // This is the FAIL path, not the cancel path: the coroutine body must get
+  // back the exact original exception when unwinding. cancelJob deliberately
+  // does NOT set this field.
   job.failure = cause
   job.transitionTo('Cancelled')
   emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Cancelling', to: 'Cancelled', cause: cause.exType },
@@ -68,10 +70,11 @@ function terminateAsFailed(job: Job, cause: FailureCause, emitter: TraceEmitter)
 export function reportFailure(child: Job, cause: FailureCause, emitter: TraceEmitter): void {
   child.cause = cause
 
-  // Structured concurrency: một coroutine fail phải cancel CHÍNH CON CỦA NÓ
-  // trước khi coi là xong — không chỉ sibling ở các tầng tổ tiên. Thiếu bước
-  // này thì con của job fail tiếp tục chạy tự do sau khi cha đã Cancelled,
-  // vi phạm nguyên tắc nền tảng nhất mà công cụ này dạy.
+  // Structured concurrency: a failing coroutine must cancel ITS OWN CHILDREN
+  // before it can be considered done — not just siblings at ancestor levels.
+  // Skip this step and the children of the failed job keep running freely
+  // after their parent is already Cancelled, violating the single most
+  // fundamental principle this tool teaches.
   for (const c of child.children) {
     if (c.isCompleted) continue
     cancelJob(c, cause, emitter, child.id)
@@ -81,20 +84,22 @@ export function reportFailure(child: Job, cause: FailureCause, emitter: TraceEmi
 
   if (cause.isCancellation) return
 
-  // Failure đi lên QUA NHIỀU TẦNG, không chỉ một bậc. Nếu chỉ báo cho parent
-  // trực tiếp rồi dừng thì với cây R -> P -> {A,B,C} toàn Job thường, B fail
-  // sẽ giết P và A/C nhưng R vẫn sống — sai hẳn so với Kotlin. Nó cũng làm
-  // mất sự kiện FAILURE_PROPAGATED chạm tới ranh giới supervisor, thứ mà UI
-  // cần để vẽ bài học "nested supervisor trap".
+  // Failure climbs up THROUGH MULTIPLE LEVELS, not just one. If we only
+  // notified the direct parent and stopped, then for a tree R -> P -> {A,B,C}
+  // of all ordinary Jobs, B failing would kill P and A/C but leave R alive —
+  // flat-out wrong compared to Kotlin. It would also drop the
+  // FAILURE_PROPAGATED event that reaches a supervisor boundary, which the UI
+  // needs to draw the "nested supervisor trap" lesson.
   let node = child
   for (;;) {
     const parent = node.parent
     if (!parent) return
 
-    // `cause.line` là dòng của câu `throw` đã gây ra chuỗi lan truyền này. Gắn
-    // nó vào MỌI event của chuỗi để con trỏ trong editor đứng yên ở đúng dòng
-    // gây lỗi suốt lúc failure leo lên cây — thay vì bỏ trống rồi để dòng
-    // highlight kẹt lại ở một chỗ chẳng liên quan từ trước đó.
+    // `cause.line` is the line of the `throw` that caused this propagation
+    // chain. Tag it onto EVERY event of the chain so the cursor in the
+    // editor stays put on the exact faulting line while the failure climbs
+    // the tree — instead of leaving it blank and letting the highlighted
+    // line get stuck somewhere unrelated from before.
     emitter.emit({
       k: 'FAILURE_PROPAGATED',
       from: node.id,
@@ -102,27 +107,32 @@ export function reportFailure(child: Job, cause: FailureCause, emitter: TraceEmi
       blockedBySupervisor: parent.isSupervisor,
     }, cause.line)
 
-    // Ranh giới scope (coroutineScope/supervisorScope/withContext).
+    // Scope boundary (coroutineScope/supervisorScope/withContext).
     //
-    // Exception ĐI TỚI khung của cha — nên FAILURE_PROPAGATED ở trên vẫn được
-    // phát, UI vẫn vẽ được đường đi — nhưng job cha KHÔNG chết theo: kotlinx
-    // trả exception vào continuation của người gọi, để try/catch quanh chỗ gọi
-    // bắt được (JobSupport.cancelParent: `if (isScopedCoroutine) return true`).
-    // Việc ném lại tại chỗ gọi do interpreter làm sau khi joinChildren xong.
+    // The exception REACHES the parent's frame — so FAILURE_PROPAGATED above
+    // is still emitted, the UI can still draw the path — but the parent job
+    // does NOT die along with it: kotlinx returns the exception into the
+    // caller's continuation, so a try/catch around the call site catches it
+    // (JobSupport.cancelParent: `if (isScopedCoroutine) return true`).
+    // Re-throwing at the call site is done by the interpreter after
+    // joinChildren finishes.
     //
-    // Đặt TRƯỚC nhánh supervisor để hai cờ độc lập nhau: supervisorScope vừa
-    // là supervisor vừa là scope, và cả hai lý do đều dừng ở đây.
+    // Placed BEFORE the supervisor branch so the two flags stay independent:
+    // supervisorScope is both a supervisor and a scope, and either reason
+    // alone stops propagation here.
     if (node.isScopeCoroutine) return
 
-    // Supervisor chặn LAN TRUYỀN FAILURE. Nó không nuốt exception — việc đưa
-    // exception chưa xử lý tới handler là của scheduler, không phải ở đây.
+    // A supervisor blocks FAILURE PROPAGATION. It doesn't swallow the
+    // exception — delivering an unhandled exception to the handler is the
+    // scheduler's job, not this one.
     if (parent.isSupervisor) return
     if (parent.isCompleted) return
 
     parent.cause = cause
 
-    // Cancel các con còn lại của parent. cancelJob tự phát CANCEL_REQUESTED
-    // ở đầu, nên không phát thêm ở đây kẻo trùng.
+    // Cancel the parent's remaining children. cancelJob already emits
+    // CANCEL_REQUESTED at its start, so we don't emit it again here to avoid
+    // duplicates.
     for (const sib of parent.children) {
       if (sib === node || sib.isCompleted) continue
       cancelJob(sib, cause, emitter, parent.id)

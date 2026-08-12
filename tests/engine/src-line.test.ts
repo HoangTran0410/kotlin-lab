@@ -5,19 +5,20 @@ import { narrateTrace } from '../../src/engine/narrate/narrateTrace'
 import { foldTrace } from '../../src/engine/trace/world'
 
 /**
- * Con trỏ dòng trong editor phải ĐI THEO luồng chạy.
+ * The line cursor in the editor must FOLLOW the execution flow.
  *
- * Đo được trước khi sửa: chỉ 16-21% event mang `srcLine`, và có đoạn 16 event
- * liên tiếp không đổi dòng — người dùng kéo timeline thấy con trỏ đứng chết và
- * tưởng công cụ treo.
+ * Measured before the fix: only 16-21% of events carried a `srcLine`, and
+ * there was a stretch of 16 consecutive events with no line change — a user
+ * dragging the timeline would see the cursor sit frozen and think the tool
+ * had hung.
  */
-describe('srcLine — dòng đi theo luồng chạy', () => {
-  it('COROUTINE_STARTED trỏ vào dòng ĐẦU của thân coroutine, không phải dòng viết launch', () => {
+describe('srcLine — the line follows the execution flow', () => {
+  it('COROUTINE_STARTED points at the FIRST line of the coroutine body, not the line that wrote launch', () => {
     //  1 import
-    //  2 (trống)
+    //  2 (blank)
     //  3 fun main() = runBlocking {
     //  4     launch {
-    //  5         println("trong than")
+    //  5         println("inside body")
     //  6     }
     //  7     delay(50)
     //  8 }
@@ -25,41 +26,41 @@ describe('srcLine — dòng đi theo luồng chạy', () => {
 
 fun main() = runBlocking {
     launch {
-        println("trong than")
+        println("inside body")
     }
     delay(50)
 }`)
-    const tao = r.events.find(e => e.k === 'COROUTINE_CREATED' && e.builder === 'launch')!
-    const taoId = tao.k === 'COROUTINE_CREATED' ? tao.id : ''
-    const chay = r.events.find(e => e.k === 'COROUTINE_STARTED' && e.id === taoId)!
-    expect(tao.srcLine, 'CREATED phải trỏ vào dòng viết launch').toBe(4)
-    expect(chay.srcLine, 'STARTED phải trỏ vào dòng đầu của THÂN').toBe(5)
+    const created = r.events.find(e => e.k === 'COROUTINE_CREATED' && e.builder === 'launch')!
+    const createdId = created.k === 'COROUTINE_CREATED' ? created.id : ''
+    const started = r.events.find(e => e.k === 'COROUTINE_STARTED' && e.id === createdId)!
+    expect(created.srcLine, 'CREATED must point at the line that wrote launch').toBe(4)
+    expect(started.srcLine, 'STARTED must point at the first line of the BODY').toBe(5)
   })
 
-  it('COROUTINE_RESUMED trỏ vào đúng điểm suspend mà nó đang treo', () => {
+  it('COROUTINE_RESUMED points at the exact suspend point it was suspended at', () => {
     //  4     launch {
     //  5         delay(100)
-    //  6         println("sau delay")
+    //  6         println("after delay")
     //  7     }
     const r = runSource(`import kotlinx.coroutines.*
 
 fun main() = runBlocking {
     launch {
         delay(100)
-        println("sau delay")
+        println("after delay")
     }
     delay(200)
 }`)
-    const con = r.events.find(e => e.k === 'COROUTINE_CREATED' && e.builder === 'launch')!
-    const conId = con.k === 'COROUTINE_CREATED' ? con.id : ''
-    const treo = r.events.find(e => e.k === 'COROUTINE_SUSPENDED' && e.id === conId)!
-    const tiep = r.events.find(e => e.k === 'COROUTINE_RESUMED' && e.id === conId)!
-    expect(treo.srcLine).toBe(5)
-    expect(tiep.srcLine, 'RESUMED phải trỏ về chính chỗ đã treo').toBe(5)
+    const child = r.events.find(e => e.k === 'COROUTINE_CREATED' && e.builder === 'launch')!
+    const childId = child.k === 'COROUTINE_CREATED' ? child.id : ''
+    const suspended = r.events.find(e => e.k === 'COROUTINE_SUSPENDED' && e.id === childId)!
+    const resumed = r.events.find(e => e.k === 'COROUTINE_RESUMED' && e.id === childId)!
+    expect(suspended.srcLine).toBe(5)
+    expect(resumed.srcLine, 'RESUMED must point back to the exact spot it was suspended at').toBe(5)
   })
 
-  it('event huỷ trỏ vào chỗ NẠN NHÂN đang đứng, không phải dòng throw', () => {
-    //  5         launch { delay(500); println("A") }     <- nạn nhân treo ở đây
+  it('a cancellation event points at where the VICTIM was standing, not the throw line', () => {
+    //  5         launch { delay(500); println("A") }     <- victim suspended here
     //  6         launch { delay(50); throw RuntimeException("boom") }
     const r = runSource(`import kotlinx.coroutines.*
 
@@ -69,32 +70,34 @@ fun main() = runBlocking {
         launch { delay(50); throw RuntimeException("boom") }
     }
 }`)
-    const tao = r.events.filter(e => e.k === 'COROUTINE_CREATED' && e.builder === 'launch')
-    const dau = tao[0]!
-    const nanNhan = dau.k === 'COROUTINE_CREATED' ? dau.id : ''
-    const nem = r.events.find(e => e.k === 'EXCEPTION_THROWN')!
-    expect(nem.srcLine, 'throw ở dòng 6').toBe(6)
+    const created = r.events.filter(e => e.k === 'COROUTINE_CREATED' && e.builder === 'launch')
+    const first = created[0]!
+    const victim = first.k === 'COROUTINE_CREATED' ? first.id : ''
+    const thrown = r.events.find(e => e.k === 'EXCEPTION_THROWN')!
+    expect(thrown.srcLine, 'throw is on line 6').toBe(6)
 
-    const huy = r.events.find(e => e.k === 'JOB_STATE' && e.id === nanNhan && e.to === 'Cancelled')!
-    expect(huy.srcLine, 'nạn nhân đang treo ở delay dòng 5 khi bị giết').toBe(5)
-    expect(huy.srcLine).not.toBe(nem.srcLine)
+    const cancelled = r.events.find(e => e.k === 'JOB_STATE' && e.id === victim && e.to === 'Cancelled')!
+    expect(cancelled.srcLine, 'the victim is suspended at the delay on line 5 when it gets killed').toBe(5)
+    expect(cancelled.srcLine).not.toBe(thrown.srcLine)
   })
 
-  it('mọi lesson: dòng đổi ở ít nhất 1/4 số mốc, và không đứng im quá 10 mốc liền', () => {
-    // Đây là phép đo GẦN NHẤT với trải nghiệm thật: người học bấm nút tua theo
-    // MỐC (xem GraphStage), không kéo từng event. Ngưỡng đặt dưới mức đo được
-    // hiện tại (thấp nhất 28%, đứng im dài nhất 10) để không đỏ vì dao động
-    // nhỏ, nhưng vẫn đỏ nếu ai đó gỡ việc gắn dòng đi.
+  it('every lesson: the line changes at least 1/4 of the time across steps, and never sits still for more than 10 consecutive steps', () => {
+    // This is the measurement CLOSEST to the real experience: the learner
+    // clicks the step button (see GraphStage), not dragging through
+    // individual events. The threshold is set below the currently measured
+    // level (lowest 28%, longest freeze 10) so it doesn't go red from small
+    // fluctuations, but still goes red if someone rips out the
+    // line-tagging work.
     for (const l of LESSONS) {
       const ev = runSource(loadLessonSource(l.id)).events
-      const moc = narrateTrace(ev)
-      let doi = 0, truoc: number | null = null, imMax = 0, im = 0
-      for (const m of moc) {
+      const steps = narrateTrace(ev)
+      let changes = 0, prev: number | null = null, freezeMax = 0, freeze = 0
+      for (const m of steps) {
         const line = foldTrace(ev, m.index + 1).srcLine
-        if (line !== truoc) { doi++; truoc = line ?? null; im = 1 } else { im++; imMax = Math.max(imMax, im) }
+        if (line !== prev) { changes++; prev = line ?? null; freeze = 1 } else { freeze++; freezeMax = Math.max(freezeMax, freeze) }
       }
-      expect(doi / moc.length, `${l.id}: dòng gần như không đổi khi tua`).toBeGreaterThan(0.25)
-      expect(imMax, `${l.id}: có đoạn dài con trỏ đứng im`).toBeLessThanOrEqual(10)
+      expect(changes / steps.length, `${l.id}: the line barely changes while stepping through`).toBeGreaterThan(0.25)
+      expect(freezeMax, `${l.id}: there's a long stretch where the cursor sits still`).toBeLessThanOrEqual(10)
     }
   })
 })

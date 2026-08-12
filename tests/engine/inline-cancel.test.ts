@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { runSource } from '../../src/engine/run'
 
-describe('huỷ chạm tới delay() trong thân scope inline', () => {
-  it('coroutineScope: con fail thì delay của chính thân scope bị cắt ngay', () => {
+describe('cancellation reaching delay() inside an inline scope body', () => {
+  it('coroutineScope: a child failing cuts short the delay in the scope body itself, immediately', () => {
     const r = runSource(`fun main() = runBlocking {
     try {
         coroutineScope {
             launch { throw RuntimeException("boom") }
             delay(1000)
-            println("KHONG duoc in")
+            println("NOT-PRINTED")
         }
     } catch (e: RuntimeException) {
         println("caught: " + e.message)
@@ -17,9 +17,10 @@ describe('huỷ chạm tới delay() trong thân scope inline', () => {
     expect(r.output).toEqual(['caught: boom'])
   })
 
-  it('cắt đúng THỜI ĐIỂM, không chỉ đúng nội dung', () => {
-    // Nếu chỉ chặn println mà vẫn để đồng hồ ảo chạy hết 1000ms thì output
-    // giống hệt ca trên nhưng bài học "dừng NGAY" đã sai.
+  it('cuts at the exact MOMENT, not just the right content', () => {
+    // If only the println were blocked while still letting the virtual
+    // clock run out the full 1000ms, the output would look identical to
+    // the case above but the "stops IMMEDIATELY" lesson would be wrong.
     const r = runSource(`fun main() = runBlocking {
     try {
         coroutineScope {
@@ -27,47 +28,49 @@ describe('huỷ chạm tới delay() trong thân scope inline', () => {
             delay(1000)
         }
     } catch (e: RuntimeException) { }
-    println("xong")
+    println("done")
 }`)
-    const cuối = r.events[r.events.length - 1]!
-    expect(cuối.t).toBeLessThan(200)
+    const last = r.events[r.events.length - 1]!
+    expect(last.t).toBeLessThan(200)
   })
 
-  it('supervisorScope: con fail bị chặn nên delay của thân KHÔNG bị cắt', () => {
-    // Cặp đối chứng. Thiếu ca này thì một bản sửa "cứ có con fail là cắt thân"
-    // vẫn làm ca đầu xanh trong khi phá vỡ ngữ nghĩa supervisor.
+  it('supervisorScope: a blocked child failure means the body delay is NOT cut short', () => {
+    // The control case. Without it, a fix that just says "any child failing
+    // cuts the body" would still pass the first case while breaking
+    // supervisor semantics.
     const r = runSource(`fun main() = runBlocking {
     supervisorScope {
         launch { throw RuntimeException("boom") }
         delay(1000)
-        println("PHAI in")
+        println("MUST-PRINT")
     }
 }`)
-    expect(r.output).toEqual(['PHAI in'])
+    expect(r.output).toEqual(['MUST-PRINT'])
   })
 
-  it('scope lồng: chỉ scope bị huỷ mới bị cắt, scope ngoài chạy tiếp', () => {
+  it('nested scopes: only the cancelled scope is cut, the outer scope keeps running', () => {
     const r = runSource(`fun main() = runBlocking {
     supervisorScope {
         try {
             coroutineScope {
-                launch { throw RuntimeException("trong") }
+                launch { throw RuntimeException("inner") }
                 delay(1000)
-                println("KHONG in")
+                println("NOT-PRINTED")
             }
         } catch (e: RuntimeException) {
-            println("bat o scope trong: " + e.message)
+            println("caught in inner scope: " + e.message)
         }
         delay(100)
-        println("scope ngoai van chay")
+        println("outer scope still running")
     }
 }`)
-    expect(r.output).toEqual(['bat o scope trong: trong', 'scope ngoai van chay'])
+    expect(r.output).toEqual(['caught in inner scope: inner', 'outer scope still running'])
   })
 
-  it('finally trong thân scope vẫn chạy khi bị cắt', () => {
-    // Cùng lý do với Task 18 của M1: huỷ phải đi qua đường ném vào generator,
-    // không phải đường lật cờ trạng thái.
+  it('finally inside the scope body still runs when cut short', () => {
+    // Same reason as M1's Task 18: cancellation must go through the path
+    // that throws into the generator, not the path that just flips a state
+    // flag.
     const r = runSource(`fun main() = runBlocking {
     try {
         coroutineScope {
@@ -75,30 +78,33 @@ describe('huỷ chạm tới delay() trong thân scope inline', () => {
             try {
                 delay(1000)
             } finally {
-                println("don dep")
+                println("cleanup")
             }
         }
     } catch (e: RuntimeException) {
         println("caught")
     }
 }`)
-    expect(r.output).toEqual(['don dep', 'caught'])
+    expect(r.output).toEqual(['cleanup', 'caught'])
   })
 
-  it('scope lồng withContext: người gọi vẫn thấy "boom", không thấy CancellationException', () => {
-    // Job của withContext bị cancelJob kéo theo khi anh em fail, nên nó KHÔNG
-    // có `failure` và thân nó nhận CancellationException. Nếu coroutineScope
-    // bọc ngoài cứ ném lại đúng thứ vừa bay qua thân nó thì cái
-    // CancellationException ấy chui ra tới người gọi, `catch (e: RuntimeException)`
-    // không khớp và "boom" biến mất — im lặng, output rỗng.
-    // Đối chiếu Kotlin thật (api.kotlinlang.org 2.4.10): in đúng "caught: boom".
+  it('nested withContext scope: the caller still sees "boom", not a CancellationException', () => {
+    // The withContext job gets dragged down by cancelJob when a sibling
+    // fails, so it has NO `failure` and its body receives a
+    // CancellationException. If the enclosing coroutineScope just
+    // re-threw whatever had just flown through its body, that
+    // CancellationException would leak out to the caller,
+    // `catch (e: RuntimeException)` wouldn't match, and "boom" would
+    // vanish — silently, empty output.
+    // Verified against real Kotlin (api.kotlinlang.org 2.4.10): prints
+    // exactly "caught: boom".
     const r = runSource(`fun main() = runBlocking {
     try {
         coroutineScope {
             launch { throw RuntimeException("boom") }
             withContext(Dispatchers.IO) {
                 delay(1000)
-                println("KHONG in")
+                println("NOT-PRINTED")
             }
         }
     } catch (e: RuntimeException) {
@@ -108,36 +114,42 @@ describe('huỷ chạm tới delay() trong thân scope inline', () => {
     expect(r.output).toEqual(['caught: boom'])
   })
 
-  it('nuốt CancellationException rồi suspend tiếp: điểm suspend sau vẫn bị cắt', () => {
-    // Kotlin ném CancellationException ở MỌI điểm suspend của coroutine đã huỷ,
-    // không phải chỉ điểm đầu tiên. Nếu tín hiệu huỷ chỉ được gửi một lần thì
-    // `delay(50)` trong khối catch chạy hết và "sau delay" được in — engine
-    // dạy ngược đúng luật quan trọng nhất của cancellation.
-    // Đối chiếu Kotlin thật (api.kotlinlang.org 2.4.10): in "xong", "bat".
+  it('swallowing CancellationException and then suspending again: the later suspend point still gets cut', () => {
+    // Kotlin throws CancellationException at EVERY suspend point of a
+    // cancelled coroutine, not just the first one. If the cancellation
+    // signal were only sent once, `delay(50)` inside the catch block would
+    // run to completion and "after delay" would print — the engine would
+    // be teaching the exact opposite of the single most important rule of
+    // cancellation.
+    // Verified against real Kotlin (api.kotlinlang.org 2.4.10): prints
+    // "done", "caught".
     const r = runSource(`fun main() = runBlocking {
     val j = launch {
         try {
             delay(1000)
         } catch (e: CancellationException) {
-            println("bat")
+            println("caught")
             delay(50)
-            println("sau delay")
+            println("after delay")
         }
     }
     delay(10)
     j.cancel()
-    println("xong")
+    println("done")
 }`)
-    expect(r.output).toEqual(['xong', 'bat'])
+    expect(r.output).toEqual(['done', 'caught'])
   })
 
-  it('finally BỌC NGOÀI scope inline chạy được khi huỷ tới từ ngoài', () => {
-    // Điểm huỷ thứ ba trong ba điểm mà `finally` của tryBuilder phải bao được:
-    // task treo giữa thân scope inline, huỷ tới từ NGOÀI (không phải con fail).
-    // Generator bắt tín hiệu rồi `yield joinChildren` để chờ con dọn dẹp, nên
-    // `body.throw()` TRẢ VỀ chứ không ném; bỏ rơi nó ở đó thì mọi `finally`
-    // phía sau im lặng không chạy và output rỗng.
-    // Đối chiếu Kotlin thật (api.kotlinlang.org 2.4.10): in đúng "cleanup".
+  it('a finally WRAPPING an inline scope still runs when cancellation comes from outside', () => {
+    // The third of three cancellation points that tryBuilder's `finally`
+    // must cover: a task suspended in the middle of an inline scope's
+    // body, cancelled from OUTSIDE (not from a child failing). The
+    // generator catches the signal and then does `yield joinChildren` to
+    // wait for children to clean up, so `body.throw()` RETURNS instead of
+    // throwing; abandoning it there would silently skip every `finally`
+    // after that point, leaving empty output.
+    // Verified against real Kotlin (api.kotlinlang.org 2.4.10): prints
+    // exactly "cleanup".
     const r = runSource(`fun main() = runBlocking {
     val j = launch {
         try {

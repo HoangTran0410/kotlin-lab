@@ -2,49 +2,49 @@ import { LESSON_LIST } from '../../lessons/registry'
 import './lesson-nav.css'
 
 /**
- * Khung tối thiểu để bắt đầu từ trang trắng: `main` dạng expression-body gọi
- * thẳng `runBlocking { }` — đây chính là dạng mà `runBlockingLambda` trong
- * `engine/run.ts` nhận diện để root job LÀ coroutine runBlocking, không lồng
- * thêm lớp nào.
+ * Minimal skeleton to start from a blank page: `main` as an expression body
+ * calling `runBlocking { }` directly — this is exactly the shape that
+ * `runBlockingLambda` in `engine/run.ts` recognizes, so the root job IS the
+ * runBlocking coroutine, with no extra layer nested on top.
  */
 const BLANK_SOURCE = 'import kotlinx.coroutines.*\n\nfun main() = runBlocking {\n}\n'
 
 /**
- * Ba nút trong header. Danh sách bài KHÔNG còn nằm ở đây.
+ * Three buttons in the header. The lesson list is NO LONGER here.
  *
- * Bản trước là một dải 13 chip với `max-width: 60vw` + `overflow-x: auto`:
- * khoảng 8 chip lọt vào tầm nhìn, 5 chip còn lại nằm ngoài mép mà không dấu
- * hiệu nào cho biết chúng tồn tại. Chip cũng chỉ chứa nổi số + nhãn cụt, nên
- * tóm tắt và khái niệm của bài phải giấu vào tooltip. Và nó chẳng giống gì
- * danh sách ví dụ trong hộp "Chạy được gì?", dù hai thứ trả lời hai nửa của
- * cùng một câu hỏi.
+ * The previous version was a strip of 13 chips with `max-width: 60vw` +
+ * `overflow-x: auto`: about 8 chips fit into view, the remaining 5 sat past
+ * the edge with no sign they existed. A chip could also only hold a number
+ * plus a truncated label, so a lesson's summary and concepts had to hide in a
+ * tooltip. And it looked nothing like the example list in the "What can it
+ * run?" box, even though the two answer two halves of the same question.
  *
- * Nay cả hai danh sách nằm trong CÙNG một hộp, hai tab. Header chỉ giữ lối
- * vào, và nói rõ đang ở bài nào — thông tin mà dải chip cũ phải dùng màu nền
- * của một chip nhỏ để nói.
+ * Now both lists live in the SAME box, as two tabs. The header just keeps the
+ * entry point, and states plainly which lesson is open — information the old
+ * chip strip had to convey with the background color of one tiny chip.
  */
-export function LessonNav({ currentLessonId, onMoLoTrinh, onMoGioiThieu, setSource }: {
+export function LessonNav({ currentLessonId, onOpenLessons, onOpenAbout, setSource }: {
   currentLessonId: string | null
-  onMoLoTrinh: () => void
-  onMoGioiThieu: () => void
+  onOpenLessons: () => void
+  onOpenAbout: () => void
   setSource: (src: string) => void
 }) {
-  const bai = LESSON_LIST.find(l => l.id === currentLessonId)
+  const lesson = LESSON_LIST.find(l => l.id === currentLessonId)
 
   return (
-    <nav className="lesson-nav" aria-label="Lộ trình bài học">
-      <button type="button" className="lesson-nav__open" onClick={onMoLoTrinh}>
-        <span className="lesson-nav__num">{bai ? bai.order : '—'}</span>
+    <nav className="lesson-nav" aria-label="Lesson path">
+      <button type="button" className="lesson-nav__open" onClick={onOpenLessons}>
+        <span className="lesson-nav__num">{lesson ? lesson.order : '—'}</span>
         <span className="lesson-nav__label">
-          {bai ? bai.title : `Chọn bài — ${LESSON_LIST.length} bài`}
+          {lesson ? lesson.title : `Pick a lesson — ${LESSON_LIST.length} lessons`}
         </span>
-        <span className="lesson-nav__of">{bai ? `/${LESSON_LIST.length}` : ''}</span>
+        <span className="lesson-nav__of">{lesson ? `/${LESSON_LIST.length}` : ''}</span>
       </button>
-      <button type="button" className="lesson-nav__about" onClick={onMoGioiThieu}>
-        Chạy được gì?
+      <button type="button" className="lesson-nav__about" onClick={onOpenAbout}>
+        What can it run?
       </button>
       <button type="button" className="lesson-nav__blank" onClick={() => setSource(BLANK_SOURCE)}>
-        Bắt đầu từ trang trắng
+        Start from blank
       </button>
     </nav>
   )

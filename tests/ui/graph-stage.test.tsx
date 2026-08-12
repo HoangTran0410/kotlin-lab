@@ -7,101 +7,106 @@ import { lessonSource } from '../../src/lessons/registry'
 import { narrateTrace } from '../../src/engine/narrate/narrateTrace'
 
 /**
- * Sân khấu đồ thị: câu giải thích, nút tua theo MỐC, và bảng gỡ lỗi đóng sẵn.
+ * Graph stage: narration, scrub-by-STEP buttons, and the debug panel closed
+ * by default.
  *
- * Ba thứ này tồn tại để người học không phải nhìn bốn góc màn hình. Test ở đây
- * canh đúng điều đó — không phải canh "component có render ra không".
+ * These three things exist so learners don't have to look at four corners of
+ * the screen. The tests here lock down exactly that — not "does the
+ * component render at all".
  */
-describe('sân khấu đồ thị — hiểu được mà không cần nhìn đi chỗ khác', () => {
+describe('graph stage — understandable without looking anywhere else', () => {
   beforeEach(() => {
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource(lessonSource('supervisor')!)
   })
 
-  it('bảng gỡ lỗi ĐÓNG sẵn: không có console, không có thanh timeline từng event', () => {
+  it('debug panel CLOSED by default: no console, no per-event timeline scrubber', () => {
     render(<App />)
-    expect(screen.queryByLabelText('Thanh kéo dòng thời gian')).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Phát' })).toBeNull()
-    // Nhưng đồ thị vẫn phải có đủ đồ nghề của riêng nó.
-    expect(screen.getByRole('button', { name: 'Phát theo mốc' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('Timeline scrubber')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Play' })).toBeNull()
+    // But the graph still has to have all of its own tools.
+    expect(screen.getByRole('button', { name: 'Play by step' })).toBeInTheDocument()
     expect(screen.getByTestId('stage-caption')).toBeInTheDocument()
   })
 
-  it('mở bảng gỡ lỗi thì console và thanh timeline xuất hiện, đóng lại thì biến mất', () => {
+  it('opening the debug panel shows the console and timeline, closing it makes them disappear', () => {
     render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: 'Gỡ lỗi sâu' }))
-    expect(screen.getByLabelText('Thanh kéo dòng thời gian')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Đóng bảng gỡ lỗi' }))
-    expect(screen.queryByLabelText('Thanh kéo dòng thời gian')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Deep debug' }))
+    expect(screen.getByLabelText('Timeline scrubber')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Close debug panel' }))
+    expect(screen.queryByLabelText('Timeline scrubber')).toBeNull()
   })
 
-  it('câu giải thích ĐỔI khi tua, và cả hai lần đều có chữ thật', () => {
+  it('narration CHANGES when scrubbing, and both times have real text', () => {
     render(<App />)
-    const tổng = useLabStore.getState().compiled.events.length
-    expect(tổng, 'fixture phải đủ dài').toBeGreaterThan(20)
+    const total = useLabStore.getState().compiled.events.length
+    expect(total, 'fixture must be long enough').toBeGreaterThan(20)
 
-    act(() => useLabStore.getState().setStep(Math.floor(tổng / 3)))
-    const sớm = screen.getByTestId('stage-caption').textContent ?? ''
-    act(() => useLabStore.getState().setStep(tổng))
-    const muộn = screen.getByTestId('stage-caption').textContent ?? ''
+    act(() => useLabStore.getState().setStep(Math.floor(total / 3)))
+    const early = screen.getByTestId('stage-caption').textContent ?? ''
+    act(() => useLabStore.getState().setStep(total))
+    const late = screen.getByTestId('stage-caption').textContent ?? ''
 
-    // Bất-vô-nghĩa TRƯỚC khi so: hai chuỗi rỗng cũng "khác nhau" một cách vô ích.
-    expect(sớm.length).toBeGreaterThan(10)
-    expect(muộn.length).toBeGreaterThan(10)
-    expect(sớm).not.toBe(muộn)
+    // Sanity check BEFORE comparing: two empty strings would also be
+    // "different" in a meaningless way.
+    expect(early.length).toBeGreaterThan(10)
+    expect(late.length).toBeGreaterThan(10)
+    expect(early).not.toBe(late)
   })
 
-  it('nút ▶| nhảy tới MỐC kế tiếp, không phải +1 event', () => {
+  it('the ▶| button jumps to the next STEP, not +1 event', () => {
     render(<App />)
     const events = useLabStore.getState().compiled.events
-    const mốc = narrateTrace(events).map(l => l.index)
-    // Trace này phải có ít nhất một chỗ hai mốc cách nhau hơn 1 event, nếu
-    // không thì "nhảy theo mốc" và "+1" trùng nhau và test không phân biệt được.
-    const cóKhoảngTrống = mốc.some((v, i) => i > 0 && v - mốc[i - 1]! > 1)
-    expect(cóKhoảngTrống, 'fixture không có khoảng trống giữa hai mốc').toBe(true)
+    const marks = narrateTrace(events).map(l => l.index)
+    // This trace must have at least one spot where two marks are more than 1
+    // event apart, otherwise "jump by step" and "+1" coincide and the test
+    // can't tell them apart.
+    const hasGap = marks.some((v, i) => i > 0 && v - marks[i - 1]! > 1)
+    expect(hasGap, 'fixture has no gap between two marks').toBe(true)
 
     act(() => useLabStore.getState().setStep(0))
-    const đãQua: number[] = []
+    const visited: number[] = []
     for (let i = 0; i < 6; i++) {
-      fireEvent.click(screen.getByRole('button', { name: 'Mốc sau' }))
-      đãQua.push(useLabStore.getState().stepIndex)
+      fireEvent.click(screen.getByRole('button', { name: 'Next step' }))
+      visited.push(useLabStore.getState().stepIndex)
     }
-    // Mỗi lần bấm phải dừng ĐÚNG sau một mốc — tức stepIndex - 1 là chỉ số mốc.
-    for (const s of đãQua) {
-      expect(mốc, `dừng ở step ${s} không phải một mốc`).toContain(s - 1)
+    // Every click must stop EXACTLY after a mark — i.e. stepIndex - 1 is a mark index.
+    for (const s of visited) {
+      expect(marks, `stopped at step ${s}, which isn't a mark`).toContain(s - 1)
     }
-    expect(new Set(đãQua).size, 'bấm nhiều lần mà không tiến').toBe(đãQua.length)
+    expect(new Set(visited).size, 'clicking repeatedly without advancing').toBe(visited.length)
   })
 
-  it('◀ lùi về mốc trước, không kẹt tại chỗ', () => {
+  it("◀ steps back to the previous mark, doesn't get stuck in place", () => {
     render(<App />)
-    const tổng = useLabStore.getState().compiled.events.length
-    act(() => useLabStore.getState().setStep(tổng))
-    const trước = useLabStore.getState().stepIndex
-    fireEvent.click(screen.getByRole('button', { name: 'Mốc trước' }))
-    expect(useLabStore.getState().stepIndex).toBeLessThan(trước)
+    const total = useLabStore.getState().compiled.events.length
+    act(() => useLabStore.getState().setStep(total))
+    const before = useLabStore.getState().stepIndex
+    fireEvent.click(screen.getByRole('button', { name: 'Previous step' }))
+    expect(useLabStore.getState().stepIndex).toBeLessThan(before)
   })
 
-  it('println hiện NGAY TRÊN node đã in nó, không chỉ ở console', async () => {
+  it('println shows up RIGHT ON the node that printed it, not only in the console', async () => {
     render(<App />)
     await waitFor(() => {
       expect(document.querySelectorAll('[data-testid="job-node"]').length).toBeGreaterThan(0)
     })
     act(() => useLabStore.getState().setStep(useLabStore.getState().compiled.events.length))
 
-    // Lesson supervisor in "A xong" và "C xong" từ hai launch khác nhau.
+    // Lesson supervisor prints "A done" and "C done" from two different launches.
     await waitFor(() => {
       const nodes = [...document.querySelectorAll('[data-testid="job-node"]')]
-      const inRa = nodes.map(n => n.textContent ?? '').filter(t => t.includes('xong'))
-      expect(inRa.length, 'không node nào hiện dòng println của mình').toBeGreaterThanOrEqual(2)
+      const printed = nodes.map(n => n.textContent ?? '').filter(t => t.includes('done'))
+      expect(printed.length, 'no node shows its own println line').toBeGreaterThanOrEqual(2)
     })
-    // Và console vẫn còn nguyên trong bảng gỡ lỗi — không phải thay thế, mà là
-    // thêm. Phải TÌM TRONG console: giờ "A xong" xuất hiện ở CẢ node lẫn
-    // console, và một `getByText` trần sẽ đỏ vì tìm thấy nhiều nơi — bản thân
-    // việc đó đã là bằng chứng tính năng chạy.
-    fireEvent.click(screen.getByRole('button', { name: 'Gỡ lỗi sâu' }))
+    // And the console is still there intact in the debug panel — not a
+    // replacement, an addition. Must SEARCH WITHIN the console: "A done" now
+    // appears in BOTH the node and the console, and a bare `getByText` would
+    // fail red for finding it in multiple places — that fact alone is
+    // evidence the feature works.
+    fireEvent.click(screen.getByRole('button', { name: 'Deep debug' }))
     const console_ = document.querySelector('.console, [data-testid="console"]')
       ?? screen.getByText('Console').closest('.panel')!
-    expect(console_.textContent).toContain('A xong')
+    expect(console_.textContent).toContain('A done')
   })
 })

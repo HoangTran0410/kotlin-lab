@@ -7,33 +7,35 @@ export interface JobView {
   state: JobState
   dispatcher: string
   name: string | null
-  /** Tên biến người học gán coroutine này vào. */
+  /** Variable name the learner assigns this coroutine to. */
   varName: string | null
   isSupervisor: boolean
   suspendReason: string | null
   threadId: ThreadId | null
   cause: string | null
   /**
-   * Dòng `println` gần nhất do CHÍNH job này in ra, và tổng số dòng nó đã in.
+   * Most recent `println` line printed by THIS job itself, plus the total
+   * count of lines it has printed.
    *
-   * `output` ở cấp WorldState là một mảng phẳng không mang id, nên console
-   * hiện được nhưng đồ thị thì không: người học thấy chữ chạy ra ở panel bên
-   * cạnh mà không biết node nào in. Giữ thêm ở đây để node tự hiện được câu
-   * mình vừa in — `PRINTLN` vốn đã mang `id` chính xác từ khi attribution của
-   * scope inline được sửa.
+   * `output` at the WorldState level is a flat array carrying no id, so the
+   * console can show it but the graph can't: the learner sees text land in
+   * the side panel with no way to tell which node printed it. Kept here too
+   * so the node itself can show the line it just printed — `PRINTLN` has
+   * carried the right `id` ever since inline-scope attribution was fixed.
    */
   lastPrint: string | null
   printCount: number
   /**
-   * Exception đã LÀM JOB NÀY HỎNG, kèm message.
+   * The exception that BROKE THIS JOB, with its message.
    *
-   * `cause` chỉ mang KIỂU (`"RuntimeException"`) vì nó đọc từ `JOB_STATE.cause`,
-   * và nó có mặt trên cả những job bị huỷ lây — chúng không có message nào của
-   * riêng mình. Message thật chỉ nằm trong `EXCEPTION_THROWN`, và trước đây nó
-   * chết ở đó: đồ thị hiện đúng chữ "RuntimeException" và người học phải tua
-   * trúng một event duy nhất mới đọc được "Child 1 failed".
+   * `cause` only carries the TYPE (`"RuntimeException"`) because it's read
+   * from `JOB_STATE.cause`, and it's also present on jobs cancelled by
+   * contagion — they don't have a message of their own. The real message
+   * only lives in `EXCEPTION_THROWN`, and it used to die there: the graph
+   * showed the plain word "RuntimeException" and the learner had to scrub to
+   * the exact one event to ever read "Child 1 failed".
    */
-  loi: { exType: string; message: string } | null
+  failure: { exType: string; message: string } | null
 }
 
 export interface ThreadView { id: ThreadId; state: 'RUNNING' | 'FREE' }
@@ -43,25 +45,27 @@ export interface WorldState {
   jobs: Map<JobId, JobView>
   threads: Map<ThreadId, ThreadView>
   output: string[]
-  /** Edge failure/cancel đang hoạt động tại step này, để UI vẽ token. */
+  /** The failure/cancel edge active at this step, for the UI to draw a token on. */
   lastEvent: Event | null
   /**
-   * Job mà event cuối cùng NÓI VỀ — dùng để làm nổi node đang diễn ra trên đồ
-   * thị. Khác `lastEvent`: event hạ tầng (`THREAD_STATE`) không mang job nào
-   * nên KHÔNG được xoá giá trị cũ, nếu không vòng nhấn mạnh sẽ nhấp nháy tắt
-   * bật suốt trace — cùng lý do `srcLine` phải dính.
+   * The job the last event was ABOUT — used to highlight the node currently
+   * in play on the graph. Different from `lastEvent`: infrastructure events
+   * (`THREAD_STATE`) carry no job, so this must NOT be cleared for them, or
+   * the emphasis ring would flicker on and off throughout the trace — same
+   * reason `srcLine` has to be sticky.
    */
   activeJobId: JobId | null
   /**
-   * Dòng 1-based đang chạy, hoặc null nếu chưa event nào mang dòng.
-   * DÍNH: event không mang `srcLine` KHÔNG xoá giá trị cũ. Nếu xoá, dòng
-   * highlight sẽ nhấp nháy tắt/bật suốt trace, vì các event hạ tầng
-   * (THREAD_STATE, JOB_STATE) xen giữa mọi bước và chúng không thuộc dòng nào.
+   * 1-based line currently running, or null if no event has carried a line
+   * yet. STICKY: an event without `srcLine` does NOT clear the old value. If
+   * it did, the highlighted line would flicker on/off throughout the trace,
+   * because infrastructure events (THREAD_STATE, JOB_STATE) are interleaved
+   * between every step and belong to no line.
    */
   srcLine: number | null
 }
 
-/** Thế giới lúc chưa có event nào. */
+/** The world before any event has happened. */
 export function emptyWorld(): WorldState {
   return {
     t: 0, jobs: new Map(), threads: new Map(), output: [],
@@ -70,22 +74,24 @@ export function emptyWorld(): WorldState {
 }
 
 /**
- * Áp MỘT event lên `w`, tại chỗ.
+ * Apply ONE event onto `w`, in place.
  *
- * Tách ra khỏi `foldTrace` để `narrateTrace` (engine/narrate) cuộn thế giới
- * bằng đúng logic này thay vì chép lại. Hai bản fold lệch nhau là loại lỗi
- * không ai phát hiện được cho tới khi câu diễn giải nói một đằng còn đồ thị
- * vẽ một nẻo — và lúc đó không có test nào chỉ ra bên nào sai.
+ * Split out of `foldTrace` so that `narrateTrace` (engine/narrate) can roll
+ * the world forward with this exact logic instead of duplicating it. Two
+ * fold implementations drifting apart is the kind of bug nobody catches
+ * until the narration says one thing and the graph draws another — and by
+ * then no test points at which side is wrong.
  *
- * Cố tình mutate: đây là vòng trong của cả `foldTrace` lẫn `narrateTrace`,
- * cấp phát một WorldState mới cho mỗi event là O(N) lần sao chép cả Map.
- * Tính thuần được giữ ở tầng ngoài — `foldTrace` luôn bắt đầu từ `emptyWorld`.
+ * Deliberately mutates: this is the inner loop of both `foldTrace` and
+ * `narrateTrace`, and allocating a fresh WorldState per event would be O(N)
+ * copies of the whole Map. Purity is kept at the outer layer — `foldTrace`
+ * always starts from `emptyWorld`.
  */
 export function applyEvent(w: WorldState, e: Event): void {
   w.t = e.t
   w.lastEvent = e
   if (e.srcLine !== undefined) w.srcLine = e.srcLine
-  // DÍNH như srcLine: event hạ tầng không mang job thì giữ nguyên job cũ.
+  // STICKY like srcLine: an infrastructure event carrying no job leaves the old job untouched.
   if ('id' in e && typeof e.id === 'string') w.activeJobId = e.id
   else if (e.k === 'FAILURE_PROPAGATED' || e.k === 'CANCEL_REQUESTED') w.activeJobId = e.to
 
@@ -96,7 +102,7 @@ export function applyEvent(w: WorldState, e: Event): void {
         dispatcher: e.ctx.dispatcher, name: e.ctx.name, varName: e.varName ?? null,
         isSupervisor: e.ctx.isSupervisor,
         suspendReason: null, threadId: null, cause: null,
-        lastPrint: null, printCount: 0, loi: null,
+        lastPrint: null, printCount: 0, failure: null,
       })
       break
     case 'JOB_STATE': {
@@ -125,7 +131,7 @@ export function applyEvent(w: WorldState, e: Event): void {
       break
     case 'EXCEPTION_THROWN': {
       const j = w.jobs.get(e.id)
-      if (j) j.loi = { exType: e.exType, message: e.message }
+      if (j) j.failure = { exType: e.exType, message: e.message }
       break
     }
     case 'PRINTLN': {
@@ -139,7 +145,7 @@ export function applyEvent(w: WorldState, e: Event): void {
   }
 }
 
-/** Dựng lại trạng thái bằng cách áp dụng event [0, upTo). Hàm thuần. */
+/** Rebuild state by applying events [0, upTo). Pure function. */
 export function foldTrace(events: readonly Event[], upTo: number): WorldState {
   const w = emptyWorld()
   const n = Math.max(0, Math.min(upTo, events.length))
