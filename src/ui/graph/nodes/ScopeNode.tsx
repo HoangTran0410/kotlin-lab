@@ -1,6 +1,7 @@
-import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { type NodeProps } from '@xyflow/react'
 import type { FlowNode } from '../toReactFlow'
 import { stateBorder } from '../nodeStyle'
+import { NodePorts } from './NodePorts'
 import '../graph.css'
 
 /**
@@ -14,7 +15,7 @@ import '../graph.css'
  * FailureEdge.tsx) và không được phép mất đi trên ảnh chụp đen trắng hay với
  * người học mù màu.
  */
-export function ScopeNode({ data }: NodeProps<FlowNode>) {
+export function ScopeNode({ id, data }: NodeProps<FlowNode>) {
   const unborn = data.phase === 'unborn'
   const classes = ['k-scope-node']
   if (data.isSupervisor) classes.push('k-scope-node--supervisor')
@@ -27,9 +28,14 @@ export function ScopeNode({ data }: NodeProps<FlowNode>) {
       data-testid="scope-node"
       data-phase={data.phase}
     >
-      <Handle type="target" position={Position.Top} />
-      {!unborn && <div className="k-scope-node__title">{data.name ?? data.builder}</div>}
-      <Handle type="source" position={Position.Bottom} />
+      <NodePorts />
+      {!unborn && (
+        <div className="k-scope-node__title">
+          {data.name ?? data.builder}
+          <span className="k-scope-node__id">{id}</span>
+          {data.isSupervisor && <span className="k-scope-node__tag">supervisor</span>}
+        </div>
+      )}
     </div>
   )
 }

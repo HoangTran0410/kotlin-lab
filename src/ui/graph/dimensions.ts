@@ -6,7 +6,16 @@
  * khung hình sau mỗi lần render. Đó chính là kiểu rung mà Quyết định 2 tồn tại
  * để chặn. Nhãn dài thì cắt bằng CSS text-overflow, không nới hộp.
  */
-export const NODE_W = 200
-export const NODE_H = 68
-/** Chừa chỗ cho tiêu đề của node compound. */
-export const CONTAINER_PADDING = { top: 36, left: 16, right: 16, bottom: 16 }
+export const NODE_W = 224
+export const NODE_H = 78
+
+/**
+ * Chừa chỗ cho tiêu đề của node compound, VÀ cho hai làn cạnh chạy dọc hai
+ * bên trong lòng scope.
+ *
+ * Trái/phải rộng hơn trên/dưới là có chủ ý: cạnh failure đi LÊN dọc mép phải,
+ * cạnh cancel đi XUỐNG dọc mép trái (xem GraphCanvas.tsx). Không chừa hai làn
+ * này thì đường vòng của chúng bám sát mép hộp và cắt qua node con — đúng
+ * hiện tượng "line đè lên node" mà bố cục cũ mắc phải.
+ */
+export const CONTAINER_PADDING = { top: 44, left: 40, right: 40, bottom: 20 }

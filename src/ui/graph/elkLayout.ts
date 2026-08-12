@@ -10,8 +10,13 @@ const elk = new ELK()
 const OPTS = {
   'elk.algorithm': 'layered',
   'elk.direction': 'DOWN',
-  'elk.layered.spacing.nodeNodeBetweenLayers': '48',
-  'elk.spacing.nodeNode': '32',
+  // Thoáng hơn hẳn bố cục đầu (48/32). Đồ thị này để NGỒI ĐỌC, không phải để
+  // nhét vừa màn hình: node dính nhau thì mắt không tách được cây job, và
+  // cạnh failure/cancel không còn chỗ nào để vòng mà không cắt qua node.
+  'elk.layered.spacing.nodeNodeBetweenLayers': '72',
+  'elk.spacing.nodeNode': '48',
+  'elk.spacing.edgeNode': '28',
+  'elk.spacing.edgeEdge': '20',
   // Bố cục con NẰM TRONG cha (compound thật sự), không đặt cạnh nhau.
   'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
   'elk.padding': `[top=${CONTAINER_PADDING.top},left=${CONTAINER_PADDING.left},` +

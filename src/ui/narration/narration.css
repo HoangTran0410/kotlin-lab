@@ -1,0 +1,78 @@
+.k-narration {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.k-narration__empty {
+  margin: 0;
+  color: var(--fg-dim);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.k-narration__line {
+  border-left: 3px solid transparent;
+  border-radius: 0 4px 4px 0;
+}
+
+/* Bước ĐANG xem: nổi hẳn lên. Các câu trước mờ đi để mắt bám đúng một dòng —
+   không mờ hẳn, vì đọc lại mạch trước đó chính là cách hiểu vì sao tới đây. */
+.k-narration__line--current {
+  background: var(--panel-2, #1c2128);
+}
+
+.k-narration__line:not(.k-narration__line--current) {
+  opacity: 0.62;
+}
+
+.k-narration__line--fail { border-left-color: var(--state-cancelled); }
+.k-narration__line--cancel { border-left-color: var(--edge-cancel); }
+.k-narration__line--output { border-left-color: var(--k-launch); }
+.k-narration__line--start { border-left-color: var(--border); }
+.k-narration__line--normal { border-left-color: var(--border); }
+
+.k-narration__jump {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.55;
+  text-align: left;
+  cursor: pointer;
+}
+
+.k-narration__jump:hover {
+  background: var(--border);
+}
+
+.k-narration__t {
+  flex: none;
+  min-width: 46px;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--fg-dim);
+  padding-top: 3px;
+}
+
+.k-narration__text {
+  min-width: 0;
+}
+
+.k-narration__code {
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--border);
+  color: var(--fg);
+  white-space: nowrap;
+}

@@ -1,4 +1,4 @@
-import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps } from '@xyflow/react'
+import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, type EdgeProps } from '@xyflow/react'
 import type { FlowEdge } from '../toReactFlow'
 import { edgeStyle } from './edgeStyle'
 import '../graph.css'
@@ -20,7 +20,14 @@ import '../graph.css'
 export function FailureEdge({
   sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, data, markerEnd, style,
 }: EdgeProps<FlowEdge>) {
-  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
+  // Bậc vuông, không bezier: cạnh failure chạy trong LÀN dọc mép phải (xem
+  // NodePorts.tsx), và một đường cong tự do sẽ phình ra khỏi làn đó rồi cắt
+  // qua node. `offset` khớp với offset đặt cho các cạnh còn lại ở GraphCanvas,
+  // để hai loại cạnh nằm cùng một khoảng cách so với hộp.
+  const [path, labelX, labelY] = getSmoothStepPath({
+    sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition,
+    offset: 28, borderRadius: 10,
+  })
   const blocked = data?.blocked ?? false
   const opacity = data?.opacity ?? 1
   const visual = edgeStyle('failure', blocked)

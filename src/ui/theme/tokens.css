@@ -1,5 +1,5 @@
 :root {
-  --bg: #0d1117; --panel: #161b22; --border: #30363d;
+  --bg: #0d1117; --panel: #161b22; --panel-2: #1c2333; --border: #30363d;
   --fg: #e6edf3; --fg-dim: #8b949e;
   /* accent theo kind của node — dùng lại ở Task 13 */
   --k-runBlocking: #d29922; --k-launch: #58a6ff; --k-async: #bc8cff;

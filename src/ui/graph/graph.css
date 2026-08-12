@@ -39,11 +39,44 @@
   border-style: dashed;
 }
 
+.k-job-node__head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
 .k-job-node__name {
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Id job (`j4`). Mờ và nhỏ để không tranh chỗ với tên, nhưng LUÔN hiện: đây
+   là thứ duy nhất phân biệt ba node cùng ghi "launch", và là cái tên mà phần
+   diễn giải dùng khi nhắc tới job. */
+.k-job-node__id,
+.k-scope-node__id {
+  flex: none;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--fg-dim);
+  opacity: 0.75;
+}
+
+/* Nhãn "supervisor" trên tiêu đề scope: nói thẳng bằng CHỮ điều mà nét viền
+   đôi đang nói bằng hình. Ranh giới supervisor là bài học quan trọng nhất của
+   công cụ này, không nên bắt người học phải suy ra từ độ dày viền. */
+.k-scope-node__tag {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--k-supervisorScope);
+  color: var(--k-supervisorScope);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .k-job-node__badge {
@@ -78,6 +111,9 @@
 }
 
 .k-scope-node__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-weight: 600;
   font-size: 11px;
   color: var(--fg-dim);

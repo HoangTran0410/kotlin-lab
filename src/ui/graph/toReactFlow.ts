@@ -115,17 +115,25 @@ export function toReactFlow(spec: GraphSpec, layout: LayoutResult, world: WorldS
 
   const edges: FlowEdge[] = []
   for (const e of spec.edges) {
+    // Cạnh 'child' KHÔNG được vẽ. Quan hệ cha-con đã được thể hiện bằng việc
+    // node con NẰM TRONG hộp cha (`parentId` + `extent: 'parent'` ở trên) —
+    // vẽ thêm một mũi tên từ hộp cha tới thứ nằm bên trong chính nó vừa thừa
+    // vừa là nguồn gốc chính của việc đường kẻ đè lên node: React Flow nối
+    // handle đáy của cha tới handle đỉnh của con, mà con thì ở TRONG cha, nên
+    // đường đó bắt buộc phải cắt ngang qua thân hộp và qua mọi node anh em nằm
+    // giữa. ELK cũng đã cố ý không nhận cạnh này (xem elkLayout.ts), nên nó
+    // chưa bao giờ được định tuyến — chỉ là một đường bezier vẽ bừa.
+    if (e.kind === 'child') continue
     // Node đầu/cuối bị bỏ qua ở trên (thiếu box) thì cạnh trỏ tới nó cũng bỏ
     // qua — React Flow không chấp nhận cạnh mồ côi.
     if (!present.has(e.source) || !present.has(e.target)) continue
-    if (e.kind !== 'child' && e.firstSeq > lastSeq) continue
+    if (e.firstSeq > lastSeq) continue
 
-    const opacity = e.kind === 'child' && !world.jobs.has(e.target) ? 0.18 : 1
     edges.push({
       id: e.id,
       source: e.source,
       target: e.target,
-      data: { kind: e.kind, blocked: e.blocked, opacity },
+      data: { kind: e.kind, blocked: e.blocked, opacity: 1 },
     })
   }
 

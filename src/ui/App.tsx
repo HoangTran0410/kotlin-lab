@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { EditorView } from '@codemirror/view'
 import { Panel } from './layout/Panel'
 import { Shell } from './layout/Shell'
@@ -11,6 +11,8 @@ import { LessonNav } from './lessons/LessonNav'
 import { GraphCanvas } from './graph/GraphCanvas'
 import { toReactFlow } from './graph/toReactFlow'
 import { useLayout } from './graph/useLayout'
+import { NarrationPanel } from './narration/NarrationPanel'
+import { narrateTrace } from '../engine/narrate/narrateTrace'
 import { Timeline } from './timeline/Timeline'
 import { PlaybackControls } from './timeline/PlaybackControls'
 import { useLabStore } from '../state/store'
@@ -73,6 +75,12 @@ export function App() {
   const layout = useLayout(compiled)
   const graphData = toReactFlow(compiled.spec, layout, world)
 
+  // Diễn giải phụ thuộc TRACE, không phụ thuộc step — tính một lần mỗi lần
+  // compile. Memo ở đây là để giữ ỔN ĐỊNH THAM CHIẾU (mảng mới mỗi render sẽ
+  // bắt NarrationPanel render lại vô ích), không phải vì narrateTrace chậm:
+  // nó duyệt một lượt.
+  const narration = useMemo(() => narrateTrace(compiled.events), [compiled.events])
+
   // Đẩy diagnostic vào diagnosticMarks (gutter chấm đỏ + gạch chân) mỗi khi
   // danh sách đổi. Cắm field/gutter qua `extraExtensions` (đã có sẵn từ Task
   // 8) lúc mount; ở đây chỉ dispatch DỮ LIỆU — StateField tự kẹp dòng bằng
@@ -124,14 +132,19 @@ export function App() {
         </Panel>
       }
       side={
-        <Panel title="Console & chẩn đoán" grow>
-          <DiagnosticsPanel
-            diagnostics={diagnostics}
-            docLines={source.split('\n').length}
-            onJumpToLine={handleJumpToLine}
-          />
-          <ConsolePanel events={compiled.events} stepIndex={stepIndex} />
-        </Panel>
+        <>
+          <Panel title="Đang xảy ra gì" grow>
+            <NarrationPanel lines={narration} stepIndex={stepIndex} onJump={setStep} />
+          </Panel>
+          <Panel title="Console & chẩn đoán">
+            <DiagnosticsPanel
+              diagnostics={diagnostics}
+              docLines={source.split('\n').length}
+              onJumpToLine={handleJumpToLine}
+            />
+            <ConsolePanel events={compiled.events} stepIndex={stepIndex} />
+          </Panel>
+        </>
       }
     />
   )

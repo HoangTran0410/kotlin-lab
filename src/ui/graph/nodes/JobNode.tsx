@@ -1,6 +1,7 @@
-import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { type NodeProps } from '@xyflow/react'
 import type { FlowNode } from '../toReactFlow'
 import { builderAccent, stateBorder } from '../nodeStyle'
+import { NodePorts } from './NodePorts'
 import '../graph.css'
 
 /**
@@ -14,7 +15,7 @@ import '../graph.css'
  * là thuộc tính TĨNH của spec, không phụ thuộc step). Lộ tên sớm sẽ "tiết lộ
  * trước" nội dung của một bước tua chưa tới, đi ngược mục đích của bóng mờ.
  */
-export function JobNode({ data }: NodeProps<FlowNode>) {
+export function JobNode({ id, data }: NodeProps<FlowNode>) {
   const unborn = data.phase === 'unborn'
   // Khoá tồn đọng B4 (xem toReactFlow.ts): data.cause đã được gác cổng ở tầng
   // dữ liệu (null trừ khi state ∈ {Cancelling, Cancelled}), nhưng JobNode tự
@@ -38,15 +39,21 @@ export function JobNode({ data }: NodeProps<FlowNode>) {
       data-testid="job-node"
       data-phase={data.phase}
     >
-      <Handle type="target" position={Position.Top} />
+      <NodePorts />
       {!unborn && (
         <>
-          <span className="k-job-node__name">{data.name ?? data.builder}</span>
+          <span className="k-job-node__head">
+            <span className="k-job-node__name">{data.name ?? data.builder}</span>
+            {/* Id luôn hiện, kể cả khi đã có CoroutineName. Ba `launch` anh em
+                mà cùng hiện đúng chữ "launch" thì không chỉ được vào cái nào —
+                và phần diễn giải bên dưới đồ thị gọi tên job theo đúng id này,
+                nên bỏ nó đi là cắt đứt cầu nối giữa câu chữ và hình vẽ. */}
+            <span className="k-job-node__id">{id}</span>
+          </span>
           {data.suspendReason !== null && <span className="k-job-node__badge">{data.suspendReason}</span>}
           {showCause && <span className="k-job-node__cause">{data.cause}</span>}
         </>
       )}
-      <Handle type="source" position={Position.Bottom} />
     </div>
   )
 }

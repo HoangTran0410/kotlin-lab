@@ -39,9 +39,13 @@
   color: var(--fg);
 }
 
+/* Cột co giãn theo bề rộng cửa sổ thay vì ba con số cứng (380/1fr/320).
+   Bố cục cũ cho cột diễn giải đúng 320px trên mọi màn hình — chật trên màn
+   rộng và tràn trên màn hẹp. `minmax` giữ mức đọc được tối thiểu, phần dôi ra
+   chia cho đồ thị. */
 .shell__main {
   display: grid;
-  grid-template-columns: 380px 1fr 320px;
+  grid-template-columns: minmax(320px, 24vw) minmax(0, 1fr) minmax(340px, 28vw);
   flex: 1;
   min-height: 0;
 }
@@ -51,12 +55,22 @@
 .shell__right {
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   border-right: 1px solid var(--border);
 }
 
+/* Cột phải xếp CHỒNG hai panel: diễn giải (co giãn) trên, console dưới. */
 .shell__right {
   border-right: none;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Console chiếm tối đa 40% chiều cao — phần còn lại thuộc về diễn giải, vì đó
+   mới là thứ trả lời "đang xảy ra gì". */
+.shell__right > .panel:last-child {
+  max-height: 40%;
+  border-top: 1px solid var(--border);
 }
 
 .shell__foot {
