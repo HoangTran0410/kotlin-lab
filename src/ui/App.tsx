@@ -9,6 +9,7 @@ import { clampDiagnosticLine } from './diagnostics/clampLine'
 import { GraphCanvas } from './graph/GraphCanvas'
 import { toReactFlow } from './graph/toReactFlow'
 import { useLayout } from './graph/useLayout'
+import { Timeline } from './timeline/Timeline'
 import { useLabStore } from '../state/store'
 import { selectCurrentLine, selectWorld } from '../state/selectors'
 
@@ -54,6 +55,8 @@ export function App() {
   const diagnostics = useLabStore(s => s.compiled.diagnostics)
   const compiled = useLabStore(s => s.compiled)
   const world = useLabStore(selectWorld)
+  const stepIndex = useLabStore(s => s.stepIndex)
+  const setStep = useLabStore(s => s.setStep)
   const handleChange = useDebouncedSetSource()
   const editorHost = useRef<HTMLDivElement>(null)
 
@@ -110,7 +113,7 @@ export function App() {
       }
       timeline={
         <Panel title="Dòng thời gian">
-          <p>Thanh kéo dòng thời gian sẽ vào đây ở task sau.</p>
+          <Timeline events={compiled.events} stepIndex={stepIndex} setStep={setStep} />
         </Panel>
       }
       side={
