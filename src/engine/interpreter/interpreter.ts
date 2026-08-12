@@ -244,6 +244,16 @@ export class Interpreter {
 
     const name = e.callee.k === 'Ident' ? e.callee.name : null
 
+    // error(msg) nằm trong subset §4.1 và 3 kịch bản gốc dùng nó. Trước đây
+    // rơi xuống nhánh cuối và trả Unit im lặng: println("before"); error("boom");
+    // println("after") in ra CẢ HAI dòng — sai không tiếng động. Kotlin thật:
+    // error(msg) = throw IllegalStateException(msg.toString()), dừng luồng
+    // ngay tại chỗ gọi. Đặt TRƯỚC println để không lọt xuống fallback.
+    if (name === 'error') {
+      const arg = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
+      throw new KotlinThrow('IllegalStateException', display(arg), e.pos.line)
+    }
+
     if (name === 'println') {
       const arg = e.args[0] ? yield* this.evalExpr(e.args[0].value, env) : UNIT
       this.scheduler.println(display(arg), e.pos.line)

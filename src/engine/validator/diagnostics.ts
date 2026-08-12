@@ -43,6 +43,16 @@ export const UNSUPPORTED: Record<string, string> = {
   mutableListOf: 'Collection chưa có ở M1. Dùng for (i in 1..n) thay cho danh sách.',
   forEach: 'forEach chưa có ở M1. Dùng for (i in 1..n) hoặc repeat(n).',
 
+  // ---- Nằm ngoài phạm vi M3 hoặc dời tới milestone sau ----
+  // children là Sequence<Job> — hỗ trợ nó kéo theo cả API sequence, ngoài
+  // phạm vi M3. Cây job đã hiện sẵn trên đồ thị.
+  children: 'Cây job đã hiện sẵn trên đồ thị — nhìn đồ thị thay vì duyệt job.children.',
+  // Thread thật (không phải Thread ảo của engine) hoãn tới Task 7, khi có
+  // cầu nối thread ảo. Trước đó, Thread.currentThread() từng trả Unit im
+  // lặng và in ra "kotlin.Unit" — sai không tiếng động.
+  Thread: 'Thread ảo hiện trên đồ thị và trên timeline. Xem badge thread của node.',
+  currentThread: 'Thread ảo hiện trên đồ thị và trên timeline. Xem badge thread của node.',
+
   // CỐ Ý KHÔNG khai báo các điểm vào của Flow (flow/flowOf/asFlow/collect/
   // emit/launchIn/MutableStateFlow/...) ở đây, dù chúng cũng im lặng trả Unit.
   // Test 'nhận diện toán tử Flow chưa hỗ trợ gọi kiểu thành viên' dùng
