@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseProgram } from '../../src/engine/parser/parser'
+import { runSource } from '../../src/engine/run'
 import { validate } from '../../src/engine/validator/validator'
 
 const check = (src: string) => validate(parseProgram(src))
@@ -176,6 +177,61 @@ describe('validator', () => {
         '  println(job.isActive)\n' +
         '}')
       expect(d).toEqual([])
+    })
+  })
+
+  describe('isActive/ensureActive che được bởi biến người học tự khai (Finding 4)', () => {
+    // Review vòng 2 của Task 4: đường kiểm coroutine mới (Finding 3) chặn
+    // THEO TÊN, không biết gì về bảng ký hiệu — `fun main() { val isActive =
+    // true; println(isActive) }` là code HỢP LỆ 100% trên Kotlin thật (đối
+    // chiếu api.kotlinlang.org, in "true") nhưng bị validator từ chối. Đúng
+    // tiền lệ interpreter.ts:119 đã có (`!env.has('isActive')`) — validator
+    // giờ mang theo ngăn xếp tên đã khai (ValDecl/tham số/biến catch/biến for)
+    // và chỉ báo lỗi khi tên đó KHÔNG được khai ở scope nào bao quanh.
+
+    it('val isActive tự khai — KHÔNG diagnostic, chạy thật in đúng giá trị', () => {
+      const src = 'fun main() {\n  val isActive = true\n  println(isActive)\n}'
+      expect(check(src)).toEqual([])
+      expect(runSource(src).output).toEqual(['true'])
+    })
+
+    it('isActive trần KHÔNG khai gì — CÓ diagnostic đúng dòng, có hint', () => {
+      const d = check('fun main() {\n  println(isActive)\n}')
+      expect(d.length).toBeGreaterThanOrEqual(1)
+      expect(d[0]!.line).toBe(2)
+      expect(d[0]!.hint).toBeTruthy()
+    })
+
+    it('val ensureActive tự khai — KHÔNG diagnostic, chạy thật in đúng giá trị', () => {
+      const src = 'fun main() {\n  val ensureActive = 42\n  println(ensureActive)\n}'
+      expect(check(src)).toEqual([])
+      expect(runSource(src).output).toEqual(['42'])
+    })
+
+    it('ensureActive() KHÔNG khai gì — CÓ diagnostic đúng dòng, có hint', () => {
+      const d = check('fun main() {\n  ensureActive()\n  println("x")\n}')
+      expect(d.length).toBeGreaterThanOrEqual(1)
+      expect(d[0]!.line).toBe(2)
+      expect(d[0]!.hint).toBeTruthy()
+    })
+
+    it('biến khai TRONG một block KHÔNG rò ra NGOÀI block đó', () => {
+      // Đối chiếu Kotlin thật (api.kotlinlang.org): dòng println ngoài if báo
+      // "Unresolved reference 'isActive'" — khớp assertion dưới đây.
+      //
+      // Đây là ca canh phép phá cụ thể: nếu ngăn xếp scope không pop thật
+      // (vd. dùng một Set phẳng dùng chung, không tách theo block) thì tên
+      // khai trong if sẽ "rò" ra ngoài, ca này sẽ SAI (không còn diagnostic).
+      const d = check(
+        'fun main() {\n' +
+        '  if (true) {\n' +
+        '    val isActive = true\n' +
+        '    println(isActive)\n' +
+        '  }\n' +
+        '  println(isActive)\n' +
+        '}')
+      expect(d).toHaveLength(1)
+      expect(d[0]!.line).toBe(6)
     })
   })
 })
