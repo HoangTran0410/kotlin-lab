@@ -1280,28 +1280,37 @@ Kỳ vọng: FAIL ở tất cả trừ hai ca "KHÔNG phát DISPATCH" (chúng xa
 
 - [ ] **Step 3: Ngăn xếp inline job**
 
-Trong `scheduler.ts`:
+Trong `scheduler.ts`.
+
+**Ngăn xếp phải nằm TRÊN TASK, không phải trên Scheduler.** Một task có thể suspend ngay giữa thân một scope inline (`coroutineScope { delay(100) }`), và trong lúc nó treo thì task khác chạy. Ngăn xếp dùng chung ở mức Scheduler sẽ gán job inline của task đang treo cho `println` của task đang chạy — sai âm thầm, và sai theo kiểu chỉ hiện ra khi có hai coroutine xen kẽ.
 
 ```ts
-/**
- * Các scope inline (runBlocking/coroutineScope/supervisorScope/withContext)
- * chạy trong generator của task NGOÀI, nên `currentJob` — vốn được gán từ
- * task.job ở đầu mỗi step() — không phải job đang thật sự thực thi. Ngăn xếp
- * này giữ job inline trong cùng, và mọi event phát ra nhân danh "job hiện tại"
- * (println, và mọi chỗ khác đọc currentJob) phải đọc qua đây.
- */
-private inlineStack: Job[] = []
+interface Task {
+  // ... các trường sẵn có ...
+  /**
+   * Các scope inline (runBlocking/coroutineScope/supervisorScope/withContext)
+   * chạy trong generator của task NGOÀI, nên `currentJob` — vốn được gán từ
+   * task.job ở đầu mỗi step() — không phải job đang thật sự thực thi. Ngăn xếp
+   * này giữ job inline trong cùng CỦA RIÊNG TASK NÀY, và mọi event phát ra nhân
+   * danh "job hiện tại" phải đọc qua đây.
+   *
+   * Trên Task chứ không trên Scheduler: task có thể treo giữa thân một scope
+   * inline trong khi task khác chạy.
+   */
+  inlineStack: Job[]
+}
 
 private get jobHiệnTại(): Job | null {
-  return this.inlineStack[this.inlineStack.length - 1] ?? this.currentJob
+  const t = this.taskĐangChạy
+  return t ? (t.inlineStack[t.inlineStack.length - 1] ?? t.job) : this.currentJob
 }
 ```
 
-`spawnInline` push job vừa tạo; `completeInline` và `failInline` pop nó. Pop phải đúng job đang ở đỉnh — nếu không khớp, ném lỗi thay vì im lặng, vì lệch ngăn xếp sẽ gán nhầm job cho mọi println về sau:
+`spawnInline` push job vừa tạo vào ngăn xếp của task đang chạy; `completeInline` và `failInline` pop nó. Pop phải đúng job đang ở đỉnh — nếu không khớp, ném lỗi thay vì im lặng, vì lệch ngăn xếp sẽ gán nhầm job cho mọi println về sau:
 
 ```ts
-private popInline(job: Job): void {
-  const đỉnh = this.inlineStack.pop()
+private popInline(task: Task, job: Job): void {
+  const đỉnh = task.inlineStack.pop()
   if (đỉnh !== job) {
     throw new Error(`Scheduler: ngăn xếp inline lệch — pop ${job.id} nhưng đỉnh là ${đỉnh?.id ?? 'rỗng'}`)
   }
@@ -1309,6 +1318,24 @@ private popInline(job: Job): void {
 ```
 
 Sửa `println` (`scheduler.ts:71-72`) dùng `this.jobHiệnTại`. Rà cả file xem còn chỗ nào đọc `currentJob` để gán id cho event không, và sửa cho nhất quán.
+
+Thêm một ca test cho đúng lỗi mà việc đặt ngăn xếp trên Task ngăn được:
+
+```ts
+it('hai coroutine xen kẽ: println của cái này không mang job inline của cái kia', () => {
+  const src = `fun main() = runBlocking {
+    launch { coroutineScope { delay(50); println("trong scope A") } }
+    launch { delay(10); println("B ngoài scope") }
+    delay(200)
+}`
+  const r = runSource(src)
+  const a = r.events.find(e => e.k === 'PRINTLN' && e.text === 'trong scope A')!
+  const b = r.events.find(e => e.k === 'PRINTLN' && e.text === 'B ngoài scope')!
+  const cs = r.events.find(e => e.k === 'COROUTINE_CREATED' && e.builder === 'coroutineScope')!
+  expect(a.id).toBe(cs.id)
+  expect(b.id).not.toBe(cs.id)
+})
+```
 
 - [ ] **Step 4: Suspension `switchContext`**
 
@@ -3384,3 +3411,351 @@ git commit -m "test: nghiệm thu M3 — 9 lesson, golden, JVM parity, diễn gi
 | App chạy thật | `vite dev` trả 200, `#root` có mặt, `/src/main.tsx` transform được |
 
 Ba phép phá cố ý ở Task 18 Step 5 phải đỏ đúng chỗ. Không có chúng thì bảng trên chỉ chứng minh test chạy được, không chứng minh test canh được gì.
+
+---
+
+## Hai task chèn thêm (viết sau khi Task 4 phát hiện engine lệch Kotlin thật)
+
+Task 19 và Task 20 **chạy sau Task 6 và trước Task 7**, không phải cuối plan. Chúng nằm ở cuối file chỉ vì được viết thêm sau — đánh số tiếp để `scripts/task-brief` không phải đánh số lại toàn bộ. Cả hai đều đổi hình dạng trace, nên bắt buộc phải xong TRƯỚC khi Task 7 chốt golden, nếu không golden sẽ phải sinh lại hai lần và lần chốt đầu là chốt cái sai.
+
+Cả hai được phát hiện bằng cách đối chiếu với Kotlin thật trong lúc làm Task 4, không phải bằng suy luận.
+
+---
+
+### Task 19: Job Active ngay khi được tạo, không phải khi bắt đầu chạy
+
+Đo được (Task 4, đối chiếu `api.kotlinlang.org`):
+
+```kotlin
+fun main() = runBlocking {
+    val job = launch { delay(10) }
+    println(job.isActive)
+}
+```
+Kotlin thật in `true`. Engine in `false`.
+
+Nguyên nhân: `Scheduler.spawn` (`scheduler.ts:107-125`) tạo Job ở state `New` rồi đẩy vào `ready` mà không chuyển state; `New → Active` chỉ xảy ra ở lần `step()` đầu tiên (`scheduler.ts:317-320`). Vì `launch` trả về đồng bộ cho người gọi, mọi câu lệnh Kotlin đứng giữa `launch { }` và điểm suspend kế tiếp đều quan sát được state `New` — một state mà **Kotlin thật không bao giờ cho thấy** với `CoroutineStart.DEFAULT`.
+
+Trong Kotlin, `New` chỉ tồn tại với `CoroutineStart.LAZY`, mà LAZY nằm ngoài subset §4.1. Nên với mọi thứ subset này hỗ trợ, một coroutine vừa tạo LÀ Active.
+
+Giữ nguyên `New` trong state machine (spec §4.3 vẽ nó, và LAZY có thể vào subset sau) — chỉ đổi thời điểm rời khỏi nó.
+
+Phân biệt hai thứ đang bị lẫn: **Active** là trạng thái VÒNG ĐỜI (job đã được lên lịch, huỷ được, join được). **COROUTINE_STARTED** là sự kiện THỰC THI (thân nó bắt đầu chạy trên một thread). Task này tách chúng ra; `COROUTINE_STARTED` vẫn ở nguyên chỗ cũ.
+
+**Files:**
+- Modify: `src/engine/runtime/scheduler.ts` (`spawn`/`spawnChildOf` chuyển Active ngay; `step()` không chuyển nữa)
+- Test: `tests/engine/job-lifecycle.test.ts` (tạo mới)
+
+**Interfaces:**
+- Produces: ngay sau `COROUTINE_CREATED` của một coroutine là `JOB_STATE {from:'New', to:'Active'}` của chính nó. `COROUTINE_STARTED` vẫn phát ở lần `step()` đầu, không đổi.
+
+- [ ] **Step 1: Đối chiếu Kotlin thật TRƯỚC khi sửa**
+
+Chạy đoạn dưới trên JVM thật và dán nguyên output vào báo cáo:
+
+```bash
+curl -s -X POST 'https://api.kotlinlang.org/api/2.1.20/compiler/run' \
+  -H 'Content-Type: application/json' -H 'Origin: https://play.kotlinlang.org' \
+  --data '{"args":"","files":[{"name":"File.kt","publicId":"","text":"import kotlinx.coroutines.*\n\nfun main() = runBlocking {\n    val job = launch { delay(10) }\n    println(job.isActive)\n    println(job.isCompleted)\n    println(job.isCancelled)\n    job.join()\n    println(job.isActive)\n    println(job.isCompleted)\n}\n"}],"confType":"java"}'
+```
+
+Nếu kết quả KHÁC `true,false,false,false,true` thì plan này sai — dừng lại và báo, đừng sửa engine theo plan.
+
+- [ ] **Step 2: Viết test đỏ**
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { runSource } from '../../src/engine/run'
+
+describe('vòng đời Job — Active ngay khi tạo (CoroutineStart.DEFAULT)', () => {
+  it('job Active ngay sau launch, trước khi thân nó chạy dòng nào', () => {
+    const r = runSource(`fun main() = runBlocking {
+    val job = launch { delay(10) }
+    println(job.isActive)
+    println(job.isCompleted)
+    println(job.isCancelled)
+    job.join()
+    println(job.isActive)
+    println(job.isCompleted)
+}`)
+    expect(r.output).toEqual(['true', 'false', 'false', 'false', 'true'])
+  })
+
+  it('async cũng vậy', () => {
+    const r = runSource(`fun main() = runBlocking {
+    val d = async { delay(10); 1 }
+    println(d.isActive)
+    d.await()
+    println(d.isActive)
+}`)
+    expect(r.output).toEqual(['true', 'false'])
+  })
+
+  it('JOB_STATE New->Active đứng NGAY SAU COROUTINE_CREATED của cùng job', () => {
+    // Khẳng định về hình dạng trace, không chỉ về giá trị đọc được: nếu ai đó
+    // cài bằng cách cho `isActive` nói dối (trả true khi state là New) thì hai
+    // ca trên vẫn xanh còn ca này đỏ.
+    const r = runSource(`fun main() = runBlocking {
+    launch { delay(10) }
+    delay(50)
+}`)
+    const i = r.events.findIndex(e => e.k === 'COROUTINE_CREATED' && e.builder === 'launch')
+    const kế = r.events[i + 1]!
+    expect(kế.k).toBe('JOB_STATE')
+    expect(kế).toMatchObject({ from: 'New', to: 'Active' })
+  })
+
+  it('COROUTINE_STARTED vẫn phát MUỘN HƠN, ở lần chạy đầu — Active khác với đã chạy', () => {
+    const r = runSource(`fun main() = runBlocking {
+    launch { delay(10) }
+    delay(50)
+}`)
+    const active = r.events.findIndex(e => e.k === 'JOB_STATE' && e.to === 'Active' && e.id !== 'j1')
+    const started = r.events.findIndex(e => e.k === 'COROUTINE_STARTED' && e.id !== 'j1')
+    expect(active).toBeGreaterThan(-1)
+    expect(started).toBeGreaterThan(active)
+  })
+
+  it('không có JOB_STATE nào chuyển sang Active HAI LẦN cho cùng một job', () => {
+    // Canh đúng lỗi dễ mắc nhất khi sửa: thêm chuyển đổi lúc tạo mà quên bỏ
+    // chuyển đổi cũ trong step().
+    const r = runSource(`fun main() = runBlocking {
+    launch { delay(10) }
+    launch { delay(20) }
+    delay(50)
+}`)
+    const đếm = new Map<string, number>()
+    for (const e of r.events) {
+      if (e.k === 'JOB_STATE' && e.to === 'Active') đếm.set(e.id, (đếm.get(e.id) ?? 0) + 1)
+    }
+    for (const [id, n] of đếm) expect(n, `job ${id} vào Active ${n} lần`).toBe(1)
+  })
+
+  it('huỷ một job CHƯA từng chạy vẫn đúng: Cancelled, không kẹt ở New', () => {
+    const r = runSource(`fun main() = runBlocking {
+    val job = launch { delay(1000); println("không in") }
+    job.cancel()
+    println(job.isCancelled)
+    delay(50)
+}`)
+    expect(r.output).toEqual(['true'])
+  })
+})
+```
+
+- [ ] **Step 3: Chạy để xác nhận đỏ**
+
+Chạy: `npx vitest run tests/engine/job-lifecycle.test.ts`. Ghi output thật vào báo cáo.
+
+- [ ] **Step 4: Sửa**
+
+Trong `spawn`/`spawnChildOf` (`scheduler.ts:107-125`): ngay sau khi phát `COROUTINE_CREATED`, gọi `job.transitionTo('Active')` và phát `JOB_STATE {from:'New', to:'Active'}`. Trong `step()` (`scheduler.ts:317-320`), bỏ phần chuyển `New→Active` và phần phát event tương ứng, GIỮ `task.started = true` và `COROUTINE_STARTED`.
+
+Kiểm `spawnInline` (`scheduler.ts:443+`) đã chuyển Active ngay lúc tạo chưa; nếu chưa thì làm cho giống, để mọi builder nhất quán.
+
+- [ ] **Step 5: Chạy toàn bộ**
+
+`npm test`, `npm run typecheck`, `npm run lint`, `npm run build`.
+
+Test cũ nào khẳng định thứ tự event quanh `New→Active` sẽ đỏ — đó là test khẳng định hành vi lệch Kotlin. Cập nhật chúng và ghi rõ trong báo cáo là đã đổi cái gì, vì sao.
+
+- [ ] **Step 6: Red-check**
+
+1. Bỏ `job.transitionTo('Active')` lúc tạo (trả về hành vi cũ) → ca "Active ngay sau launch" phải đỏ.
+2. Giữ CẢ chuyển đổi cũ trong `step()` lẫn chuyển đổi mới → ca "không vào Active hai lần" phải đỏ.
+3. Chuyển Active lúc tạo nhưng KHÔNG phát `JOB_STATE` → ca "New->Active đứng ngay sau COROUTINE_CREATED" phải đỏ.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/engine/runtime/scheduler.ts tests/engine/job-lifecycle.test.ts
+git commit -m "fix(engine): coroutine Active ngay khi tạo, khớp CoroutineStart.DEFAULT"
+```
+
+---
+
+### Task 20: Huỷ phải chạm được `delay()` nằm trong thân scope inline
+
+Đo được (Task 4, đối chiếu `api.kotlinlang.org`):
+
+```kotlin
+fun main() = runBlocking {
+    try {
+        coroutineScope {
+            launch { throw RuntimeException("boom") }
+            delay(1000)
+            println("KHÔNG được in")
+        }
+    } catch (e: Exception) { println("caught: " + e.message) }
+}
+```
+Kotlin thật in `caught: boom` — dòng `println` KHÔNG BAO GIỜ chạy, vì `delay()` bị huỷ ngay khi scope bị con fail kéo xuống. Engine in CẢ HAI dòng.
+
+Nguyên nhân (đã truy vết ở Task 4 mục 5.2): chỉ `unwindCancelled()` mới ném exception vào generator, và nó chỉ xét `task.job.isCancelled` của các Task có generator THẬT. Job của builder inline có state đổi đúng, nhưng "task" của nó là một generator rỗng chưa từng chạy. Generator THẬT — cái đang treo tại `delay` — thuộc về task CHA, mà job của task cha thì không bị huỷ.
+
+Đây là lỗ hổng ở đúng chỗ công cụ này tồn tại để dạy: "một con fail thì cả scope dừng lại ngay". Hiện engine cho scope chạy tiếp thêm 1000ms ảo rồi mới báo lỗi.
+
+Task này **phụ thuộc Task 6**, vì nó dùng `Task.inlineStack` — sau Task 6, scheduler biết được task nào đang thực thi thân của job inline nào.
+
+**Files:**
+- Modify: `src/engine/runtime/scheduler.ts` (`unwindCancelled`)
+- Test: `tests/engine/inline-cancel.test.ts` (tạo mới)
+
+**Interfaces:**
+- Consumes: `Task.inlineStack` (Task 6).
+- Produces: `unwindCancelled()` ném vào một task khi `task.job` HOẶC bất kỳ job nào trong `task.inlineStack` của nó đã bị huỷ.
+
+- [ ] **Step 1: Đối chiếu Kotlin thật TRƯỚC khi sửa**
+
+Chạy đoạn Kotlin ở trên qua API và dán output vào báo cáo. Chạy thêm biến thể `supervisorScope` (con fail bị chặn tại ranh giới nên scope KHÔNG bị huỷ — `delay` phải chạy hết và `println` PHẢI in) để có cặp đối chứng:
+
+```kotlin
+fun main() = runBlocking {
+    supervisorScope {
+        launch { throw RuntimeException("boom") }
+        delay(1000)
+        println("PHẢI in — supervisor chặn failure, scope không bị huỷ")
+    }
+}
+```
+
+- [ ] **Step 2: Viết test đỏ**
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { runSource } from '../../src/engine/run'
+
+describe('huỷ chạm tới delay() trong thân scope inline', () => {
+  it('coroutineScope: con fail thì delay của chính thân scope bị cắt ngay', () => {
+    const r = runSource(`fun main() = runBlocking {
+    try {
+        coroutineScope {
+            launch { throw RuntimeException("boom") }
+            delay(1000)
+            println("KHONG duoc in")
+        }
+    } catch (e: RuntimeException) {
+        println("caught: " + e.message)
+    }
+}`)
+    expect(r.output).toEqual(['caught: boom'])
+  })
+
+  it('cắt đúng THỜI ĐIỂM, không chỉ đúng nội dung', () => {
+    // Nếu chỉ chặn println mà vẫn để đồng hồ ảo chạy hết 1000ms thì output
+    // giống hệt ca trên nhưng bài học "dừng NGAY" đã sai.
+    const r = runSource(`fun main() = runBlocking {
+    try {
+        coroutineScope {
+            launch { delay(50); throw RuntimeException("boom") }
+            delay(1000)
+        }
+    } catch (e: RuntimeException) { }
+    println("xong")
+}`)
+    const cuối = r.events[r.events.length - 1]!
+    expect(cuối.t).toBeLessThan(200)
+  })
+
+  it('supervisorScope: con fail bị chặn nên delay của thân KHÔNG bị cắt', () => {
+    // Cặp đối chứng. Thiếu ca này thì một bản sửa "cứ có con fail là cắt thân"
+    // vẫn làm ca đầu xanh trong khi phá vỡ ngữ nghĩa supervisor.
+    const r = runSource(`fun main() = runBlocking {
+    supervisorScope {
+        launch { throw RuntimeException("boom") }
+        delay(1000)
+        println("PHAI in")
+    }
+}`)
+    expect(r.output).toEqual(['PHAI in'])
+  })
+
+  it('scope lồng: chỉ scope bị huỷ mới bị cắt, scope ngoài chạy tiếp', () => {
+    const r = runSource(`fun main() = runBlocking {
+    supervisorScope {
+        try {
+            coroutineScope {
+                launch { throw RuntimeException("trong") }
+                delay(1000)
+                println("KHONG in")
+            }
+        } catch (e: RuntimeException) {
+            println("bat o scope trong: " + e.message)
+        }
+        delay(100)
+        println("scope ngoai van chay")
+    }
+}`)
+    expect(r.output).toEqual(['bat o scope trong: trong', 'scope ngoai van chay'])
+  })
+
+  it('finally trong thân scope vẫn chạy khi bị cắt', () => {
+    // Cùng lý do với Task 18 của M1: huỷ phải đi qua đường ném vào generator,
+    // không phải đường lật cờ trạng thái.
+    const r = runSource(`fun main() = runBlocking {
+    try {
+        coroutineScope {
+            launch { throw RuntimeException("boom") }
+            try {
+                delay(1000)
+            } finally {
+                println("don dep")
+            }
+        }
+    } catch (e: RuntimeException) {
+        println("caught")
+    }
+}`)
+    expect(r.output).toEqual(['don dep', 'caught'])
+  })
+})
+```
+
+- [ ] **Step 3: Chạy để xác nhận đỏ**
+
+Chạy: `npx vitest run tests/engine/inline-cancel.test.ts`. Dán output thật vào báo cáo, gồm cả ca "supervisorScope" — ca đó có thể ĐANG xanh, và nếu vậy phải ghi rõ nó xanh từ trước để về sau biết nó canh cái gì.
+
+- [ ] **Step 4: Sửa `unwindCancelled`**
+
+Điều kiện ném vào một task đổi từ "job của task bị huỷ" thành "job của task, HOẶC job inline trong cùng mà task đang thực thi, bị huỷ":
+
+```ts
+/**
+ * Job nào đang thật sự chi phối việc task này còn được chạy tiếp hay không.
+ *
+ * Không phải lúc nào cũng là `task.job`: khi task đang treo giữa thân một
+ * scope inline (`coroutineScope { delay(1000) }`), thân đó thuộc về job của
+ * scope, và chính job đó mới là cái bị huỷ khi một con của scope fail. Trước
+ * đây chỉ xét `task.job` nên tín hiệu huỷ không bao giờ tới nơi: job của scope
+ * đổi state đúng, nhưng "task" của nó là generator rỗng chưa từng chạy, còn
+ * generator thật thì thuộc task cha — mà cha không bị huỷ.
+ */
+private jobChiPhối(task: Task): Job {
+  return task.inlineStack[task.inlineStack.length - 1] ?? task.job
+}
+```
+
+Dùng nó trong `unwindCancelled` thay cho `task.job`, cả ở điều kiện lẫn ở chỗ lấy `failure`/cause để ném.
+
+Cẩn thận hai chỗ:
+- Sau khi ném vào, thân scope inline sẽ unwind qua đường `catch` của chính nó trong interpreter (`failInline` + `joinChildren`), rồi ném tiếp ra ngoài. Đừng ném lần thứ hai cho cùng một job.
+- `supervisorScope` KHÔNG bị huỷ khi con trực tiếp fail (ranh giới chặn lại), nên `jobChiPhối` của nó vẫn Active và không có gì bị cắt. Đó là lý do ca đối chứng thứ ba phải xanh — nếu nó đỏ thì bản sửa đang phá ngữ nghĩa supervisor.
+
+- [ ] **Step 5: Chạy toàn bộ**
+
+`npm test`, `npm run typecheck`, `npm run lint`, `npm run build`.
+
+Thay đổi này rút ngắn nhiều trace (đồng hồ ảo không còn chạy hết `delay` bị huỷ). Test cũ nào khẳng định thời điểm cũ là test khẳng định hành vi lệch Kotlin — cập nhật và ghi rõ.
+
+- [ ] **Step 6: Red-check**
+
+1. Trả `jobChiPhối` về `task.job` → ca đầu phải đỏ.
+2. Cho `jobChiPhối` lấy job inline ĐÁY thay vì ĐỈNH ngăn xếp → ca "scope lồng" phải đỏ.
+3. Bỏ điều kiện supervisor ở `reportFailure` (cho supervisor cũng bị huỷ theo con) → ca đối chứng thứ ba phải đỏ. Khôi phục ngay — đây là phá ở chỗ khác, chỉ để chứng minh ca đối chứng có canh gác.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/engine/runtime/scheduler.ts tests/engine/inline-cancel.test.ts
+git commit -m "fix(engine): huỷ chạm tới delay trong thân scope inline, khớp Kotlin thật"
+```
