@@ -22,7 +22,7 @@ const EMPTY_SPEC: GraphSpec = { nodes: [], edges: [] }
 const specWithNodes = (n: number): GraphSpec => ({
   nodes: Array.from({ length: n }, (_, i) => ({
     id: `n${i}`, parentId: null, builder: 'launch', isContainer: false,
-    isSupervisor: false, name: null, dispatcher: 'Default', bornAt: i,
+    isSupervisor: false, name: null, varName: null, dispatcher: 'Default', bornAt: i,
   })),
   edges: [],
 })

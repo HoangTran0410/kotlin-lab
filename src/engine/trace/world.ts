@@ -7,6 +7,8 @@ export interface JobView {
   state: JobState
   dispatcher: string
   name: string | null
+  /** Tên biến người học gán coroutine này vào. */
+  varName: string | null
   isSupervisor: boolean
   suspendReason: string | null
   threadId: ThreadId | null
@@ -81,7 +83,8 @@ export function applyEvent(w: WorldState, e: Event): void {
     case 'COROUTINE_CREATED':
       w.jobs.set(e.id, {
         id: e.id, parentId: e.parentId, builder: e.builder, state: 'New',
-        dispatcher: e.ctx.dispatcher, name: e.ctx.name, isSupervisor: e.ctx.isSupervisor,
+        dispatcher: e.ctx.dispatcher, name: e.ctx.name, varName: e.varName ?? null,
+        isSupervisor: e.ctx.isSupervisor,
         suspendReason: null, threadId: null, cause: null,
         lastPrint: null, printCount: 0,
       })

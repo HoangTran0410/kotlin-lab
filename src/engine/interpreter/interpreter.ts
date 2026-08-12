@@ -12,9 +12,20 @@ export type Eval<T> = Generator<Suspension, T, unknown>
 /** Lệnh `return` được cài bằng exception nội bộ, không lẫn với exception Kotlin. */
 class ReturnSignal { constructor(readonly value: KValue) {} }
 
+/** Vế phải có phải TRỰC TIẾP một lời gọi sinh ra node trên đồ thị không. */
+function isDirectCoroutineCall(e: Expr): boolean {
+  if (e.k !== 'Call') return false
+  const ten = e.callee.k === 'Ident' ? e.callee.name
+    : e.callee.k === 'Member' ? e.callee.name : null
+  return ten === 'launch' || ten === 'async'
+    || ten === 'CoroutineScope' || ten === 'MainScope'
+}
+
 export class Interpreter {
   readonly globals = new Env()
   private readonly funs = new Map<string, FunDecl>()
+  /** Tên biến đang chờ gán cho coroutine sắp spawn. Xem case 'ValDecl'. */
+  protected pendingVarName: string | undefined = undefined
 
   constructor(readonly scheduler: Scheduler, readonly program: Program) {
     program.funs.forEach(f => this.funs.set(f.name, f))
@@ -31,7 +42,20 @@ export class Interpreter {
   *evalStmt(s: Stmt, env: Env): Eval<KValue> {
     switch (s.k) {
       case 'ValDecl': {
-        env.declare(s.name, yield* this.evalExpr(s.init, env))
+        // `val job = launch { }` -> node trên đồ thị mang tên `job`.
+        //
+        // Chỉ nhận khi vế phải LÀ TRỰC TIẾP một lời gọi launch/async. Kiểm tra
+        // theo cú pháp chứ không phải "spawn kế tiếp là của tôi": nếu vế phải là
+        // một hàm mà bên trong nó có launch, tên biến sẽ dán nhầm vào coroutine
+        // bên trong hàm đó.
+        const tenBien = isDirectCoroutineCall(s.init) ? s.name : undefined
+        const truoc = this.pendingVarName
+        this.pendingVarName = tenBien
+        try {
+          env.declare(s.name, yield* this.evalExpr(s.init, env))
+        } finally {
+          this.pendingVarName = truoc
+        }
         return UNIT
       }
       case 'Assign': {
@@ -467,6 +491,10 @@ export class Interpreter {
     if (calleeName === 'launch' || calleeName === 'async') {
       const lambda = e.lambda
       if (!lambda) return UNIT
+      // Lấy VÀ XOÁ ngay, TRƯỚC khi đánh giá đối số: `launch(f()) { }` mà `f()`
+      // bên trong lại spawn thì coroutine của f sẽ cướp mất tên biến.
+      const varName = this.pendingVarName
+      this.pendingVarName = undefined
       const argCtx = yield* this.contextFromArgs(e, env)
       // Receiver quyết định CHA và context nền. Bỏ qua nó thì
       // GlobalScope.launch { } gắn vào job bao quanh y hệt launch thường —
@@ -479,7 +507,7 @@ export class Interpreter {
       // Không alias `this` (vi phạm no-this-alias) — bind evalBlock thay vào đó.
       const evalBlock = this.evalBlock.bind(this)
       // Factory nhận Job vừa tạo, nên Env con mang đúng jobId của chính coroutine này.
-      const job = this.scheduler.spawnChildOf(parentJobId, ctx, calleeName, created =>
+      const job = this.scheduler.spawnChildOf(parentJobId, ctx, calleeName, varName, created =>
         (function* (): CoroutineBody {
           const v = yield* evalBlock(body, env.child(created.id))
           // Job của launch/async KHÔNG được Completed ngay khi thân nó chạy xong —
@@ -597,7 +625,9 @@ export class Interpreter {
       // ctx else ctx + Job())`. Đã đối chiếu Kotlin thật:
       // `CoroutineScope(Dispatchers.Default).coroutineContext[Job]` là JobImpl{Active}.
       const ctx = this.applyCtxValue(CoroutineContext.empty(), arg)
-      const root = this.scheduler.spawnScopeRoot(ctx, ctx.isSupervisor)
+      const varName = this.pendingVarName
+      this.pendingVarName = undefined
+      const root = this.scheduler.spawnScopeRoot(ctx, ctx.isSupervisor, varName)
       return {
         t: 'obj', className: 'CoroutineScope',
         fields: new Map<string, KValue>([

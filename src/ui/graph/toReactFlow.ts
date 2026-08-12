@@ -8,6 +8,8 @@ import { phase, type Phase } from './nodeStyle'
 export interface FlowNodeData extends Record<string, unknown> {
   /** Tên người dùng đặt (`CoroutineName(...)`), hoặc null. Hiển thị là việc của Task 13. */
   name: string | null
+  /** Tên biến người học gán coroutine này vào (`val job = launch {}`). */
+  varName: string | null
   builder: string
   isSupervisor: boolean
   phase: Phase
@@ -98,6 +100,7 @@ export function toReactFlow(spec: GraphSpec, layout: LayoutResult, world: WorldS
       height: box.height,
       data: {
         name: n.name,
+        varName: n.varName,
         builder: n.builder,
         isSupervisor: n.isSupervisor,
         phase: ph,

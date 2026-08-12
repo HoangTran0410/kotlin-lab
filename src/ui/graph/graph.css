@@ -201,3 +201,13 @@
 .k-scope-node--current {
   box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--k-launch);
 }
+
+/* Builder khi nhãn chính là tên biến hoặc CoroutineName. Nhỏ và mờ: nó là
+   phân loại, không phải danh tính. */
+.k-job-node__builder {
+  flex: none;
+  font-size: 9.5px;
+  letter-spacing: 0.02em;
+  color: var(--fg-dim);
+  text-transform: lowercase;
+}

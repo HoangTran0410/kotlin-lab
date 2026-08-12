@@ -1,5 +1,6 @@
 import { type NodeProps } from '@xyflow/react'
 import type { FlowNode } from '../toReactFlow'
+import { jobLabel } from '../../../engine/trace/label'
 import { builderAccent, stateBorder } from '../nodeStyle'
 import { NodePorts } from './NodePorts'
 import '../graph.css'
@@ -22,6 +23,7 @@ export function JobNode({ id, data }: NodeProps<FlowNode>) {
   // kiểm lại state ở ĐÂY — phòng thủ theo chiều sâu, không dựa hẳn vào upstream.
   const showCause = data.cause !== null && (data.state === 'Cancelling' || data.state === 'Cancelled')
   const border = data.state ? stateBorder(data.state) : 'var(--fg-dim)'
+  const nhan = jobLabel({ id, builder: data.builder, name: data.name, varName: data.varName })
 
   return (
     <div
@@ -47,7 +49,12 @@ export function JobNode({ id, data }: NodeProps<FlowNode>) {
       {!unborn && (
         <>
           <span className="k-job-node__head">
-            <span className="k-job-node__name">{data.name ?? data.builder}</span>
+            <span className="k-job-node__name">{nhan}</span>
+            {/* Builder vẫn phải đọc được khi nhãn là tên biến: `job` không nói
+                cho ai biết đó là launch hay async, mà khác biệt đó là bài học. */}
+            {nhan !== data.builder && (
+              <span className="k-job-node__builder">{data.builder}</span>
+            )}
             {/* Id luôn hiện, kể cả khi đã có CoroutineName. Ba `launch` anh em
                 mà cùng hiện đúng chữ "launch" thì không chỉ được vào cái nào —
                 và phần diễn giải bên dưới đồ thị gọi tên job theo đúng id này,

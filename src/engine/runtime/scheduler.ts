@@ -219,6 +219,7 @@ export class Scheduler {
     makeBody: (job: Job) => CoroutineBody,
     srcLine?: number,
     startLine?: number,
+    varName?: string,
   ): Job {
     const id = this.newJobId()
     const job = new Job(id, ctx.name ?? id, parent, isSupervisor)
@@ -227,6 +228,7 @@ export class Scheduler {
     const jobCtx = ctx.withJob(job)
     this.emitter.emit({
       k: 'COROUTINE_CREATED', id, parentId: parent?.id ?? null, builder, ctx: jobCtx.summary(),
+      ...(varName === undefined ? {} : { varName }),
     }, srcLine)
     // CoroutineStart.DEFAULT (đường DUY NHẤT subset này hỗ trợ, xem spec §4.1):
     // Kotlin thật coi coroutine vừa tạo là Active NGAY LẬP TỨC — `New` chỉ tồn
@@ -720,13 +722,14 @@ export class Scheduler {
     parentJobId: JobId | null,
     ctx: CoroutineContext,
     builder: 'launch' | 'async',
+    varName: string | undefined,
     makeBody: (job: Job) => CoroutineBody,
     srcLine?: number,
     startLine?: number,
   ): Job {
     const parent = this.jobById(parentJobId)
     const parentCtx = parent ? this.tasks.get(parent.id)!.ctx : CoroutineContext.empty()
-    const job = this.spawn(parent, false, builder, parentCtx.plus(ctx), makeBody, srcLine, startLine)
+    const job = this.spawn(parent, false, builder, parentCtx.plus(ctx), makeBody, srcLine, startLine, varName)
     if (parent?.isCompleted) {
       // Rút khỏi ready SAU KHI spawn, không phải thêm cờ vào spawn: COROUTINE_CREATED
       // phải được phát bình thường (con có tồn tại — Kotlin trả về một Job đọc
@@ -804,12 +807,13 @@ export class Scheduler {
    *     một vòng lặp mà không sinh sự kiện nào), còn `isJobSettled` thì rơi về
    *     đúng câu hỏi duy nhất có nghĩa với job này: state đã kết thúc chưa.
    */
-  spawnScopeRoot(ctx: CoroutineContext, isSupervisor: boolean): Job {
+  spawnScopeRoot(ctx: CoroutineContext, isSupervisor: boolean, varName?: string): Job {
     const id = this.newJobId()
     const job = new Job(id, ctx.name ?? id, null, isSupervisor)
     const jobCtx = ctx.withJob(job)
     this.emitter.emit({
       k: 'COROUTINE_CREATED', id, parentId: null, builder: 'scope', ctx: jobCtx.summary(),
+      ...(varName === undefined ? {} : { varName }),
     })
     job.transitionTo('Active')
     this.emitter.emit({ k: 'JOB_STATE', id, from: 'New', to: 'Active' })

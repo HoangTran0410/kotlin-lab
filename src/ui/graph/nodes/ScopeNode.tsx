@@ -1,5 +1,6 @@
 import { type NodeProps } from '@xyflow/react'
 import type { FlowNode } from '../toReactFlow'
+import { jobLabel } from '../../../engine/trace/label'
 import { stateBorder } from '../nodeStyle'
 import { NodePorts } from './NodePorts'
 import '../graph.css'
@@ -32,7 +33,7 @@ export function ScopeNode({ id, data }: NodeProps<FlowNode>) {
       <NodePorts />
       {!unborn && (
         <div className="k-scope-node__title">
-          {data.name ?? data.builder}
+          {jobLabel({ id, builder: data.builder, name: data.name, varName: data.varName })}
           <span className="k-scope-node__id">{id}</span>
           {data.isSupervisor && <span className="k-scope-node__tag">supervisor</span>}
           {data.lastPrint !== null && (

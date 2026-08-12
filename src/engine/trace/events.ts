@@ -12,7 +12,14 @@ export interface CtxSummary {
 }
 
 export type EventBody =
-  | { k: 'COROUTINE_CREATED'; id: JobId; parentId: JobId | null
+  /**
+   * `varName` — tên BIẾN mà người học gán coroutine này vào (`val job = launch {}`
+   * -> "job"). Cố ý TÁCH khỏi `ctx.name` (`CoroutineName(...)`): cái sau là một
+   * khái niệm Kotlin thật, hiện trong context và có thể được kế thừa; cái này chỉ
+   * là nhãn để nhìn trên đồ thị. Gộp hai thứ vào một trường sẽ khiến bài
+   * `dispatcher` — nơi dạy chính `CoroutineName` — nói dối.
+   */
+  | { k: 'COROUTINE_CREATED'; id: JobId; parentId: JobId | null; varName?: string
       // 'scope' là Job GỐC của một `CoroutineScope(ctx)` do người học tự dựng:
       // không cha, không thân, chỉ là điểm neo cấu trúc (xem
       // Scheduler.spawnScopeRoot). Nó KHÔNG phải một builder trong Kotlin —

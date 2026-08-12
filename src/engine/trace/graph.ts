@@ -8,6 +8,8 @@ export interface GraphNodeSpec {
   isContainer: boolean
   isSupervisor: boolean
   name: string | null
+  /** Tên biến người học gán coroutine này vào. Xem Event COROUTINE_CREATED. */
+  varName: string | null
   dispatcher: string
   /** seq của COROUTINE_CREATED. UI dùng để biết node đã "sinh ra" ở step nào. */
   bornAt: number
@@ -64,7 +66,7 @@ export function buildGraphSpec(events: readonly Event[]): GraphSpec {
       case 'COROUTINE_CREATED': {
         const n: GraphNodeSpec = {
           id: e.id, parentId: e.parentId, builder: e.builder, isContainer: false,
-          isSupervisor: e.ctx.isSupervisor, name: e.ctx.name,
+          isSupervisor: e.ctx.isSupervisor, name: e.ctx.name, varName: e.varName ?? null,
           dispatcher: e.ctx.dispatcher, bornAt: e.seq,
         }
         // Thứ tự chèn = thứ tự COROUTINE_CREATED = cha luôn trước con, vì con

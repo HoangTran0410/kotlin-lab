@@ -30,7 +30,7 @@ export function narrate(event: Event, before: WorldState): string | null {
 
   switch (e.k) {
     case 'COROUTINE_CREATED': {
-      const self = jobLabel({ id: e.id, builder: e.builder, name: e.ctx.name })
+      const self = jobLabel({ id: e.id, builder: e.builder, name: e.ctx.name, varName: e.varName })
       const nơi = e.ctx.dispatcher ? ` (dispatcher \`${e.ctx.dispatcher}\`)` : ''
       if (e.parentId === null) {
         return e.builder === 'scope'
