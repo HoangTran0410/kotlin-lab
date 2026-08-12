@@ -16,6 +16,11 @@ export interface FlowNodeData extends Record<string, unknown> {
   /** Chỉ khác null khi state ∈ {Cancelling, Cancelled} — khoá tồn đọng B4, xem bên dưới. */
   cause: string | null
   suspendReason: string | null
+  /** Dòng println gần nhất do CHÍNH node này in, và tổng số dòng đã in. */
+  lastPrint: string | null
+  printCount: number
+  /** Node mà bước đang xem NÓI VỀ — vẽ vòng nhấn mạnh. */
+  isCurrent: boolean
 }
 
 export type FlowNodeType = 'scope' | 'job'
@@ -99,6 +104,9 @@ export function toReactFlow(spec: GraphSpec, layout: LayoutResult, world: WorldS
         state,
         cause,
         suspendReason: job?.suspendReason ?? null,
+        lastPrint: job?.lastPrint ?? null,
+        printCount: job?.printCount ?? 0,
+        isCurrent: world.activeJobId === n.id,
       },
     }
     if (n.parentId !== null) {

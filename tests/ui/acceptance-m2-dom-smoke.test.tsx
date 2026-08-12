@@ -4,6 +4,7 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import { App } from '../../src/ui/App'
 import { useLabStore } from '../../src/state/store'
 import { lessonSource } from '../../src/lessons/registry'
+import { openDebug } from './helpers/openDebug'
 
 /**
  * THAY THẾ CHO PLAYWRIGHT (Task 20 Step 3) — không có browser thật ở môi
@@ -44,6 +45,7 @@ afterEach(() => {
 async function loadAndRender(id: string): Promise<number> {
   useLabStore.getState().setSource(lessonSource(id)!)
   render(<App />)
+  openDebug()
   const total = useLabStore.getState().compiled.events.length
   expect(total, `fixture ${id} cần có event`).toBeGreaterThan(0)
   await waitFor(() => {

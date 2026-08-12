@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { EditorView } from '@codemirror/view'
 import { Panel } from './layout/Panel'
 import { Shell } from './layout/Shell'
@@ -8,7 +8,7 @@ import { DiagnosticsPanel } from './diagnostics/DiagnosticsPanel'
 import { clampDiagnosticLine } from './diagnostics/clampLine'
 import { ConsolePanel } from './console/ConsolePanel'
 import { LessonNav } from './lessons/LessonNav'
-import { GraphCanvas } from './graph/GraphCanvas'
+import { GraphStage } from './graph/GraphStage'
 import { toReactFlow } from './graph/toReactFlow'
 import { useLayout } from './graph/useLayout'
 import { NarrationPanel } from './narration/NarrationPanel'
@@ -66,6 +66,10 @@ export function App() {
   const loadLesson = useLabStore(s => s.loadLesson)
   const setSource = useLabStore(s => s.setSource)
   const handleChange = useDebouncedSetSource()
+  // Bảng gỡ lỗi (console + chẩn đoán + diễn giải đầy đủ + timeline từng event)
+  // mặc định ĐÓNG: đồ thị đã tự kể được chuyện gì đang xảy ra.
+  const [debugOpen, setDebugOpen] = useState(false)
+  const toggleDebug = useCallback(() => setDebugOpen(v => !v), [])
   const editorHost = useRef<HTMLDivElement>(null)
 
   // Task 15: layout chạy MỘT LẦN mỗi compile (deps = compiled.revision, xem
@@ -107,6 +111,7 @@ export function App() {
 
   return (
     <Shell
+      debugOpen={debugOpen}
       nav={<LessonNav currentLessonId={lessonId} loadLesson={loadLesson} setSource={setSource} />}
       editor={
         <Panel title="Mã Kotlin" grow>
@@ -122,7 +127,15 @@ export function App() {
       }
       graph={
         <Panel title="Sơ đồ coroutine" grow>
-          <GraphCanvas nodes={graphData.nodes} edges={graphData.edges} />
+          <GraphStage
+            graph={graphData}
+            narration={narration}
+            stepIndex={stepIndex}
+            setStep={setStep}
+            total={compiled.events.length}
+            debugOpen={debugOpen}
+            toggleDebug={toggleDebug}
+          />
         </Panel>
       }
       timeline={

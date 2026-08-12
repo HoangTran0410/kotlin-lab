@@ -20,6 +20,7 @@ export function ScopeNode({ id, data }: NodeProps<FlowNode>) {
   const classes = ['k-scope-node']
   if (data.isSupervisor) classes.push('k-scope-node--supervisor')
   if (unborn) classes.push('k-scope-node--unborn')
+  if (data.isCurrent && !unborn) classes.push('k-scope-node--current')
 
   return (
     <div
@@ -34,6 +35,9 @@ export function ScopeNode({ id, data }: NodeProps<FlowNode>) {
           {data.name ?? data.builder}
           <span className="k-scope-node__id">{id}</span>
           {data.isSupervisor && <span className="k-scope-node__tag">supervisor</span>}
+          {data.lastPrint !== null && (
+            <span className="k-scope-node__print" title={data.lastPrint}>» {data.lastPrint}</span>
+          )}
         </div>
       )}
     </div>

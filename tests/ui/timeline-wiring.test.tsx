@@ -4,6 +4,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { App } from '../../src/ui/App'
 import { useLabStore } from '../../src/state/store'
 import { lessonSource } from '../../src/lessons/registry'
+import { openDebug } from './helpers/openDebug'
 
 /**
  * "Nối dây" theo đúng bài học của Task 9/13 (xem current-line-wiring.test.tsx,
@@ -17,6 +18,7 @@ describe('nối dây App -> Timeline — kéo DOM thật đổi stepIndex thật
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource(lessonSource('supervisor')!)
     const { container } = render(<App />)
+    openDebug()
 
     const total = useLabStore.getState().compiled.events.length
     expect(total, 'fixture supervisor cần có event để test có ý nghĩa').toBeGreaterThan(10)
@@ -82,6 +84,7 @@ describe('nối dây App -> Timeline — kéo DOM thật đổi stepIndex thật
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource(lessonSource('supervisor')!)
     render(<App />)
+    openDebug()
     act(() => { useLabStore.getState().setStep(5) })
 
     const range = screen.getByLabelText('Thanh kéo dòng thời gian') as HTMLInputElement

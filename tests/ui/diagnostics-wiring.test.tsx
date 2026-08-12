@@ -4,6 +4,7 @@ import { render, screen } from '@testing-library/react'
 import { EditorView } from '@codemirror/view'
 import { App } from '../../src/ui/App'
 import { useLabStore } from '../../src/state/store'
+import { openDebug } from './helpers/openDebug'
 
 /**
  * "Nối dây" ngoài 7 test của brief (tests/ui/diagnostics.test.tsx), theo đúng
@@ -24,6 +25,8 @@ describe('nối dây App — diagnostics chảy từ store vào cả panel lẫn
 
     const { container } = render(<App />)
 
+    openDebug()
+
     // Panel: thông điệp + hint thật từ store, không phải fixture dựng tay.
     expect(screen.getByText(diag.message)).toBeInTheDocument()
     expect(screen.getByText(diag.hint!)).toBeInTheDocument()
@@ -39,6 +42,7 @@ describe('nối dây App — diagnostics chảy từ store vào cả panel lẫn
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource('fun main() = runBlocking { println("hi") }')
     const { container } = render(<App />)
+    openDebug()
     expect(useLabStore.getState().compiled.diagnostics).toEqual([])
     expect(container.querySelector('.cm-diagnostic-line')).toBeNull()
     expect(container.querySelector('.cm-diagnostic-dot')).toBeNull()
@@ -48,6 +52,7 @@ describe('nối dây App — diagnostics chảy từ store vào cả panel lẫn
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource('fun main() = runBlocking { val c = Channel<Int>() }')
     const { container } = render(<App />)
+    openDebug()
 
     const host = container.querySelector('[data-testid="code-editor"]') as HTMLElement
     const view = EditorView.findFromDOM(host)

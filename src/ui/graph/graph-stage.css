@@ -1,0 +1,104 @@
+.k-stage {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.k-stage__canvas {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Thanh dưới đồ thị: điều khiển + câu giải thích + nút mở bảng gỡ lỗi.
+   Nằm SÁT đồ thị chứ không ở đáy màn hình — mắt không phải rời khỏi hình. */
+.k-stage__bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.k-stage__controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.k-stage__controls button {
+  min-width: 30px;
+  height: 28px;
+  padding: 0 7px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.k-stage__controls button:hover:not(:disabled) { border-color: var(--k-launch); }
+.k-stage__controls button:disabled { opacity: 0.35; cursor: default; }
+
+.k-stage__play {
+  border-color: var(--k-launch) !important;
+  color: var(--k-launch) !important;
+}
+
+.k-stage__count,
+.k-stage__clock {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--fg-dim);
+  padding: 0 2px;
+}
+
+.k-stage__clock { min-width: 46px; text-align: right; }
+
+/* Câu giải thích của bước đang xem. Đây là thứ thay cho việc phải liếc sang
+   panel bên phải — nên nó phải to và dễ đọc, không phải chú thích nhỏ. */
+.k-stage__caption {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 4px 10px;
+  border-left: 3px solid var(--border);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.k-stage__caption--fail { border-left-color: var(--state-cancelled); }
+.k-stage__caption--cancel { border-left-color: var(--edge-cancel); }
+.k-stage__caption--output { border-left-color: var(--k-launch); }
+.k-stage__caption--start { border-left-color: var(--border); }
+
+.k-stage__hint { color: var(--fg-dim); }
+
+.k-stage__code {
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--border);
+  white-space: nowrap;
+}
+
+.k-stage__debug {
+  flex: none;
+  align-self: center;
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 5px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.k-stage__debug:hover { border-color: var(--fg-dim); color: var(--fg); }
+.k-stage__debug[aria-pressed='true'] { border-style: solid; color: var(--fg); }

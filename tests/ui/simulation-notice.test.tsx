@@ -7,7 +7,7 @@ import { useLabStore } from '../../src/state/store'
 
 // Shell đòi đủ 5 vùng ReactNode; các test dưới chỉ quan tâm SimulationNotice
 // nên truyền placeholder rỗng cho phần còn lại.
-const shellProps = { nav: null, editor: null, graph: null, timeline: null, side: null }
+const shellProps = { debugOpen: true, nav: null, editor: null, graph: null, timeline: null, side: null }
 
 describe('ghi chú mô phỏng — thường trực', () => {
   it('hiện ngay khi mở app', () => {

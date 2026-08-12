@@ -105,3 +105,9 @@
   overflow: auto;
   padding: 12px;
 }
+
+/* Chế độ tập trung (bảng gỡ lỗi đóng): chỉ còn code và đồ thị, đồ thị được
+   phần lớn màn hình. */
+.shell__main--focus {
+  grid-template-columns: minmax(300px, 22vw) minmax(0, 1fr);
+}

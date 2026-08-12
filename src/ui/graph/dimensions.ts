@@ -7,7 +7,7 @@
  * để chặn. Nhãn dài thì cắt bằng CSS text-overflow, không nới hộp.
  */
 export const NODE_W = 224
-export const NODE_H = 78
+export const NODE_H = 94
 
 /**
  * Chừa chỗ cho tiêu đề của node compound, VÀ cho hai làn cạnh chạy dọc hai

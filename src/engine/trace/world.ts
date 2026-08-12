@@ -11,6 +11,17 @@ export interface JobView {
   suspendReason: string | null
   threadId: ThreadId | null
   cause: string | null
+  /**
+   * Dòng `println` gần nhất do CHÍNH job này in ra, và tổng số dòng nó đã in.
+   *
+   * `output` ở cấp WorldState là một mảng phẳng không mang id, nên console
+   * hiện được nhưng đồ thị thì không: người học thấy chữ chạy ra ở panel bên
+   * cạnh mà không biết node nào in. Giữ thêm ở đây để node tự hiện được câu
+   * mình vừa in — `PRINTLN` vốn đã mang `id` chính xác từ khi attribution của
+   * scope inline được sửa.
+   */
+  lastPrint: string | null
+  printCount: number
 }
 
 export interface ThreadView { id: ThreadId; state: 'RUNNING' | 'FREE' }
@@ -23,6 +34,13 @@ export interface WorldState {
   /** Edge failure/cancel đang hoạt động tại step này, để UI vẽ token. */
   lastEvent: Event | null
   /**
+   * Job mà event cuối cùng NÓI VỀ — dùng để làm nổi node đang diễn ra trên đồ
+   * thị. Khác `lastEvent`: event hạ tầng (`THREAD_STATE`) không mang job nào
+   * nên KHÔNG được xoá giá trị cũ, nếu không vòng nhấn mạnh sẽ nhấp nháy tắt
+   * bật suốt trace — cùng lý do `srcLine` phải dính.
+   */
+  activeJobId: JobId | null
+  /**
    * Dòng 1-based đang chạy, hoặc null nếu chưa event nào mang dòng.
    * DÍNH: event không mang `srcLine` KHÔNG xoá giá trị cũ. Nếu xoá, dòng
    * highlight sẽ nhấp nháy tắt/bật suốt trace, vì các event hạ tầng
@@ -33,7 +51,10 @@ export interface WorldState {
 
 /** Thế giới lúc chưa có event nào. */
 export function emptyWorld(): WorldState {
-  return { t: 0, jobs: new Map(), threads: new Map(), output: [], lastEvent: null, srcLine: null }
+  return {
+    t: 0, jobs: new Map(), threads: new Map(), output: [],
+    lastEvent: null, activeJobId: null, srcLine: null,
+  }
 }
 
 /**
@@ -52,6 +73,9 @@ export function applyEvent(w: WorldState, e: Event): void {
   w.t = e.t
   w.lastEvent = e
   if (e.srcLine !== undefined) w.srcLine = e.srcLine
+  // DÍNH như srcLine: event hạ tầng không mang job thì giữ nguyên job cũ.
+  if ('id' in e && typeof e.id === 'string') w.activeJobId = e.id
+  else if (e.k === 'FAILURE_PROPAGATED' || e.k === 'CANCEL_REQUESTED') w.activeJobId = e.to
 
   switch (e.k) {
     case 'COROUTINE_CREATED':
@@ -59,6 +83,7 @@ export function applyEvent(w: WorldState, e: Event): void {
         id: e.id, parentId: e.parentId, builder: e.builder, state: 'New',
         dispatcher: e.ctx.dispatcher, name: e.ctx.name, isSupervisor: e.ctx.isSupervisor,
         suspendReason: null, threadId: null, cause: null,
+        lastPrint: null, printCount: 0,
       })
       break
     case 'JOB_STATE': {
@@ -85,9 +110,12 @@ export function applyEvent(w: WorldState, e: Event): void {
     case 'THREAD_STATE':
       w.threads.set(e.threadId, { id: e.threadId, state: e.state })
       break
-    case 'PRINTLN':
+    case 'PRINTLN': {
       w.output.push(e.text)
+      const j = w.jobs.get(e.id)
+      if (j) { j.lastPrint = e.text; j.printCount++ }
       break
+    }
     default:
       break
   }

@@ -25,7 +25,11 @@ export function JobNode({ id, data }: NodeProps<FlowNode>) {
 
   return (
     <div
-      className={unborn ? 'k-job-node k-job-node--unborn' : 'k-job-node'}
+      className={[
+        'k-job-node',
+        unborn ? 'k-job-node--unborn' : '',
+        data.isCurrent && !unborn ? 'k-job-node--current' : '',
+      ].filter(Boolean).join(' ')}
       // Bốn longhand tường minh, KHÔNG dùng shorthand `borderColor` cùng lúc với
       // `borderLeftColor`: khi trộn chung trong MỘT style object, một số engine
       // CSSOM (đo được ở jsdom, dùng cho test) coi bốn cạnh "không đồng nhất"
@@ -52,6 +56,16 @@ export function JobNode({ id, data }: NodeProps<FlowNode>) {
           </span>
           {data.suspendReason !== null && <span className="k-job-node__badge">{data.suspendReason}</span>}
           {showCause && <span className="k-job-node__cause">{data.cause}</span>}
+          {/* println hiện NGAY TRÊN node đã in nó. Trước đây chữ chỉ chạy ra
+              panel console bên cạnh, nên nhìn đồ thị không biết node nào in —
+              phải liếc sang chỗ khác rồi tự ghép lại. */}
+          {data.lastPrint !== null && (
+            <span className="k-job-node__print" title={data.lastPrint}>
+              <span className="k-job-node__print-mark">»</span>
+              {data.lastPrint}
+              {data.printCount > 1 && <span className="k-job-node__print-n">+{data.printCount - 1}</span>}
+            </span>
+          )}
         </>
       )}
     </div>

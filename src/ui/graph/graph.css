@@ -152,3 +152,52 @@
   white-space: nowrap;
   pointer-events: none;
 }
+
+/* println hiện ngay trên node đã in nó — không phải liếc sang panel console
+   rồi tự ghép "dòng này của ai". PRINTLN mang `id` chính xác, tận dụng nó. */
+.k-job-node__print {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-top: 2px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(88, 166, 255, 0.13);
+  color: var(--fg);
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.k-job-node__print-mark { color: var(--k-launch); flex: none; }
+
+/* Đã in nhiều dòng: hiện dòng mới nhất + số dòng trước đó, thay vì im lặng
+   nuốt mất phần còn lại. Console đầy đủ vẫn ở bảng gỡ lỗi. */
+.k-job-node__print-n {
+  flex: none;
+  margin-left: auto;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--border);
+  color: var(--fg-dim);
+  font-size: 9px;
+}
+
+.k-scope-node__print {
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--fg);
+  opacity: 0.9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Node mà bước đang xem NÓI VỀ. Vòng ngoài chứ không đổi màu viền: viền đã
+   mang nghĩa "trạng thái vòng đời" rồi, chồng thêm nghĩa thứ hai lên nó là
+   làm hỏng cả hai. */
+.k-job-node--current,
+.k-scope-node--current {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--k-launch);
+}

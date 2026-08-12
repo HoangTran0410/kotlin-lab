@@ -4,6 +4,7 @@ import { render, screen, within } from '@testing-library/react'
 import { App } from '../../src/ui/App'
 import { useLabStore } from '../../src/state/store'
 import { lessonSource } from '../../src/lessons/registry'
+import { openDebug } from './helpers/openDebug'
 
 /**
  * "Nối dây" theo đúng bài học Task 8/9/10/16/17: test dựng ConsolePanel TRỰC
@@ -19,6 +20,7 @@ describe('nối dây App -> ConsolePanel — console thật đi theo stepIndex t
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource(lessonSource('supervisor')!)
     render(<App />)
+    openDebug()
 
     const region = screen.getByRole('region', { name: 'Console & chẩn đoán' })
     expect(within(region).getByText('Chưa có output.')).toBeInTheDocument()

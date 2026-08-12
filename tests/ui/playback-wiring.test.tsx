@@ -4,6 +4,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { App } from '../../src/ui/App'
 import { useLabStore } from '../../src/state/store'
 import { lessonSource } from '../../src/lessons/registry'
+import { openDebug } from './helpers/openDebug'
 
 /**
  * "Nối dây" theo đúng bài học Task 9/13/16: usePlayback.ts được test kỹ ở
@@ -20,6 +21,7 @@ describe('nối dây App -> PlaybackControls — play/pause thật lái store th
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource(lessonSource('supervisor')!)
     render(<App />)
+    openDebug()
     // useLayout (Task 15) chạy ELK bất đồng bộ qua Promise thật — Promise
     // không bị @sinonjs/fake-timers can thiệp (chỉ macrotask timer bị giả),
     // nên `.then()` của nó resolve như MICROTASK bình thường. `act(fn)` ĐỒNG
@@ -50,6 +52,7 @@ describe('nối dây App -> PlaybackControls — play/pause thật lái store th
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource(lessonSource('supervisor')!)
     render(<App />)
+    openDebug()
     // useLayout (Task 15) chạy ELK bất đồng bộ qua Promise thật — Promise
     // không bị @sinonjs/fake-timers can thiệp (chỉ macrotask timer bị giả),
     // nên `.then()` của nó resolve như MICROTASK bình thường. `act(fn)` ĐỒNG
@@ -77,6 +80,7 @@ describe('nối dây App -> PlaybackControls — play/pause thật lái store th
     useLabStore.setState({ source: '', stepIndex: 0, lessonId: null })
     useLabStore.getState().setSource(lessonSource('supervisor')!)
     render(<App />)
+    openDebug()
     // useLayout (Task 15) chạy ELK bất đồng bộ qua Promise thật — Promise
     // không bị @sinonjs/fake-timers can thiệp (chỉ macrotask timer bị giả),
     // nên `.then()` của nó resolve như MICROTASK bình thường. `act(fn)` ĐỒNG

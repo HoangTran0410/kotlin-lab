@@ -27,9 +27,25 @@ export interface PlaybackApi {
  * để phát, và giữ vậy thì nút play vẫn hiện "Phát" (không đứng ở trạng thái
  * "đang phát" treo mãi).
  */
-export function usePlayback(stepIndex: number, setStep: (n: number) => void, max: number): PlaybackApi {
+/**
+ * `advance` quyết định bước KẾ TIẾP từ bước hiện tại. Mặc định `cur + 1`
+ * (từng event một, dùng cho thanh timeline gỡ lỗi).
+ *
+ * Sân khấu đồ thị truyền hàm khác: nhảy tới mốc có DIỄN GIẢI kế tiếp. Hơn nửa
+ * số event trong một trace là hạ tầng (`THREAD_STATE`, `JOB_STATE`) — phát
+ * từng event một thì phần lớn thời gian màn hình đứng yên, và người xem tưởng
+ * công cụ treo. Vòng lặp thời gian vẫn chỉ có MỘT bản, ở đây.
+ */
+export function usePlayback(
+  stepIndex: number,
+  setStep: (n: number) => void,
+  max: number,
+  advance?: (cur: number) => number,
+): PlaybackApi {
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeedState] = useState<Speed>(1)
+  const advanceRef = useRef(advance)
+  useEffect(() => { advanceRef.current = advance }, [advance])
 
   const stepIndexRef = useRef(stepIndex)
   const setStepRef = useRef(setStep)
@@ -74,7 +90,12 @@ export function usePlayback(stepIndex: number, setStep: (n: number) => void, max
       const intervalMs = 1000 / speedRef.current
       if (now - lastTickRef.current >= intervalMs) {
         lastTickRef.current = now
-        const next = Math.min(maxRef.current, stepIndexRef.current + 1)
+        const thô = advanceRef.current
+          ? advanceRef.current(stepIndexRef.current)
+          : stepIndexRef.current + 1
+        // Luôn tiến ít nhất một bước: một `advance` trả về giá trị không lớn
+        // hơn hiện tại sẽ làm vòng phát đứng im mà nút vẫn hiện "đang phát".
+        const next = Math.min(maxRef.current, Math.max(stepIndexRef.current + 1, thô))
         if (next !== stepIndexRef.current) {
           ownUpdateRef.current = true
           stepIndexRef.current = next
