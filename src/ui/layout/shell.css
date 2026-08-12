@@ -43,12 +43,61 @@
    Bố cục cũ cho cột diễn giải đúng 320px trên mọi màn hình — chật trên màn
    rộng và tràn trên màn hẹp. `minmax` giữ mức đọc được tối thiểu, phần dôi ra
    chia cho đồ thị. */
+/* Bề rộng hai cột bên do người dùng kéo (usePanelWidths), cột giữa ăn phần
+   còn lại. Trước đây ba con số cứng trong CSS: cột code luôn chật đúng một
+   mức bất kể màn hình rộng bao nhiêu. */
 .shell__main {
   display: grid;
-  grid-template-columns: minmax(320px, 24vw) minmax(0, 1fr) minmax(340px, 28vw);
+  grid-template-columns: var(--w-left) auto minmax(0, 1fr) auto var(--w-right);
   flex: 1;
   min-height: 0;
 }
+
+/* Bảng gỡ lỗi đóng: không còn thanh kéo phải và cột phải. */
+.shell__main[data-debug='closed'] {
+  grid-template-columns: var(--w-left) auto minmax(0, 1fr);
+}
+
+.splitter {
+  width: 7px;
+  cursor: col-resize;
+  background: var(--border);
+  border: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+}
+
+.splitter:hover,
+.splitter:focus-visible {
+  background: var(--k-launch);
+  outline: none;
+}
+
+.splitter__grip {
+  width: 1px;
+  height: 28px;
+  background: var(--bg);
+  opacity: 0.6;
+}
+
+.shell__reset {
+  margin-left: auto;
+  flex: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.shell__reset:hover { border-color: var(--fg-dim); color: var(--fg); }
 
 .shell__left,
 .shell__center,
@@ -106,8 +155,3 @@
   padding: 12px;
 }
 
-/* Chế độ tập trung (bảng gỡ lỗi đóng): chỉ còn code và đồ thị, đồ thị được
-   phần lớn màn hình. */
-.shell__main--focus {
-  grid-template-columns: minmax(300px, 22vw) minmax(0, 1fr);
-}

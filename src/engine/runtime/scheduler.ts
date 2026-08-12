@@ -22,6 +22,18 @@ interface Task {
    */
   resumeThrow: unknown
   started: boolean
+  /**
+   * Dòng để gắn cho `COROUTINE_STARTED` — dòng ĐẦU TIÊN trong thân coroutine,
+   * tức chỗ nó thật sự bắt đầu chạy, chứ không phải dòng viết `launch`.
+   */
+  startLine: number | undefined
+  /**
+   * Dòng của điểm suspend đang treo. `COROUTINE_RESUMED` gắn dòng này, vì
+   * resume nghĩa là chạy tiếp TỪ ĐÓ. Không có nó thì mọi RESUMED không mang
+   * dòng nào, và con trỏ trong editor đứng im suốt những đoạn dài — đo được
+   * 16 step liên tiếp không đổi dòng trên lesson scopecompare.
+   */
+  resumeLine: number | undefined
   /** Đã chạy xong hoặc đã unwind — không được đụng tới generator nữa. */
   finished: boolean
   /**
@@ -206,6 +218,7 @@ export class Scheduler {
     ctx: CoroutineContext,
     makeBody: (job: Job) => CoroutineBody,
     srcLine?: number,
+    startLine?: number,
   ): Job {
     const id = this.newJobId()
     const job = new Job(id, ctx.name ?? id, parent, isSupervisor)
@@ -227,6 +240,7 @@ export class Scheduler {
     const task: Task = {
       job, ctx: jobCtx, body: makeBody(job), resumeValue: undefined, resumeThrow: undefined,
       started: false, finished: false, unwinding: false, inlineStack: [],
+      startLine: startLine ?? srcLine, resumeLine: undefined,
       parentDispatcher: parent ? this.tasks.get(parent.id)?.ctx.dispatcher ?? null : null,
     }
     this.tasks.set(id, task)
@@ -534,9 +548,9 @@ export class Scheduler {
       // là sự kiện chạy, khác với Active là trạng thái vòng đời; cố tình giữ
       // `task.started` và event này nguyên chỗ cũ, không dời theo Active.
       task.started = true
-      this.emitter.emit({ k: 'COROUTINE_STARTED', id: job.id, threadId })
+      this.emitter.emit({ k: 'COROUTINE_STARTED', id: job.id, threadId }, task.startLine)
     } else {
-      this.emitter.emit({ k: 'COROUTINE_RESUMED', id: job.id, threadId })
+      this.emitter.emit({ k: 'COROUTINE_RESUMED', id: job.id, threadId }, task.resumeLine)
     }
     this.emitter.emit({ k: 'THREAD_STATE', threadId, state: 'RUNNING' })
 
@@ -625,6 +639,13 @@ export class Scheduler {
       const reason = s.s === 'joinChildren' ? 'join' : s.s
       this.emitter.emit({ k: 'COROUTINE_SUSPENDED', id: task.job.id, reason }, s.line)
     }
+    // Nhớ chỗ đang treo để lần resume tới trỏ đúng về đây. `joinChildren` do
+    // builder tự sinh nên không mang dòng nào — giữ NGUYÊN giá trị cũ thay vì
+    // ghi đè bằng undefined, nếu không resume sau một joinChildren sẽ mất dòng.
+    if (s.line !== undefined) {
+      task.resumeLine = s.line
+      task.job.suspendedAtLine = s.line
+    }
 
     switch (s.s) {
       case 'delay':
@@ -701,10 +722,11 @@ export class Scheduler {
     builder: 'launch' | 'async',
     makeBody: (job: Job) => CoroutineBody,
     srcLine?: number,
+    startLine?: number,
   ): Job {
     const parent = this.jobById(parentJobId)
     const parentCtx = parent ? this.tasks.get(parent.id)!.ctx : CoroutineContext.empty()
-    const job = this.spawn(parent, false, builder, parentCtx.plus(ctx), makeBody, srcLine)
+    const job = this.spawn(parent, false, builder, parentCtx.plus(ctx), makeBody, srcLine, startLine)
     if (parent?.isCompleted) {
       // Rút khỏi ready SAU KHI spawn, không phải thêm cờ vào spawn: COROUTINE_CREATED
       // phải được phát bình thường (con có tồn tại — Kotlin trả về một Job đọc
@@ -750,6 +772,7 @@ export class Scheduler {
     const task: Task = {
       job, ctx: jobCtx, body: (function* (): VoidCoroutineBody { })(), resumeValue: undefined,
       resumeThrow: undefined, started: true, finished: false, unwinding: false, inlineStack: [],
+      startLine: undefined, resumeLine: undefined,
       parentDispatcher: parentCtx.dispatcher,
     }
     this.tasks.set(id, task)
@@ -793,6 +816,7 @@ export class Scheduler {
     const task: Task = {
       job, ctx: jobCtx, body: (function* (): VoidCoroutineBody { })(), resumeValue: undefined,
       resumeThrow: undefined, started: true, finished: true, unwinding: false, inlineStack: [],
+      startLine: undefined, resumeLine: undefined,
       parentDispatcher: null,
     }
     this.tasks.set(id, task)

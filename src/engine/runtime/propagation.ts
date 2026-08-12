@@ -18,7 +18,8 @@ export function cancelJob(
   // Ghi lại chính hành động cancel này TRƯỚC khi lan xuống. Nếu bỏ, hành động
   // khởi đầu (user gọi job.cancel(), hay parent fail kéo theo) không hề xuất
   // hiện trong trace và UI không có gì để vẽ ở bước đầu tiên.
-  emitter.emit({ k: 'CANCEL_REQUESTED', from, to: job.id, cause: cause.exType })
+  emitter.emit({ k: 'CANCEL_REQUESTED', from, to: job.id, cause: cause.exType },
+    job.suspendedAtLine ?? cause.line)
 
   for (const child of job.children) {
     if (child.isCompleted) continue
@@ -28,11 +29,13 @@ export function cancelJob(
   const prev = job.state
   if (prev !== 'Cancelling') {
     job.transitionTo('Cancelling')
-    emitter.emit({ k: 'JOB_STATE', id: job.id, from: prev, to: 'Cancelling', cause: cause.exType })
+    emitter.emit({ k: 'JOB_STATE', id: job.id, from: prev, to: 'Cancelling', cause: cause.exType },
+      job.suspendedAtLine ?? cause.line)
   }
   job.cause = cause
   job.transitionTo('Cancelled')
-  emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Cancelling', to: 'Cancelled', cause: cause.exType })
+  emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Cancelling', to: 'Cancelled', cause: cause.exType },
+    job.suspendedAtLine ?? cause.line)
 }
 
 /**
@@ -50,14 +53,16 @@ function terminateAsFailed(job: Job, cause: FailureCause, emitter: TraceEmitter)
   const prev = job.state
   if (prev !== 'Cancelling') {
     job.transitionTo('Cancelling')
-    emitter.emit({ k: 'JOB_STATE', id: job.id, from: prev, to: 'Cancelling', cause: cause.exType })
+    emitter.emit({ k: 'JOB_STATE', id: job.id, from: prev, to: 'Cancelling', cause: cause.exType },
+      job.suspendedAtLine ?? cause.line)
   }
   job.cause = cause
   // Đây là đường FAIL, không phải đường cancel: thân coroutine phải nhận lại
   // đúng exception gốc khi unwind. cancelJob cố ý KHÔNG đặt trường này.
   job.failure = cause
   job.transitionTo('Cancelled')
-  emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Cancelling', to: 'Cancelled', cause: cause.exType })
+  emitter.emit({ k: 'JOB_STATE', id: job.id, from: 'Cancelling', to: 'Cancelled', cause: cause.exType },
+    job.suspendedAtLine ?? cause.line)
 }
 
 export function reportFailure(child: Job, cause: FailureCause, emitter: TraceEmitter): void {
@@ -86,12 +91,16 @@ export function reportFailure(child: Job, cause: FailureCause, emitter: TraceEmi
     const parent = node.parent
     if (!parent) return
 
+    // `cause.line` là dòng của câu `throw` đã gây ra chuỗi lan truyền này. Gắn
+    // nó vào MỌI event của chuỗi để con trỏ trong editor đứng yên ở đúng dòng
+    // gây lỗi suốt lúc failure leo lên cây — thay vì bỏ trống rồi để dòng
+    // highlight kẹt lại ở một chỗ chẳng liên quan từ trước đó.
     emitter.emit({
       k: 'FAILURE_PROPAGATED',
       from: node.id,
       to: parent.id,
       blockedBySupervisor: parent.isSupervisor,
-    })
+    }, cause.line)
 
     // Ranh giới scope (coroutineScope/supervisorScope/withContext).
     //

@@ -492,7 +492,7 @@ export class Interpreter {
           // được coi là xong khi mọi con của nó cũng xong (structured concurrency).
           // Với launch thì không ai đọc — join() chỉ chờ.
           return v
-        })(), e.pos.line)
+        })(), e.pos.line, body.stmts[0]?.pos.line)
       return {
         t: 'obj', className: calleeName === 'launch' ? 'Job' : 'Deferred',
         fields: new Map([['__jobId', { t: 'str', v: job.id } as KValue]]),

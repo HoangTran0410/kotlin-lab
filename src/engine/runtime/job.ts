@@ -52,6 +52,18 @@ export class Job {
    */
   result: unknown = undefined
 
+  /**
+   * Dòng mà coroutine này ĐANG TREO tại đó (`delay`, `await`, `join`).
+   *
+   * Dùng để gắn dòng cho các event huỷ/kết thúc của CHÍNH job này. Gắn dòng
+   * của câu `throw` đã gây ra chuỗi huỷ thì mọi nạn nhân đều trỏ về cùng một
+   * chỗ, và con trỏ trong editor đứng chết suốt cả đợt lan truyền — đo được 18
+   * mốc liên tiếp không nhúc nhích trên lesson normalfail. Chỗ nạn nhân đang
+   * đứng khi bị huỷ mới là thứ người học cần thấy: "coroutine này đang nằm ở
+   * delay(500) thì bị giết".
+   */
+  suspendedAtLine: number | undefined = undefined
+
   /** Mảng, không phải Set — thứ tự phải ổn định để trace deterministic. */
   private readonly _children: Job[] = []
 
